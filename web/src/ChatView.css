@@ -324,6 +324,31 @@
 
 .ghost-indicator { font-size: 18px; opacity: 0.8; }
 
+.header-icon-btn {
+  margin-left: auto;
+  width: 36px; height: 36px; flex: none;
+  border: none; border-radius: 50%;
+  background: rgba(127, 127, 127, 0.14);
+  color: var(--fh-text); cursor: pointer; font-size: 15px;
+}
+.header-icon-btn:hover { background: rgba(127, 127, 127, 0.26); }
+.chat-header-info + .header-icon-btn { margin-left: auto; }
+
+.chat-search-bar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 16px; border-bottom: 1px solid var(--fh-border); background: var(--fh-bg);
+}
+.chat-search-bar input {
+  flex: 1; padding: 9px 12px; border-radius: 10px;
+  border: 1px solid var(--fh-border); background: var(--fh-elevated); color: var(--fh-text); font: inherit;
+}
+.chat-search-count { font-size: 12px; color: var(--fh-muted); flex: none; }
+.chat-search-bar button {
+  border: none; background: rgba(127, 127, 127, 0.16); color: var(--fh-text);
+  width: 30px; height: 30px; border-radius: 50%; cursor: pointer; flex: none;
+}
+.search-hit { background: var(--fh-accent); color: #fff; border-radius: 3px; padding: 0 2px; }
+
 /* ── AI summary banner ────────────────────────────────────────────────────── */
 .ai-summary {
   background: rgba(0, 168, 132, 0.08);

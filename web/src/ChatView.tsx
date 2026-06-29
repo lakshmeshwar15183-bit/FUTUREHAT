@@ -75,6 +75,10 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
   const [scheduledCount, setScheduledCount] = useState(0);
   const [toast, setToast] = useState<string | null>(null);
 
+  // in-conversation search
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+
   // polls
   const [polls, setPolls] = useState<Poll[]>([]);
   const [showPolls, setShowPolls] = useState(true);
@@ -104,6 +108,7 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
     setMessages([]); setReceipts([]); setReactions([]); setTypingUsers({});
     setSuggestions([]); setSummary(null); setReplyTo(null); setEditing(null);
     setPolls([]); setPollComposerOpen(false);
+    setSearchOpen(false); setSearchTerm('');
 
     (async () => {
       const msgs = await getMessages(supabase, convId);
@@ -354,6 +359,19 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
   const emojiSet = isPremium ? [...QUICK_EMOJIS, ...PREMIUM_EMOJIS] : QUICK_EMOJIS;
   const repliedOf = (m: Message) => (m.reply_to ? messages.find((x) => x.id === m.reply_to) : null);
 
+  // In-conversation search: when active, only matching messages are shown.
+  const search = searchTerm.trim().toLowerCase();
+  const displayMessages = useMemo(
+    () => (search ? messages.filter((m) => !m.is_deleted && (m.content ?? '').toLowerCase().includes(search)) : messages),
+    [messages, search],
+  );
+  function highlight(text: string): ReactNode {
+    if (!search) return text;
+    const idx = text.toLowerCase().indexOf(search);
+    if (idx === -1) return text;
+    return (<>{text.slice(0, idx)}<mark className="search-hit">{text.slice(idx, idx + search.length)}</mark>{text.slice(idx + search.length)}</>);
+  }
+
   return (
     <div className="chat-view">
       <div className="chat-header">
@@ -366,8 +384,20 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
           <div className="chat-title">{conversation.title}{isOtherPremium && <PremiumBadge compact />}</div>
           <div className={`chat-subtitle ${typingNames.length ? 'typing' : ''}`}>{subtitle}</div>
         </div>
+        <button className="header-icon-btn" title="Search messages"
+          onClick={() => { setSearchOpen((v) => !v); if (searchOpen) setSearchTerm(''); }}>🔍</button>
         {ghost && <span className="ghost-indicator" title="Ghost mode on">👻</span>}
       </div>
+
+      <AnimatePresence>
+        {searchOpen && (
+          <motion.div className="chat-search-bar" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}>
+            <input autoFocus type="text" placeholder="Search in this conversation…" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+            {search && <span className="chat-search-count">{displayMessages.length} match{displayMessages.length === 1 ? '' : 'es'}</span>}
+            <button onClick={() => { setSearchOpen(false); setSearchTerm(''); }}>✕</button>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {summary && (
@@ -395,7 +425,7 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
 
       <div ref={messagesContainerRef} className="messages-container" onClick={() => { setPickerFor(null); setActionFor(null); setAiOpen(false); setStickersOpen(false); }}>
         <AnimatePresence initial={false}>
-          {messages.map((msg) => {
+          {displayMessages.map((msg) => {
             const isMine = msg.sender_id === profile?.id;
             const sender = conversation.participants.find((p) => p.id === msg.sender_id);
             const msgReactions = reactionsByMessage[msg.id] || [];
@@ -422,7 +452,7 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
                         {msg.type === 'file' && msg.media_url && (
                           <a href={msg.media_url} target="_blank" rel="noopener noreferrer" className="message-file">📎 {msg.content || 'File'}</a>
                         )}
-                        {(msg.type === 'text' || msg.content) && <div className="message-text">{msg.content}</div>}
+                        {(msg.type === 'text' || msg.content) && <div className="message-text">{highlight(msg.content ?? '')}</div>}
                         <div className="message-time">
                           {msg.edited_at && <span className="edited-tag">edited</span>}
                           {formatDistanceToNow(new Date(msg.created_at), { addSuffix: true })}
@@ -475,6 +505,7 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
             );
           })}
         </AnimatePresence>
+        {search && displayMessages.length === 0 && <div className="empty-state">No messages match “{searchTerm.trim()}”.</div>}
         {uploading && <div className="message mine"><div className="message-bubble uploading">Uploading...</div></div>}
         <div ref={messagesEndRef} />
       </div>
