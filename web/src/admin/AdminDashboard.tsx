@@ -50,6 +50,12 @@ export function AdminDashboard({ onClose }: { onClose: () => void }) {
     });
   }, []);
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
   async function loadAll() {
     const { data: statData, error: statErr } = await supabase.rpc('admin_stats');
     if (statErr) setError('Admin backend not provisioned yet (apply migration 0009).');

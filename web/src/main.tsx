@@ -4,12 +4,19 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { AuthProvider, useAuth } from './AuthContext';
 import { PremiumProvider } from './PremiumContext';
 import { PresenceProvider } from './PresenceContext';
+import { CallProvider } from './calls/CallContext';
 import { AppLockGate } from './premium/AppLockGate';
 import { AuthScreen } from './Auth';
 import { App } from './App';
 import { pageVariants } from './motion';
+import { registerServiceWorker } from './pwa/usePwaInstall';
+import { initDiagnostics } from './diagnostics/logBuffer';
 import './index.css';
 import './theme/premium.css';
+
+// PWA install support + diagnostic log capture (best-effort, no-op on failure).
+initDiagnostics();
+registerServiceWorker();
 
 function Splash() {
   return (
@@ -54,7 +61,9 @@ createRoot(document.getElementById('root')!).render(
     <AuthProvider>
       <PremiumProvider>
         <PresenceProvider>
-          <Root />
+          <CallProvider>
+            <Root />
+          </CallProvider>
         </PresenceProvider>
       </PremiumProvider>
     </AuthProvider>

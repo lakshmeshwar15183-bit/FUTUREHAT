@@ -1,7 +1,8 @@
 // FUTUREHAT — Settings: appearance, privacy, subscription, and app info.
 // Premium-only options are gated inline; selecting one while free opens upgrade.
 
-import { motion } from 'framer-motion';
+import { useState, lazy, Suspense } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { usePremium } from '../PremiumContext';
 import { useUpgrade } from './UpgradeProvider';
 import { PremiumBadge } from './PremiumBadge';
@@ -9,6 +10,20 @@ import { THEMES, FONTS, BUBBLES, WALLPAPERS, APP_ICONS } from '../theme/themes';
 import { modalBackdrop, modalPanel } from '../motion';
 import { APP_VERSION, OWNER } from '../branding';
 import './SettingsModal.css';
+
+// Settings sub-panels are lazy-loaded and rendered from within Settings itself.
+const PrivacySettingsModal = lazy(() => import('../settings/PrivacySettingsModal').then((m) => ({ default: m.PrivacySettingsModal })));
+const ChatSettingsModal = lazy(() => import('../settings/ChatSettingsModal').then((m) => ({ default: m.ChatSettingsModal })));
+const AccountSettingsModal = lazy(() => import('../settings/AccountSettingsModal').then((m) => ({ default: m.AccountSettingsModal })));
+const NotificationSettingsModal = lazy(() => import('../settings/NotificationSettingsModal').then((m) => ({ default: m.NotificationSettingsModal })));
+const StorageSettingsModal = lazy(() => import('../settings/StorageSettingsModal').then((m) => ({ default: m.StorageSettingsModal })));
+const ArchivedChatsModal = lazy(() => import('../settings/ArchivedChatsModal').then((m) => ({ default: m.ArchivedChatsModal })));
+const LegalModal = lazy(() => import('../legal/LegalModal').then((m) => ({ default: m.LegalModal })));
+const DiagnosticsModal = lazy(() => import('../diagnostics/DiagnosticsModal').then((m) => ({ default: m.DiagnosticsModal })));
+const DataExportModal = lazy(() => import('../account/DataExportModal').then((m) => ({ default: m.DataExportModal })));
+const InviteModal = lazy(() => import('../invite/InviteModal').then((m) => ({ default: m.InviteModal })));
+
+type SubPanel = 'privacy' | 'chats' | 'account' | 'notifications' | 'storage' | 'archived' | 'legal' | 'diagnostics' | 'export' | 'invite';
 
 export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin }: {
   onClose: () => void;
@@ -18,6 +33,7 @@ export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin }: {
 }) {
   const { isPremium, isAdmin, preferences, setPreference } = usePremium();
   const { open: openUpgrade } = useUpgrade();
+  const [sub, setSub] = useState<SubPanel | null>(null);
 
   function choose(field: keyof typeof preferences, id: string, premium: boolean) {
     if (premium && !isPremium) return openUpgrade();
@@ -33,6 +49,7 @@ export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin }: {
   const fontList = Object.values(FONTS);
 
   return (
+    <>
     <motion.div className="modal-backdrop" variants={modalBackdrop} initial="initial" animate="animate" exit="exit" onClick={onClose}>
       <motion.div className="settings-modal glass" variants={modalPanel} onClick={(e) => e.stopPropagation()}>
         <button className="modal-close" onClick={onClose}>✕</button>
@@ -149,12 +166,32 @@ export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin }: {
           <p className="hint">Hide a chat from its conversation menu (•••).</p>
         </section>
 
+        {/* Account & privacy */}
+        <section className="settings-section">
+          <h3>👤 Account &amp; privacy</h3>
+          <button className="settings-link" onClick={() => setSub('account')}>Account &amp; security · 2FA →</button>
+          <button className="settings-link" onClick={() => setSub('privacy')}>Privacy · visibility · blocked →</button>
+          <button className="settings-link" onClick={() => setSub('notifications')}>Notifications →</button>
+        </section>
+
+        {/* Chats & data */}
+        <section className="settings-section">
+          <h3>💬 Chats &amp; data</h3>
+          <button className="settings-link" onClick={() => setSub('chats')}>Chat settings →</button>
+          <button className="settings-link" onClick={() => setSub('archived')}>Archived chats →</button>
+          <button className="settings-link" onClick={() => setSub('storage')}>Storage &amp; data →</button>
+          <button className="settings-link" onClick={() => setSub('export')}>Export my data →</button>
+          <button className="settings-link" onClick={() => setSub('invite')}>Invite friends →</button>
+        </section>
+
         {/* Support & safety */}
         <section className="settings-section">
           <h3>🛟 Support &amp; safety</h3>
           <button className="settings-link" onClick={() => { onClose(); onHelp(); }}>
             Help &amp; Support · tickets · grievance →
           </button>
+          <button className="settings-link" onClick={() => setSub('legal')}>Terms · Privacy · Guidelines →</button>
+          <button className="settings-link" onClick={() => setSub('diagnostics')}>Diagnostics &amp; app info →</button>
           {isAdmin && onAdmin && (
             <button className="settings-link" onClick={() => { onClose(); onAdmin(); }}>
               🛡️ Admin dashboard →
@@ -172,5 +209,21 @@ export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin }: {
         </section>
       </motion.div>
     </motion.div>
+
+    <Suspense fallback={null}>
+      <AnimatePresence>
+        {sub === 'privacy' && <PrivacySettingsModal onClose={() => setSub(null)} />}
+        {sub === 'chats' && <ChatSettingsModal onClose={() => setSub(null)} />}
+        {sub === 'account' && <AccountSettingsModal onClose={() => setSub(null)} onExport={() => setSub('export')} />}
+        {sub === 'notifications' && <NotificationSettingsModal onClose={() => setSub(null)} />}
+        {sub === 'storage' && <StorageSettingsModal onClose={() => setSub(null)} />}
+        {sub === 'archived' && <ArchivedChatsModal onClose={() => setSub(null)} />}
+        {sub === 'legal' && <LegalModal onClose={() => setSub(null)} />}
+        {sub === 'diagnostics' && <DiagnosticsModal onClose={() => setSub(null)} />}
+        {sub === 'export' && <DataExportModal onClose={() => setSub(null)} />}
+        {sub === 'invite' && <InviteModal onClose={() => setSub(null)} />}
+      </AnimatePresence>
+    </Suspense>
+    </>
   );
 }

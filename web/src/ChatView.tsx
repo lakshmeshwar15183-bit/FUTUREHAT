@@ -7,6 +7,7 @@ import { useAuth } from './AuthContext';
 import { usePremium } from './PremiumContext';
 import { usePresence } from './PresenceContext';
 import { useUpgrade } from './premium/UpgradeProvider';
+import { useCall } from './calls/CallContext';
 import { PremiumBadge } from './premium/PremiumBadge';
 import { supabase } from './supabase';
 import {
@@ -19,6 +20,8 @@ import { createPoll, getPolls } from '@shared/communitiesApi';
 import type { Poll } from '@shared/communitiesApi';
 import { aiRewrite, aiTranslate, aiSummarize, aiSmartReply } from '@shared/aiClient';
 import { PollCard } from './communities/PollCard';
+import { VoiceMessage } from './voice/VoiceMessage';
+import { ContactProfileModal } from './profile/ContactProfileModal';
 import { FREE_LIMITS, PREMIUM_LIMITS } from '@shared/premium/features';
 import type { ConversationSummary, Message, MessageReceipt, MessageReaction } from '@shared/types';
 import { formatDistanceToNow } from 'date-fns';
@@ -42,6 +45,7 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
   const { isPremium, preferences } = usePremium();
   const { onlineIds } = usePresence();
   const { open: openUpgrade } = useUpgrade();
+  const { startCall, busy: callBusy } = useCall();
   const convId = conversation.conversation.id;
   const isGroup = conversation.conversation.type === 'group';
   const ghost = isPremium && preferences.ghost_mode;
@@ -75,9 +79,21 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
   const [scheduledCount, setScheduledCount] = useState(0);
   const [toast, setToast] = useState<string | null>(null);
 
+  // voice recording
+  const [recording, setRecording] = useState(false);
+  const [recordSecs, setRecordSecs] = useState(0);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const recordCancelRef = useRef(false);
+  const recordStartRef = useRef(0);
+
   // in-conversation search
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+
+  // contact profile (direct chats)
+  const [showContact, setShowContact] = useState(false);
 
   // polls
   const [polls, setPolls] = useState<Poll[]>([]);
@@ -156,6 +172,13 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
       if (typingStopRef.current) clearTimeout(typingStopRef.current);
       isTypingRef.current = false;
       clearInterval(dueInterval);
+      // tear down any in-flight voice recording
+      if (recordTimerRef.current) { clearInterval(recordTimerRef.current); recordTimerRef.current = null; }
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        recordCancelRef.current = true;
+        try { mediaRecorderRef.current.stop(); } catch { /* noop */ }
+      }
+      setRecording(false);
     };
   }, [convId, profile?.id]);
 
@@ -323,6 +346,53 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
     setToast(`Scheduled for ${when.toLocaleString()}`);
   }
 
+  // ── Voice notes ────────────────────────────────────────────────────────────────
+  async function startRecording() {
+    if (recording || sending || uploading) return;
+    let stream: MediaStream;
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+    catch { setToast('Microphone access denied'); return; }
+    const mr = new MediaRecorder(stream);
+    chunksRef.current = [];
+    recordCancelRef.current = false;
+    recordStartRef.current = Date.now();
+    mr.ondataavailable = (e) => { if (e.data.size) chunksRef.current.push(e.data); };
+    mr.onstop = async () => {
+      stream.getTracks().forEach((t) => t.stop());
+      if (recordTimerRef.current) { clearInterval(recordTimerRef.current); recordTimerRef.current = null; }
+      setRecording(false);
+      const chunks = chunksRef.current; chunksRef.current = [];
+      if (recordCancelRef.current) return;
+      const blob = new Blob(chunks, { type: mr.mimeType || 'audio/webm' });
+      if (blob.size < 800) return; // ignore accidental taps
+      const secs = Math.max(1, Math.round((Date.now() - recordStartRef.current) / 1000));
+      await sendVoice(blob, secs);
+    };
+    mediaRecorderRef.current = mr;
+    mr.start();
+    setRecording(true); setRecordSecs(0);
+    recordTimerRef.current = setInterval(() => setRecordSecs((s) => s + 1), 1000);
+  }
+  function stopRecording(cancel: boolean) {
+    recordCancelRef.current = cancel;
+    try { mediaRecorderRef.current?.stop(); } catch { setRecording(false); }
+  }
+  async function sendVoice(blob: Blob, secs: number) {
+    setUploading(true);
+    try {
+      const ext = blob.type.includes('ogg') ? 'ogg' : blob.type.includes('mp4') ? 'mp4' : 'webm';
+      const file = new File([blob], `voice-${Date.now()}.${ext}`, { type: blob.type });
+      const { url, error } = await uploadMedia(supabase, convId, file, file.name);
+      if (error || !url) throw error || new Error('upload failed');
+      const label = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+      const { message } = await sendMessage(supabase, convId, label, 'audio', url);
+      if (message) upsertMessage(message);
+    } catch (e: any) {
+      setToast(e?.message || 'Could not send voice message');
+    } finally { setUploading(false); }
+  }
+  const fmtRec = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+
   // ── Polls ──────────────────────────────────────────────────────────────────────
   function setPollOption(i: number, val: string) {
     setPollOptions((opts) => opts.map((o, idx) => (idx === i ? val : o)));
@@ -380,11 +450,23 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
           {conversation.title[0]}
           {!isGroup && otherOnline && <span className="online-dot" />}
         </div>
-        <div className="chat-header-info">
+        <div
+          className="chat-header-info"
+          style={{ cursor: !isGroup && otherUser ? 'pointer' : 'default' }}
+          onClick={() => { if (!isGroup && otherUser) setShowContact(true); }}
+        >
           <div className="chat-title">{conversation.title}{isOtherPremium && <PremiumBadge compact />}</div>
           <div className={`chat-subtitle ${typingNames.length ? 'typing' : ''}`}>{subtitle}</div>
         </div>
-        <button className="header-icon-btn" title="Search messages"
+        {!isGroup && (
+          <>
+            <button className="header-icon-btn call" title="Voice call" aria-label="Start voice call" disabled={callBusy}
+              onClick={() => startCall(convId, 'audio', otherUser?.display_name || conversation.title)}>📞</button>
+            <button className="header-icon-btn call" title="Video call" aria-label="Start video call" disabled={callBusy}
+              onClick={() => startCall(convId, 'video', otherUser?.display_name || conversation.title)}>🎥</button>
+          </>
+        )}
+        <button className="header-icon-btn" title="Search messages" aria-label="Search messages"
           onClick={() => { setSearchOpen((v) => !v); if (searchOpen) setSearchTerm(''); }}>🔍</button>
         {ghost && <span className="ghost-indicator" title="Ghost mode on">👻</span>}
       </div>
@@ -449,10 +531,11 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
                           </div>
                         )}
                         {msg.type === 'image' && msg.media_url && <img src={msg.media_url} alt="Attachment" className="message-image" />}
+                        {msg.type === 'audio' && msg.media_url && <VoiceMessage url={msg.media_url} mine={isMine} />}
                         {msg.type === 'file' && msg.media_url && (
                           <a href={msg.media_url} target="_blank" rel="noopener noreferrer" className="message-file">📎 {msg.content || 'File'}</a>
                         )}
-                        {(msg.type === 'text' || msg.content) && <div className="message-text">{highlight(msg.content ?? '')}</div>}
+                        {(msg.type === 'text' || (msg.content && msg.type !== 'audio')) && <div className="message-text">{highlight(msg.content ?? '')}</div>}
                         <div className="message-time">
                           {msg.edited_at && <span className="edited-tag">edited</span>}
                           {formatDistanceToNow(new Date(msg.created_at), { addSuffix: true })}
@@ -608,8 +691,24 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
           ⏰{scheduledCount > 0 && <span className="sched-badge">{scheduledCount}</span>}
         </button>
 
-        <input type="text" placeholder={editing ? 'Edit your message…' : 'Type a message'} value={input} onChange={handleInputChange} onBlur={stopTyping} disabled={sending || uploading} />
-        <motion.button whileTap={{ scale: 0.9 }} type="submit" disabled={!input.trim() || sending || uploading}>{editing ? '✓' : '➤'}</motion.button>
+        {recording ? (
+          <div className="voice-rec-bar">
+            <span className="voice-rec-dot" />
+            <span className="voice-rec-time">{fmtRec(recordSecs)}</span>
+            <span className="voice-rec-hint">Recording… ➤ send · 🗑 cancel</span>
+            <button type="button" className="voice-rec-cancel" onClick={() => stopRecording(true)} title="Cancel" aria-label="Cancel recording">🗑</button>
+            <button type="button" className="voice-rec-send" onClick={() => stopRecording(false)} title="Send voice message" aria-label="Send voice message">➤</button>
+          </div>
+        ) : (
+          <>
+            <input type="text" placeholder={editing ? 'Edit your message…' : 'Type a message'} value={input} onChange={handleInputChange} onBlur={stopTyping} disabled={sending || uploading} />
+            {input.trim() || editing ? (
+              <motion.button whileTap={{ scale: 0.9 }} type="submit" disabled={!input.trim() || sending || uploading}>{editing ? '✓' : '➤'}</motion.button>
+            ) : (
+              <button type="button" className="mic-btn tool-btn" onClick={startRecording} disabled={uploading} title="Record voice message" aria-label="Record voice message">🎙️</button>
+            )}
+          </>
+        )}
       </form>
 
       {/* Forward picker */}
@@ -633,6 +732,20 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
 
       <AnimatePresence>
         {toast && (<motion.div className="chat-toast glass" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>{toast}</motion.div>)}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showContact && otherUser && (
+          <ContactProfileModal
+            profile={otherUser}
+            online={otherOnline}
+            isPremium={isOtherPremium}
+            conversationId={convId}
+            onClose={() => setShowContact(false)}
+            onCall={() => { setShowContact(false); startCall(convId, 'audio', otherUser.display_name || conversation.title); }}
+            onVideo={() => { setShowContact(false); startCall(convId, 'video', otherUser.display_name || conversation.title); }}
+          />
+        )}
       </AnimatePresence>
     </div>
   );

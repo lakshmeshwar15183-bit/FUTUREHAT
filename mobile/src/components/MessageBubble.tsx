@@ -19,6 +19,8 @@ interface Props {
   reactions?: MessageReaction[];
   tick?: TickStatus;
   onLongPress?: () => void;
+  onPress?: () => void;
+  selected?: boolean;
   onOpenImage?: (url: string) => void;
   onReactionPress?: () => void;
 }
@@ -37,6 +39,8 @@ export default function MessageBubble({
   reactions = [],
   tick,
   onLongPress,
+  onPress,
+  selected,
   onOpenImage,
   onReactionPress,
 }: Props) {
@@ -46,7 +50,7 @@ export default function MessageBubble({
 
   if (message.is_deleted) {
     return (
-      <View style={[styles.wrap, mine ? styles.wrapMine : styles.wrapTheirs]}>
+      <View style={[styles.wrap, mine ? styles.wrapMine : styles.wrapTheirs, selected && styles.wrapSelected]}>
         <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs]}>
           <Text style={[styles.deleted, { color: mine ? '#cfd9d6' : colors.textMuted }]}>
             <Ionicons name="ban-outline" size={13} /> This message was deleted
@@ -61,8 +65,9 @@ export default function MessageBubble({
   return (
     <Pressable
       onLongPress={onLongPress}
+      onPress={onPress}
       delayLongPress={250}
-      style={[styles.wrap, mine ? styles.wrapMine : styles.wrapTheirs]}
+      style={[styles.wrap, mine ? styles.wrapMine : styles.wrapTheirs, selected && styles.wrapSelected]}
     >
       <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs]}>
         {!mine && senderName && <Text style={styles.sender}>{senderName}</Text>}
@@ -139,6 +144,7 @@ const makeStyles = (colors: Palette) =>
     wrap: { marginVertical: 3, paddingHorizontal: 10, maxWidth: '100%' },
     wrapMine: { alignItems: 'flex-end' },
     wrapTheirs: { alignItems: 'flex-start' },
+    wrapSelected: { backgroundColor: colors.primary + '22' },
     bubble: {
       maxWidth: '82%',
       borderRadius: radius.lg,

@@ -1,0 +1,16 @@
+{
+  "name": "FUTUREHAT",
+  "short_name": "FUTUREHAT",
+  "description": "Real-time messaging, reimagined. Developed by LAKSHMESHWAR PANDEY.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0b141a",
+  "theme_color": "#0b141a",
+  "categories": ["social", "communication"],
+  "icons": [
+    { "src": "/hat.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/hat.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}

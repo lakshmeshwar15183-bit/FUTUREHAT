@@ -1,13 +1,16 @@
 // FUTUREHAT mobile — view a user's profile. Shows avatar/name/username/about
 // and contextual actions (message / call, or edit when it's me).
 import React, { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { supabase } from '../lib/supabase';
-import { getCurrentUser, getProfile, startDirectConversation } from '../lib/shared';
+import {
+  getCurrentUser, getProfile, startDirectConversation,
+  blockUser, unblockUser, getBlockedIds, submitReport,
+} from '../lib/shared';
 import type { Profile, CallType } from '../lib/shared';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import { useCalls } from '../calls/CallContext';
@@ -27,6 +30,7 @@ export default function ProfileScreen() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [isMe, setIsMe] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [blocked, setBlocked] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -34,9 +38,38 @@ export default function ProfileScreen() {
       setIsMe(me?.id === params.userId);
       const p = await getProfile(supabase, params.userId);
       setProfile(p);
+      const ids = await getBlockedIds(supabase).catch(() => [] as string[]);
+      setBlocked(ids.includes(params.userId));
       setLoading(false);
     })();
   }, [params.userId]);
+
+  async function toggleBlock() {
+    const was = blocked;
+    if (!was && !(await confirmAsync('Block user', `Block ${profile?.display_name ?? 'this user'}?`))) return;
+    setBlocked(!was);
+    const { error } = was ? await unblockUser(supabase, params.userId) : await blockUser(supabase, params.userId);
+    if (error) setBlocked(was);
+  }
+
+  function report() {
+    Alert.prompt?.('Report user', 'What is the issue?', async (reason?: string) => {
+      if (!reason?.trim()) return;
+      const { error } = await submitReport(supabase, 'user', params.userId, reason.trim());
+      Alert.alert(error ? 'Error' : 'Reported', error ? error.message : 'Our safety team will review this.');
+    });
+    // Android lacks Alert.prompt; fall back to a direct report.
+    if (!Alert.prompt) {
+      submitReport(supabase, 'user', params.userId, 'Reported from profile').then(({ error }) =>
+        Alert.alert(error ? 'Error' : 'Reported', error ? error.message : 'Our safety team will review this.'),
+      );
+    }
+  }
+
+  function shareContact() {
+    const handle = profile?.username ? `@${profile.username}` : params.userId.slice(0, 8);
+    Share.share({ message: `${profile?.display_name ?? 'FUTUREHAT user'} (${handle}) on FUTUREHAT` });
+  }
 
   async function message() {
     const { conversationId } = await startDirectConversation(supabase, params.userId);
@@ -82,6 +115,12 @@ export default function ProfileScreen() {
         <Text style={styles.about}>{profile?.about || 'Hey there! I am using FUTUREHAT.'}</Text>
       </Section>
 
+      {!!profile?.phone && (
+        <Section title="Phone">
+          <Text style={styles.about}>{profile.phone}</Text>
+        </Section>
+      )}
+
       {isMe && (
         <Pressable style={styles.editBtn} onPress={() => navigation.navigate('EditProfile')}>
           <Ionicons name="create-outline" size={20} color={colors.primary} />
@@ -90,17 +129,34 @@ export default function ProfileScreen() {
       )}
 
       {!isMe && (
-        <Pressable style={styles.blockBtn} onPress={() => notYet('Blocking')}>
-          <Ionicons name="ban-outline" size={20} color={colors.danger} />
-          <Text style={styles.blockText}>Block {profile?.display_name ?? 'user'}</Text>
-        </Pressable>
+        <View>
+          <Pressable style={styles.actionRow} onPress={shareContact}>
+            <Ionicons name="share-social-outline" size={20} color={colors.text} />
+            <Text style={styles.actionRowText}>Share contact</Text>
+          </Pressable>
+          <Pressable style={styles.actionRow} onPress={report}>
+            <Ionicons name="flag-outline" size={20} color={colors.text} />
+            <Text style={styles.actionRowText}>Report</Text>
+          </Pressable>
+          <Pressable style={styles.actionRow} onPress={toggleBlock}>
+            <Ionicons name={blocked ? 'checkmark-circle-outline' : 'ban-outline'} size={20} color={colors.danger} />
+            <Text style={[styles.actionRowText, { color: colors.danger }]}>
+              {blocked ? 'Unblock' : 'Block'} {profile?.display_name ?? 'user'}
+            </Text>
+          </Pressable>
+        </View>
       )}
     </ScrollView>
   );
 }
 
-function notYet(feature: string) {
-  Alert.alert(feature, `${feature} is coming in a later update.`);
+function confirmAsync(title: string, message: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    Alert.alert(title, message, [
+      { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+      { text: 'Block', style: 'destructive', onPress: () => resolve(true) },
+    ]);
+  });
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -136,6 +192,6 @@ const makeStyles = (colors: Palette) =>
     about: { color: colors.text, fontSize: font.body, lineHeight: 21 },
     editBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: spacing(4), gap: 8 },
     editText: { color: colors.primary, fontSize: font.heading, fontWeight: '600' },
-    blockBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: spacing(4), gap: 8 },
-    blockText: { color: colors.danger, fontSize: font.heading },
+    actionRow: { flexDirection: 'row', alignItems: 'center', gap: spacing(4), paddingHorizontal: spacing(5), paddingVertical: spacing(3.5), backgroundColor: colors.surface, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
+    actionRowText: { color: colors.text, fontSize: font.body },
   });

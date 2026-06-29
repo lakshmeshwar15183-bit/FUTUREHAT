@@ -1,0 +1,67 @@
+/* FUTUREHAT — shared styling for the standalone settings panels (privacy, chat,
+   account, storage, notifications). Theme-aware via --fh-* vars. */
+
+.sp-modal {
+  position: relative;
+  width: min(520px, 100%);
+  max-height: 88vh;
+  overflow-y: auto;
+  background: var(--fh-panel);
+  color: var(--fh-text);
+  border: 1px solid var(--fh-border);
+  border-radius: var(--fh-radius, 18px);
+  box-shadow: var(--fh-shadow, 0 24px 60px rgba(0, 0, 0, 0.4));
+  padding: 28px;
+}
+.sp-modal .modal-close {
+  position: absolute; top: 16px; right: 16px;
+  width: 34px; height: 34px; border: none; border-radius: 50%;
+  background: rgba(127, 127, 127, 0.16); color: var(--fh-text); cursor: pointer; font-size: 14px;
+}
+.sp-title { margin: 0 0 6px; font-size: 21px; }
+.sp-sub { margin: 0 0 18px; font-size: 13px; color: var(--fh-muted); }
+.sp-section { margin-bottom: 22px; }
+.sp-section h3 {
+  margin: 0 0 10px; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--fh-muted);
+}
+.sp-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px 14px; border: 1px solid var(--fh-border); border-radius: 12px;
+  background: var(--fh-elevated); margin-bottom: 8px;
+}
+.sp-row-main { min-width: 0; }
+.sp-row-name { font-size: 14.5px; font-weight: 600; }
+.sp-row-desc { font-size: 12.5px; color: var(--fh-muted); margin-top: 2px; }
+.sp-select {
+  flex: none; padding: 8px 10px; border-radius: 9px; border: 1px solid var(--fh-border);
+  background: var(--fh-bg); color: var(--fh-text); font: inherit; cursor: pointer;
+}
+.sp-input {
+  width: 100%; box-sizing: border-box; padding: 10px 12px; border-radius: 10px;
+  border: 1px solid var(--fh-border); background: var(--fh-bg); color: var(--fh-text); font: inherit;
+}
+.sp-btn {
+  padding: 10px 16px; border-radius: 11px; border: 1px solid var(--fh-border);
+  background: var(--fh-elevated); color: var(--fh-text); font-weight: 600; cursor: pointer;
+}
+.sp-btn.primary { background: var(--fh-accent); color: #fff; border-color: var(--fh-accent); }
+.sp-btn.danger { color: #ef4444; border-color: rgba(239,68,68,.4); }
+.sp-btn.wide { width: 100%; }
+.sp-btn:disabled { opacity: .6; cursor: default; }
+
+/* toggle switch */
+.sp-switch { flex: none; width: 44px; height: 26px; border-radius: 999px; background: rgba(127,127,127,.35); position: relative; cursor: pointer; transition: background .2s; border: none; }
+.sp-switch.on { background: var(--fh-accent); }
+.sp-switch i { position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff; transition: transform .2s; }
+.sp-switch.on i { transform: translateX(18px); }
+
+.sp-toast {
+  position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+  background: var(--fh-text); color: var(--fh-bg); padding: 9px 16px; border-radius: 999px;
+  font-size: 13px; font-weight: 600; box-shadow: var(--fh-shadow);
+}
+.sp-note { font-size: 12px; color: var(--fh-muted); margin-top: 6px; }
+.sp-blocked { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; background: var(--fh-bg); margin-bottom: 6px; }
+.sp-blocked .av { width: 32px; height: 32px; border-radius: 50%; background: var(--fh-accent); color: #fff; display: grid; place-items: center; font-weight: 700; flex: none; }
+.sp-blocked .nm { flex: 1; font-size: 14px; }
+.sp-blocked button { font-size: 12px; color: var(--fh-accent); background: none; border: none; cursor: pointer; font-weight: 600; }

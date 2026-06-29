@@ -32,3 +32,21 @@
   for = "/index.html"
   [headers.values]
     Cache-Control = "public, max-age=0, must-revalidate"
+
+# ── Security headers (applied to every route) ────────────────────────────────
+# CSP is scoped to the origins the app actually talks to: Supabase REST/Storage
+# (https) + Realtime (wss), Razorpay checkout, and data:/blob: for inline
+# stickers/app-icons and recorded voice notes. frame-ancestors 'none' replaces
+# X-Frame-Options for clickjacking defence. Verify in the browser console after
+# the next deploy and widen a source only if a legitimate request is blocked.
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline' https://checkout.razorpay.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.supabase.co; media-src 'self' blob: https://*.supabase.co; font-src 'self' data:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://checkout.razorpay.com https://api.razorpay.com; frame-src https://*.razorpay.com https://checkout.razorpay.com; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests"
+    Strict-Transport-Security = "max-age=63072000; includeSubDomains; preload"
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(self), microphone=(self), geolocation=(), payment=(self), display-capture=(self), usb=(), magnetometer=(), accelerometer=()"
+    Cross-Origin-Opener-Policy = "same-origin-allow-popups"
+    X-XSS-Protection = "0"

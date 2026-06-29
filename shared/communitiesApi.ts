@@ -2,7 +2,7 @@
 // Channels reuse the conversations/messages stack: creating a channel creates a
 // backing conversation, so every chat feature works inside a channel for free.
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { UUID } from './types.js';
+import type { UUID, Profile } from './types.js';
 import { getCurrentUser } from './api.js';
 
 export interface Community {
@@ -84,6 +84,32 @@ export async function getMyCommunities(client: SupabaseClient): Promise<Communit
   if (!ids.length) return [];
   const { data } = await client.from('communities').select('*').in('id', ids).order('created_at');
   return data ?? [];
+}
+
+export interface CommunityMember {
+  community_id: UUID;
+  user_id: UUID;
+  role: 'member' | 'admin';
+  joined_at: string;
+  profile?: Profile;
+}
+
+/** Members of a community, hydrated with their profiles (for the member list). */
+export async function getCommunityMembers(
+  client: SupabaseClient,
+  communityId: UUID,
+): Promise<CommunityMember[]> {
+  const { data } = await client
+    .from('community_members')
+    .select('*')
+    .eq('community_id', communityId)
+    .order('joined_at');
+  const members = (data ?? []) as CommunityMember[];
+  const ids = members.map((m) => m.user_id);
+  if (!ids.length) return [];
+  const { data: profiles } = await client.from('profiles').select('*').in('id', ids);
+  const byId = new Map((profiles ?? []).map((p: any) => [p.id, p as Profile]));
+  return members.map((m) => ({ ...m, profile: byId.get(m.user_id) }));
 }
 
 export async function joinCommunity(client: SupabaseClient, communityId: UUID) {

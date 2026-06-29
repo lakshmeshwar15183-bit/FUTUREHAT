@@ -1,0 +1,35 @@
+/* FUTUREHAT — voice message bubble + recording bar styling. */
+
+.voice-msg { display: flex; align-items: center; gap: 10px; min-width: 200px; padding: 2px 0; }
+.voice-play {
+  width: 38px; height: 38px; flex: none; border: none; border-radius: 50%;
+  background: var(--fh-accent); color: #fff; cursor: pointer; font-size: 13px;
+  display: grid; place-items: center;
+}
+.voice-msg.mine .voice-play { background: rgba(255, 255, 255, 0.9); color: var(--fh-accent); }
+.voice-wave { display: flex; align-items: center; gap: 2px; height: 30px; flex: 1; cursor: pointer; }
+.voice-bar {
+  flex: 1; min-width: 2px; border-radius: 2px;
+  background: color-mix(in srgb, currentColor 30%, transparent); align-self: center;
+}
+.voice-bar.on { background: currentColor; }
+.voice-time { font-size: 11px; opacity: 0.8; flex: none; font-variant-numeric: tabular-nums; }
+
+/* Recording bar (in compose area) */
+.voice-rec-bar {
+  display: flex; align-items: center; gap: 12px; flex: 1;
+  padding: 8px 12px; border-radius: 14px;
+  background: var(--fh-elevated); border: 1px solid var(--fh-border);
+}
+.voice-rec-dot { width: 12px; height: 12px; border-radius: 50%; background: #ef4444; animation: voiceBlink 1s infinite; flex: none; }
+@keyframes voiceBlink { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+.voice-rec-time { font-variant-numeric: tabular-nums; font-weight: 600; font-size: 15px; flex: none; }
+.voice-rec-hint { flex: 1; text-align: center; color: var(--fh-muted); font-size: 13px; user-select: none; }
+.voice-rec-hint.cancel { color: #ef4444; }
+.voice-rec-cancel, .voice-rec-send {
+  width: 42px; height: 42px; flex: none; border: none; border-radius: 50%; cursor: pointer; font-size: 16px;
+  display: grid; place-items: center;
+}
+.voice-rec-cancel { background: rgba(239, 68, 68, 0.16); color: #ef4444; }
+.voice-rec-send { background: var(--fh-accent); color: #fff; }
+.mic-btn.recording { background: #ef4444; color: #fff; }

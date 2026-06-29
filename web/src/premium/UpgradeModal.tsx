@@ -29,6 +29,12 @@ export function UpgradeModal({ onClose }: { onClose: () => void }) {
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState('');
+  const [showSoon, setShowSoon] = useState(false);
+  // Purchases are gated until a real gateway is configured. The moment Razorpay
+  // keys are set (VITE_RAZORPAY_KEY_ID → activeProviderId() === 'razorpay'), the
+  // real checkout button automatically replaces the "Available soon" CTA — no
+  // code change needed. To force-enable for another gateway, adjust this line.
+  const paymentsReady = activeProviderId() === 'razorpay';
 
   async function handleUpgrade() {
     if (!user) return;
@@ -123,14 +129,18 @@ export function UpgradeModal({ onClose }: { onClose: () => void }) {
 
               {error && <div className="upgrade-error">{error}</div>}
 
-              <motion.button whileTap={{ scale: 0.97 }} className="upgrade-cta" disabled={busy} onClick={handleUpgrade}>
-                {busy ? <span className="fh-spinner" style={{ width: 20, height: 20, borderWidth: 2 }} /> :
-                  `Upgrade — ${formatInr(PLANS[plan].priceInr)}/${PLANS[plan].period}`}
-              </motion.button>
+              {paymentsReady ? (
+                <motion.button whileTap={{ scale: 0.97 }} className="upgrade-cta" disabled={busy} onClick={handleUpgrade}>
+                  {busy ? <span className="fh-spinner" style={{ width: 20, height: 20, borderWidth: 2 }} /> :
+                    `Upgrade — ${formatInr(PLANS[plan].priceInr)}/${PLANS[plan].period}`}
+                </motion.button>
+              ) : (
+                <button type="button" className="upgrade-cta soon" onClick={() => setShowSoon(true)}>
+                  Get FUTUREHAT+ <span className="soon-tag">🟡 Available soon</span>
+                </button>
+              )}
               <div className="pay-note">
-                {activeProviderId() === 'razorpay'
-                  ? 'Secure payment via Razorpay'
-                  : 'Instant activation (configure Razorpay keys for live billing)'}
+                {paymentsReady ? 'Secure payment via Razorpay' : 'Secure checkout is coming in a future update.'}
               </div>
             </motion.div>
           )}
@@ -138,7 +148,9 @@ export function UpgradeModal({ onClose }: { onClose: () => void }) {
 
         <div className="feature-sections">
           {CATEGORY_ORDER.map((cat) => {
-            const feats = PREMIUM_FEATURES.filter((f) => f.category === cat);
+            // Only advertise features that work today — no "soon" placeholders.
+            const feats = PREMIUM_FEATURES.filter((f) => f.category === cat && f.status !== 'soon');
+            if (!feats.length) return null;
             const meta = FEATURE_CATEGORIES[cat];
             return (
               <div key={cat} className="feature-section">
@@ -148,10 +160,7 @@ export function UpgradeModal({ onClose }: { onClose: () => void }) {
                     <div key={f.key} className="feature-item">
                       <span className="feature-ico">{f.icon}</span>
                       <div>
-                        <div className="feature-title">
-                          {f.title}
-                          {f.status === 'soon' && <span className="soon">soon</span>}
-                        </div>
+                        <div className="feature-title">{f.title}</div>
                         <div className="feature-desc">{f.description}</div>
                       </div>
                     </div>
@@ -163,6 +172,21 @@ export function UpgradeModal({ onClose }: { onClose: () => void }) {
         </div>
 
         <div className="upgrade-footer">Developed by LAKSHMESHWAR PANDEY</div>
+
+        <AnimatePresence>
+          {showSoon && (
+            <motion.div className="soon-overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              onClick={() => setShowSoon(false)}>
+              <motion.div className="soon-card" initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
+                onClick={(e) => e.stopPropagation()}>
+                <div className="soon-emoji">🟡</div>
+                <h3>Available soon</h3>
+                <p>Premium subscriptions will be available in a future update once secure payment integration is completed.</p>
+                <button className="upgrade-cta" onClick={() => setShowSoon(false)}>Got it</button>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </motion.div>
     </motion.div>
   );

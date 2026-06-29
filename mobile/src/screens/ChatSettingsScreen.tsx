@@ -1,0 +1,89 @@
+// FUTUREHAT mobile — Chat settings: enter-to-send, font size, media visibility,
+// upload quality, auto-download, voice transcripts. Standalone; persists via
+// privacyApi chat-settings (user_preferences.extra.chat).
+import React, { useEffect, useMemo, useState } from 'react';
+import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+
+import { supabase } from '../lib/supabase';
+import { getChatSettings, setChatSettings, type ChatSettings, type FontSize, type MediaQuality } from '../lib/shared';
+import { useColors, spacing, radius, font, type Palette } from '../theme';
+
+export default function ChatSettingsScreen() {
+  const colors = useColors();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const [c, setC] = useState<ChatSettings | null>(null);
+
+  useEffect(() => { getChatSettings(supabase).then(setC).catch(() => {}); }, []);
+
+  async function update(patch: Partial<ChatSettings>) {
+    setC((cur) => (cur ? { ...cur, ...patch } : cur));
+    await setChatSettings(supabase, patch);
+  }
+
+  function pickFont() {
+    Alert.alert('Font size', undefined, [
+      { text: 'Small', onPress: () => update({ fontSize: 'small' }) },
+      { text: 'Medium', onPress: () => update({ fontSize: 'medium' }) },
+      { text: 'Large', onPress: () => update({ fontSize: 'large' }) },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  }
+  function pickQuality() {
+    Alert.alert('Upload quality', undefined, [
+      { text: 'Auto', onPress: () => update({ mediaUploadQuality: 'auto' }) },
+      { text: 'High', onPress: () => update({ mediaUploadQuality: 'high' }) },
+      { text: 'Data saver', onPress: () => update({ mediaUploadQuality: 'data_saver' }) },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  }
+
+  const fontLabel: Record<FontSize, string> = { small: 'Small', medium: 'Medium', large: 'Large' };
+  const qualityLabel: Record<MediaQuality, string> = { auto: 'Auto', high: 'High', data_saver: 'Data saver' };
+
+  return (
+    <ScrollView style={styles.container}>
+      {c && (
+        <View style={styles.group}>
+          <View style={styles.row}>
+            <Text style={styles.rowLabel}>Enter to send</Text>
+            <Switch value={c.enterToSend} onValueChange={(v) => update({ enterToSend: v })} trackColor={{ true: colors.primary, false: colors.border }} />
+          </View>
+          <Pressable style={styles.row} onPress={pickFont}>
+            <Text style={styles.rowLabel}>Font size</Text>
+            <Text style={styles.rowValue}>{fontLabel[c.fontSize]}</Text>
+            <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
+          </Pressable>
+          <View style={styles.row}>
+            <Text style={styles.rowLabel}>Media visibility</Text>
+            <Switch value={c.mediaVisibility} onValueChange={(v) => update({ mediaVisibility: v })} trackColor={{ true: colors.primary, false: colors.border }} />
+          </View>
+          <Pressable style={styles.row} onPress={pickQuality}>
+            <Text style={styles.rowLabel}>Upload quality</Text>
+            <Text style={styles.rowValue}>{qualityLabel[c.mediaUploadQuality]}</Text>
+            <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
+          </Pressable>
+          <View style={styles.row}>
+            <Text style={styles.rowLabel}>Auto-download media</Text>
+            <Switch value={c.autoDownload} onValueChange={(v) => update({ autoDownload: v })} trackColor={{ true: colors.primary, false: colors.border }} />
+          </View>
+          <View style={[styles.row, styles.rowLast]}>
+            <Text style={styles.rowLabel}>Voice message transcripts</Text>
+            <Switch value={c.voiceTranscripts} onValueChange={(v) => update({ voiceTranscripts: v })} trackColor={{ true: colors.primary, false: colors.border }} />
+          </View>
+        </View>
+      )}
+      <View style={{ height: spacing(8) }} />
+    </ScrollView>
+  );
+}
+
+const makeStyles = (colors: Palette) =>
+  StyleSheet.create({
+    container: { flex: 1, backgroundColor: colors.bg },
+    group: { backgroundColor: colors.surface, marginHorizontal: spacing(3), marginTop: spacing(4), borderRadius: radius.md, overflow: 'hidden' },
+    row: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing(4), paddingVertical: spacing(3.5), borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
+    rowLast: { borderBottomWidth: 0 },
+    rowLabel: { flex: 1, color: colors.text, fontSize: font.body },
+    rowValue: { color: colors.textMuted, fontSize: font.small, marginRight: spacing(2) },
+  });

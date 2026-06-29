@@ -27,6 +27,26 @@
 }
 .modal-close:hover { background: rgba(255, 255, 255, 0.16); }
 
+/* "Available soon" purchase gating (remove once Razorpay is live) */
+.upgrade-cta.soon { display: inline-flex; align-items: center; justify-content: center; gap: 10px; }
+.soon-tag {
+  font-size: 12px; font-weight: 700; padding: 3px 9px; border-radius: 999px;
+  background: rgba(245, 200, 72, 0.18); color: #f5c848; white-space: nowrap;
+}
+.soon-overlay {
+  position: absolute; inset: 0; z-index: 10;
+  background: rgba(0, 0, 0, 0.6); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+  display: flex; align-items: center; justify-content: center; padding: 24px; border-radius: inherit;
+}
+.soon-card {
+  width: min(360px, 100%); text-align: center;
+  background: #141a22; border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 18px; padding: 28px 24px; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+}
+.soon-emoji { font-size: 40px; margin-bottom: 8px; }
+.soon-card h3 { margin: 0 0 8px; font-size: 20px; color: #fff; }
+.soon-card p { margin: 0 0 18px; font-size: 14px; line-height: 1.55; color: #b8c2cc; }
+
 /* Upgrade modal */
 .upgrade-modal {
   position: relative;

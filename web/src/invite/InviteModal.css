@@ -1,0 +1,33 @@
+/* FUTUREHAT — invite modal, theme-aware via --fh-* vars. */
+
+.invite-modal {
+  position: relative;
+  width: min(440px, 100%);
+  background: var(--fh-panel);
+  color: var(--fh-text);
+  border: 1px solid var(--fh-border);
+  border-radius: var(--fh-radius, 18px);
+  box-shadow: var(--fh-shadow, 0 24px 60px rgba(0, 0, 0, 0.4));
+  padding: 28px;
+}
+.invite-modal .modal-close {
+  position: absolute; top: 16px; right: 16px;
+  width: 34px; height: 34px; border: none; border-radius: 50%;
+  background: rgba(127, 127, 127, 0.16); color: var(--fh-text); cursor: pointer; font-size: 14px;
+}
+.invite-title { margin: 0 0 8px; font-size: 21px; }
+.invite-desc { font-size: 14px; color: var(--fh-muted); margin: 0 0 18px; }
+.invite-link-row { display: flex; gap: 8px; margin-bottom: 12px; }
+.invite-link {
+  flex: 1; padding: 11px 13px; border-radius: 12px;
+  border: 1px solid var(--fh-border); background: var(--fh-bg); color: var(--fh-text); font: inherit;
+}
+.invite-copy {
+  padding: 0 16px; border: 1px solid var(--fh-border); border-radius: 12px;
+  background: var(--fh-elevated); color: var(--fh-text); font-weight: 600; cursor: pointer;
+}
+.invite-share {
+  width: 100%; padding: 12px; border: none; border-radius: 12px;
+  background: var(--fh-accent); color: #fff; font-weight: 700; cursor: pointer;
+}
+.invite-note { margin: 14px 0 0; font-size: 12px; color: var(--fh-muted); text-align: center; }

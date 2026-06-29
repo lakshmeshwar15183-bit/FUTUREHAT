@@ -93,6 +93,9 @@ export default function ChatScreen() {
   const [reply, setReply] = useState<Message | null>(null);
   const [editing, setEditing] = useState<Message | null>(null);
   const [selected, setSelected] = useState<Message | null>(null);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [selectionForward, setSelectionForward] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
   const [viewerUrl, setViewerUrl] = useState<string | null>(null);
   const [forwardOpen, setForwardOpen] = useState(false);
@@ -272,7 +275,32 @@ export default function ChatScreen() {
         : formatLastSeen(peers[0]?.last_seen);
 
   useEffect(() => {
+    if (selectionMode) {
+      navigation.setOptions({
+        headerTitle: () => <Text style={styles.headerTitle}>{selectedIds.size} selected</Text>,
+        headerLeft: () => (
+          <Pressable hitSlop={8} onPress={exitSelection}>
+            <Ionicons name="close" size={24} color={colors.text} />
+          </Pressable>
+        ),
+        headerRight: () => (
+          <View style={styles.headerActions}>
+            <Pressable hitSlop={8} onPress={copySelected}>
+              <Ionicons name="copy-outline" size={21} color={colors.text} />
+            </Pressable>
+            <Pressable hitSlop={8} onPress={forwardSelectedMany} style={{ marginLeft: 18 }}>
+              <Ionicons name="arrow-redo-outline" size={22} color={colors.text} />
+            </Pressable>
+            <Pressable hitSlop={8} onPress={() => deleteMany([...selectedIds])} style={{ marginLeft: 18 }}>
+              <Ionicons name="trash-outline" size={21} color={colors.danger} />
+            </Pressable>
+          </View>
+        ),
+      });
+      return;
+    }
     navigation.setOptions({
+      headerLeft: undefined,
       headerTitle: () => (
         <Pressable onPress={() => peers[0] && navigation.navigate('Profile', { userId: peers[0].id })}>
           <Text style={styles.headerTitle} numberOfLines={1}>
@@ -281,24 +309,25 @@ export default function ChatScreen() {
           {!!subtitle && <Text style={styles.headerSub}>{subtitle}</Text>}
         </Pressable>
       ),
-      headerRight: () => (
-        <View style={styles.headerActions}>
-          <Pressable hitSlop={8} onPress={() => placeCall('audio')}>
-            <Ionicons name="call-outline" size={22} color={colors.text} />
-          </Pressable>
-          <Pressable hitSlop={8} onPress={() => placeCall('video')} style={{ marginLeft: 18 }}>
-            <Ionicons name="videocam-outline" size={24} color={colors.text} />
-          </Pressable>
-        </View>
-      ),
+      // Group calling isn't implemented yet, so 1:1 call buttons are only shown
+      // in direct chats — no dead/"coming soon" buttons in groups.
+      headerRight: isGroup
+        ? undefined
+        : () => (
+            <View style={styles.headerActions}>
+              <Pressable hitSlop={8} onPress={() => placeCall('audio')}>
+                <Ionicons name="call-outline" size={22} color={colors.text} />
+              </Pressable>
+              <Pressable hitSlop={8} onPress={() => placeCall('video')} style={{ marginLeft: 18 }}>
+                <Ionicons name="videocam-outline" size={24} color={colors.text} />
+              </Pressable>
+            </View>
+          ),
     });
-  }, [navigation, params.title, subtitle, peers, colors, styles]);
+  }, [navigation, params.title, subtitle, peers, colors, styles, selectionMode, selectedIds, isGroup]);
 
   function placeCall(kind: 'audio' | 'video') {
-    if (isGroup) {
-      Alert.alert('Group calls', 'Group calling is coming soon. Open a 1:1 chat to call now.');
-      return;
-    }
+    // Only reachable from direct chats (call buttons are hidden in groups).
     const peer = peers[0];
     if (!peer) return;
     startCall(conversationId, peer, kind);
@@ -411,6 +440,36 @@ export default function ChatScreen() {
     }
   }
 
+  // ── Multi-select ──────────────────────────────────────────────────────────
+  function enterSelection(m: Message) {
+    setSelectionMode(true);
+    setSelectedIds(new Set([m.id]));
+  }
+  function toggleSelect(m: Message) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(m.id)) next.delete(m.id); else next.add(m.id);
+      if (next.size === 0) setSelectionMode(false);
+      return next;
+    });
+  }
+  function exitSelection() {
+    setSelectionMode(false);
+    setSelectedIds(new Set());
+    setSelectionForward(false);
+  }
+  async function copySelected() {
+    const texts = messagesRef.current.filter((m) => selectedIds.has(m.id) && m.content).map((m) => m.content as string);
+    if (texts.length) await Clipboard.setStringAsync(texts.join('\n'));
+    exitSelection();
+  }
+  async function forwardSelectedMany() {
+    const list = await getMyConversations(supabase);
+    setForwardList(list);
+    setSelectionForward(true);
+    setForwardOpen(true);
+  }
+
   // ── Message actions ───────────────────────────────────────────────────────
   async function react(emoji: string) {
     if (!selected) return;
@@ -423,9 +482,34 @@ export default function ChatScreen() {
   async function doDelete() {
     if (!selected) return;
     const target = selected;
-    setSelected(null);
-    await deleteMessage(supabase, target.id);
-    setMsgs((prev) => prev.map((m) => (m.id === target.id ? { ...m, is_deleted: true } : m)));
+    Alert.alert('Delete message', 'Are you sure you want to delete this message?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete for everyone',
+        style: 'destructive',
+        onPress: async () => {
+          setSelected(null);
+          await deleteMessage(supabase, target.id);
+          setMsgs((prev) => prev.map((m) => (m.id === target.id ? { ...m, is_deleted: true } : m)));
+        },
+      },
+    ]);
+  }
+
+  // Bulk delete for multi-select (delete-for-everyone).
+  async function deleteMany(ids: string[]) {
+    Alert.alert('Delete messages', `Delete ${ids.length} message${ids.length === 1 ? '' : 's'}?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete for everyone',
+        style: 'destructive',
+        onPress: async () => {
+          exitSelection();
+          await Promise.all(ids.map((id) => deleteMessage(supabase, id).catch(() => {})));
+          setMsgs((prev) => prev.map((m) => (ids.includes(m.id) ? { ...m, is_deleted: true } : m)));
+        },
+      },
+    ]);
   }
 
   async function openForward() {
@@ -435,9 +519,17 @@ export default function ChatScreen() {
   }
 
   async function doForward(targetId: string) {
+    setForwardOpen(false);
+    if (selectionForward) {
+      const srcs = messagesRef.current.filter((m) => selectedIds.has(m.id));
+      for (const m of srcs) {
+        await forwardMessage(supabase, targetId, { type: m.type, content: m.content, media_url: m.media_url });
+      }
+      exitSelection();
+      return;
+    }
     if (!selected) return;
     const src = selected;
-    setForwardOpen(false);
     setSelected(null);
     await forwardMessage(supabase, targetId, {
       type: src.type,
@@ -489,11 +581,14 @@ export default function ChatScreen() {
         replyTo={replyTo}
         reactions={reactionsByMsg.get(msg.id)}
         tick={mine ? receipts.get(msg.id) ?? 'sent' : undefined}
+        selected={selectionMode && selectedIds.has(msg.id)}
         onLongPress={() => {
           Haptics.selectionAsync().catch(() => {});
-          setSelected(msg);
+          if (selectionMode) toggleSelect(msg);
+          else setSelected(msg);
         }}
-        onOpenImage={(url) => setViewerUrl(url)}
+        onPress={selectionMode ? () => toggleSelect(msg) : undefined}
+        onOpenImage={(url) => (selectionMode ? toggleSelect(msg) : setViewerUrl(url))}
       />
     );
   };
@@ -554,7 +649,7 @@ export default function ChatScreen() {
           </Pressable>
           <View style={styles.recordingPill}>
             <View style={styles.recDot} />
-            <Text style={styles.recText}>Recording… release to send</Text>
+            <Text style={styles.recText}>Recording… 🗑 cancel · ➤ send</Text>
           </View>
           <Pressable onPress={() => stopRecording(true)} style={styles.sendBtn}>
             <Ionicons name="send" size={20} color="#fff" />
@@ -656,6 +751,7 @@ export default function ChatScreen() {
               ))}
             </View>
             <ActionRow icon="arrow-undo" label="Reply" onPress={() => { setReply(selected); setSelected(null); }} />
+            <ActionRow icon="checkmark-circle-outline" label="Select" onPress={() => { if (selected) enterSelection(selected); setSelected(null); }} />
             {selected?.type === 'text' && (
               <ActionRow
                 icon="copy"

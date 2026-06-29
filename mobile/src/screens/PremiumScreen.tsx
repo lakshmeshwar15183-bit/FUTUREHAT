@@ -5,7 +5,7 @@
 // wired yet — activation here records a subscription via the shared API for
 // testing. Real Play Billing / "restore purchases" lands before public release.
 import React, { useCallback, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 
@@ -25,6 +25,10 @@ import {
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import { APP_NAME } from '../branding';
 
+// Purchases are gated until a payment gateway (Razorpay / Google Play Billing) is
+// wired. Flip to true once it's integrated and the real activate() flow takes over.
+const PAYMENTS_READY = false;
+
 export default function PremiumScreen() {
   const colors = useColors();
   const styles = useMemo(() => makeStyles(colors), [colors]);
@@ -32,6 +36,7 @@ export default function PremiumScreen() {
   const [sub, setSub] = useState<Subscription | null>(null);
   const [plan, setPlan] = useState<PlanId>('yearly');
   const [busy, setBusy] = useState(false);
+  const [showSoon, setShowSoon] = useState(false);
 
   const load = useCallback(async () => {
     setSub(await getSubscription(supabase));
@@ -107,17 +112,21 @@ export default function PremiumScreen() {
         <Pressable style={styles.cancelBtn} onPress={cancel}>
           <Text style={styles.cancelText}>Cancel renewal</Text>
         </Pressable>
-      ) : (
+      ) : PAYMENTS_READY ? (
         <Pressable style={styles.cta} onPress={activate} disabled={busy}>
           {busy ? <ActivityIndicator color="#000" /> : <Text style={styles.ctaText}>Get {APP_NAME}+</Text>}
         </Pressable>
+      ) : (
+        <Pressable style={styles.cta} onPress={() => setShowSoon(true)}>
+          <Text style={styles.ctaText}>Get {APP_NAME}+</Text>
+          <View style={styles.soonPill}><Text style={styles.soonPillText}>🟡 Available soon</Text></View>
+        </Pressable>
       )}
-
-      <Text style={styles.restore}>Restore purchases (available with Play Billing).</Text>
 
       <View style={styles.features}>
         {Object.entries(FEATURE_CATEGORIES).map(([cat, meta]) => {
-          const items = PREMIUM_FEATURES.filter((f) => f.category === cat);
+          // Only advertise features that actually work today — no "soon" items.
+          const items = PREMIUM_FEATURES.filter((f) => f.category === cat && f.status !== 'soon');
           if (!items.length) return null;
           return (
             <View key={cat} style={{ marginBottom: spacing(5) }}>
@@ -126,9 +135,7 @@ export default function PremiumScreen() {
                 <View key={f.key} style={styles.featureRow}>
                   <Text style={styles.featureIcon}>{f.icon}</Text>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.featureTitle}>
-                      {f.title} {f.status === 'soon' && <Text style={styles.soon}>· soon</Text>}
-                    </Text>
+                    <Text style={styles.featureTitle}>{f.title}</Text>
                     <Text style={styles.featureDesc}>{f.description}</Text>
                   </View>
                 </View>
@@ -137,6 +144,22 @@ export default function PremiumScreen() {
           );
         })}
       </View>
+
+      <Modal visible={showSoon} transparent animationType="slide" onRequestClose={() => setShowSoon(false)}>
+        <Pressable style={styles.soonBackdrop} onPress={() => setShowSoon(false)}>
+          <Pressable style={styles.soonSheet} onPress={() => {}}>
+            <View style={styles.soonHandle} />
+            <Text style={styles.soonEmoji}>🟡</Text>
+            <Text style={styles.soonTitle}>Available soon</Text>
+            <Text style={styles.soonBody}>
+              Premium subscriptions will be available in a future update once secure payment integration is completed.
+            </Text>
+            <Pressable style={styles.soonBtn} onPress={() => setShowSoon(false)}>
+              <Text style={styles.soonBtnText}>Got it</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </ScrollView>
   );
 }
@@ -182,4 +205,18 @@ const makeStyles = (colors: Palette) =>
     featureTitle: { color: colors.text, fontSize: font.body, fontWeight: '600' },
     soon: { color: colors.accentPlus, fontSize: font.tiny, fontWeight: '700' },
     featureDesc: { color: colors.textMuted, fontSize: font.small, marginTop: 1 },
+    soonPill: { marginTop: 6, backgroundColor: 'rgba(0,0,0,0.18)', borderRadius: radius.pill, paddingHorizontal: spacing(3), paddingVertical: 2 },
+    soonPillText: { color: '#000', fontSize: font.tiny, fontWeight: '700' },
+    soonBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+    soonSheet: {
+      backgroundColor: colors.surface,
+      borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg,
+      padding: spacing(6), alignItems: 'center',
+    },
+    soonHandle: { width: 40, height: 4, borderRadius: 2, backgroundColor: colors.border, marginBottom: spacing(4) },
+    soonEmoji: { fontSize: 40, marginBottom: spacing(2) },
+    soonTitle: { color: colors.text, fontSize: font.title, fontWeight: '800', marginBottom: spacing(2) },
+    soonBody: { color: colors.textMuted, fontSize: font.body, lineHeight: 22, textAlign: 'center', marginBottom: spacing(5) },
+    soonBtn: { backgroundColor: colors.primary, borderRadius: radius.pill, paddingVertical: spacing(3.5), paddingHorizontal: spacing(10) },
+    soonBtnText: { color: '#fff', fontSize: font.heading, fontWeight: '700' },
   });

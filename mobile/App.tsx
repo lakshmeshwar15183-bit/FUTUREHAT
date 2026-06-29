@@ -36,6 +36,16 @@ import AppLockSetupScreen from './src/screens/AppLockSetupScreen';
 import CreateCommunityScreen from './src/screens/CreateCommunityScreen';
 import CommunityDetailScreen from './src/screens/CommunityDetailScreen';
 import HelpSupportScreen from './src/screens/HelpSupportScreen';
+import PrivacyScreen from './src/screens/PrivacyScreen';
+import NotificationsScreen from './src/screens/NotificationsScreen';
+import ChatSettingsScreen from './src/screens/ChatSettingsScreen';
+import StorageDataScreen from './src/screens/StorageDataScreen';
+import AccountSecurityScreen from './src/screens/AccountSecurityScreen';
+import DataExportScreen from './src/screens/DataExportScreen';
+import ArchivedChatsScreen from './src/screens/ArchivedChatsScreen';
+import LegalScreen from './src/screens/LegalScreen';
+import DiagnosticsScreen from './src/screens/DiagnosticsScreen';
+import InviteScreen from './src/screens/InviteScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator();
@@ -148,6 +158,16 @@ function RootNavigator() {
               <Stack.Screen name="CreateCommunity" component={CreateCommunityScreen} options={{ title: 'New community' }} />
               <Stack.Screen name="CommunityDetail" component={CommunityDetailScreen} options={{ title: '' }} />
               <Stack.Screen name="HelpSupport" component={HelpSupportScreen} options={{ title: 'Help & Support' }} />
+              <Stack.Screen name="Privacy" component={PrivacyScreen} options={{ title: 'Privacy' }} />
+              <Stack.Screen name="Notifications" component={NotificationsScreen} options={{ title: 'Notifications' }} />
+              <Stack.Screen name="ChatSettings" component={ChatSettingsScreen} options={{ title: 'Chats' }} />
+              <Stack.Screen name="StorageData" component={StorageDataScreen} options={{ title: 'Storage & data' }} />
+              <Stack.Screen name="AccountSecurity" component={AccountSecurityScreen} options={{ title: 'Account & security' }} />
+              <Stack.Screen name="DataExport" component={DataExportScreen} options={{ title: 'Export data' }} />
+              <Stack.Screen name="ArchivedChats" component={ArchivedChatsScreen} options={{ title: 'Archived chats' }} />
+              <Stack.Screen name="Legal" component={LegalScreen} options={{ title: 'Legal & policies' }} />
+              <Stack.Screen name="Diagnostics" component={DiagnosticsScreen} options={{ title: 'Diagnostics' }} />
+              <Stack.Screen name="Invite" component={InviteScreen} options={{ title: 'Invite friends' }} />
             </>
           ) : (
             <Stack.Screen name="Auth" component={AuthScreen} options={{ headerShown: false }} />

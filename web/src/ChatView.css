@@ -95,6 +95,8 @@
 
 .message-text {
   margin-bottom: 4px;
+  /* Driven by the Chat → Font size setting (ChatSettingsModal); inherits when unset. */
+  font-size: var(--fh-font-size, inherit);
 }
 
 .message-image {
@@ -332,7 +334,9 @@
   color: var(--fh-text); cursor: pointer; font-size: 15px;
 }
 .header-icon-btn:hover { background: rgba(127, 127, 127, 0.26); }
-.chat-header-info + .header-icon-btn { margin-left: auto; }
+.header-icon-btn:disabled { opacity: 0.4; cursor: default; }
+.header-icon-btn.call { margin-left: 0; }
+.chat-header-info + .header-icon-btn.call { margin-left: auto; }
 
 .chat-search-bar {
   display: flex; align-items: center; gap: 10px;

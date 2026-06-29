@@ -1,0 +1,141 @@
+// FUTUREHAT — contact / user profile screen (Telegram-style): big avatar, name,
+// @username, about, last seen, phone, and Message / Mute / Call / Video actions,
+// plus an overflow with Share contact, Block and Report. Self-contained — block/
+// report/mute are handled internally via supportApi; Message/Call/Video are
+// delegated to the parent (which owns conversation + call state).
+//
+// Wiring (deferred to checkpoint recovery): open this from a chat header / avatar
+// tap, passing the other participant's Profile and the three action callbacks.
+
+import { useEffect, useState } from 'react';
+import { motion } from 'framer-motion';
+import { supabase } from '../supabase';
+import {
+  blockUser, unblockUser, getBlockedIds, submitReport,
+  muteConversation, unmuteConversation, getMutedIds,
+} from '@shared/supportApi';
+import type { Profile } from '@shared/types';
+import { formatDistanceToNow } from 'date-fns';
+import { modalBackdrop, modalPanel } from '../motion';
+import './ContactProfileModal.css';
+
+interface Props {
+  profile: Profile;
+  online?: boolean;
+  isPremium?: boolean;
+  conversationId?: string;            // present when a 1:1 chat already exists
+  onClose: () => void;
+  onMessage?: () => void;
+  onCall?: () => void;
+  onVideo?: () => void;
+}
+
+export function ContactProfileModal({ profile, online, isPremium, conversationId, onClose, onMessage, onCall, onVideo }: Props) {
+  const [blocked, setBlocked] = useState(false);
+  const [muted, setMuted] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+
+  function flash(m: string) { setToast(m); setTimeout(() => setToast(null), 2400); }
+
+  useEffect(() => {
+    getBlockedIds(supabase).then((ids) => setBlocked(ids.includes(profile.id))).catch(() => {});
+    if (conversationId) getMutedIds(supabase).then((ids) => setMuted(ids.includes(conversationId))).catch(() => {});
+  }, [profile.id, conversationId]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  async function toggleBlock() {
+    setMenuOpen(false);
+    const was = blocked;
+    if (!was && !confirm(`Block ${profile.display_name || 'this user'}?`)) return;
+    setBlocked(!was);
+    const { error } = was ? await unblockUser(supabase, profile.id) : await blockUser(supabase, profile.id);
+    if (error) { setBlocked(was); flash('Could not update block.'); }
+    else flash(was ? 'Unblocked' : 'Blocked');
+  }
+
+  async function toggleMute() {
+    if (!conversationId) return;
+    const was = muted;
+    setMuted(!was);
+    const { error } = was ? await unmuteConversation(supabase, conversationId) : await muteConversation(supabase, conversationId);
+    if (error) { setMuted(was); flash('Could not update mute.'); }
+  }
+
+  async function report() {
+    setMenuOpen(false);
+    const reason = prompt('Report this user — what is the issue?');
+    if (!reason?.trim()) return;
+    const { error } = await submitReport(supabase, 'user', profile.id, reason.trim());
+    flash(error ? 'Could not submit report.' : 'Report submitted.');
+  }
+
+  function shareContact() {
+    setMenuOpen(false);
+    const handle = profile.username ? `@${profile.username}` : profile.id.slice(0, 8);
+    const text = `${profile.display_name || 'FUTUREHAT user'} (${handle}) on FUTUREHAT`;
+    if (navigator.share) navigator.share({ title: 'FUTUREHAT contact', text }).catch(() => {});
+    else { navigator.clipboard?.writeText(text).then(() => flash('Contact copied')).catch(() => flash('Copy failed')); }
+  }
+
+  const presence = online ? 'online' : profile.last_seen
+    ? `last seen ${formatDistanceToNow(new Date(profile.last_seen), { addSuffix: true })}`
+    : 'offline';
+
+  return (
+    <motion.div className="modal-backdrop" variants={modalBackdrop} initial="initial" animate="animate" exit="exit" onClick={onClose}>
+      <motion.div className="contact-modal" variants={modalPanel} onClick={(e) => e.stopPropagation()}>
+        <div className="contact-topbar">
+          <button className="contact-back" onClick={onClose} aria-label="Close">←</button>
+          <button className="contact-overflow" onClick={() => setMenuOpen((v) => !v)} aria-label="More options">⋮</button>
+          {menuOpen && (
+            <div className="contact-menu" onClick={(e) => e.stopPropagation()}>
+              <button onClick={shareContact}>↗ Share contact</button>
+              <button onClick={report}>🚩 Report</button>
+              <button className="danger" onClick={toggleBlock}>{blocked ? 'Unblock' : '🚫 Block user'}</button>
+            </div>
+          )}
+        </div>
+
+        <div className="contact-hero">
+          <div className="contact-avatar" style={profile.avatar_url ? { backgroundImage: `url(${profile.avatar_url})` } : undefined}>
+            {!profile.avatar_url && (profile.display_name?.[0]?.toUpperCase() || '?')}
+            {online && <span className="contact-online-dot" />}
+          </div>
+          <div className="contact-name">
+            {profile.display_name || 'FUTUREHAT user'}
+            {isPremium && <span className="contact-badge" title="FUTUREHAT+">✦</span>}
+          </div>
+          <div className="contact-presence">{presence}</div>
+        </div>
+
+        <div className="contact-actions">
+          {onMessage && <button onClick={onMessage}><span>💬</span>Message</button>}
+          {conversationId && <button onClick={toggleMute}><span>{muted ? '🔔' : '🔕'}</span>{muted ? 'Unmute' : 'Mute'}</button>}
+          {onCall && <button onClick={onCall}><span>📞</span>Call</button>}
+          {onVideo && <button onClick={onVideo}><span>🎥</span>Video</button>}
+        </div>
+
+        <div className="contact-fields">
+          {profile.username && (
+            <div className="contact-field"><div className="contact-field-val">@{profile.username}</div><div className="contact-field-label">Username</div></div>
+          )}
+          {profile.about && (
+            <div className="contact-field"><div className="contact-field-val">{profile.about}</div><div className="contact-field-label">About</div></div>
+          )}
+          {profile.phone && (
+            <div className="contact-field"><div className="contact-field-val">{profile.phone}</div><div className="contact-field-label">Phone</div></div>
+          )}
+        </div>
+
+        {blocked && <div className="contact-blocked-note">🚫 You have blocked this user.</div>}
+        {toast && <div className="contact-toast">{toast}</div>}
+      </motion.div>
+    </motion.div>
+  );
+}

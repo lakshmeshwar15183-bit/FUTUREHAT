@@ -194,14 +194,14 @@ function AppInner() {
           <h2>🎩 FUTUREHAT{isPremium && <PremiumBadge compact />}</h2>
           <div className="sidebar-actions">
             {!isPremium && (
-              <button onClick={openUpgrade} className="icon-btn upgrade-pill" title="Upgrade to FUTUREHAT+">✦</button>
+              <button onClick={openUpgrade} className="icon-btn upgrade-pill" title="Upgrade to FUTUREHAT+" aria-label="Upgrade to FUTUREHAT+">✦</button>
             )}
-            <button onClick={() => setShowStatus(true)} className="icon-btn" title="Status">📸</button>
-            <button onClick={() => setShowCommunities(true)} className="icon-btn" title="Communities">🌐</button>
-            <button onClick={() => setShowGroup(true)} className="icon-btn" title="New group">👥</button>
-            <button onClick={() => setShowSearch(!showSearch)} className="icon-btn" title="New chat">➕</button>
-            <button onClick={() => setShowSettings(true)} className="icon-btn" title="Settings">⚙️</button>
-            <button onClick={() => signOut(supabase)} className="icon-btn" title="Sign out">🚪</button>
+            <button onClick={() => setShowStatus(true)} className="icon-btn" title="Status" aria-label="Status">📸</button>
+            <button onClick={() => setShowCommunities(true)} className="icon-btn" title="Communities" aria-label="Communities">🌐</button>
+            <button onClick={() => setShowGroup(true)} className="icon-btn" title="New group" aria-label="New group">👥</button>
+            <button onClick={() => setShowSearch(!showSearch)} className="icon-btn" title="New chat" aria-label="New chat">➕</button>
+            <button onClick={() => setShowSettings(true)} className="icon-btn" title="Settings" aria-label="Settings">⚙️</button>
+            <button onClick={() => signOut(supabase)} className="icon-btn" title="Sign out" aria-label="Sign out">🚪</button>
           </div>
         </div>
 

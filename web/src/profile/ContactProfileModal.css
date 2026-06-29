@@ -1,0 +1,67 @@
+/* FUTUREHAT — contact profile modal, theme-aware via --fh-* vars. */
+
+.contact-modal {
+  position: relative;
+  width: min(440px, 100%);
+  max-height: 90vh;
+  overflow-y: auto;
+  background: var(--fh-panel);
+  color: var(--fh-text);
+  border: 1px solid var(--fh-border);
+  border-radius: var(--fh-radius, 18px);
+  box-shadow: var(--fh-shadow, 0 24px 60px rgba(0, 0, 0, 0.4));
+  padding: 0 0 20px;
+}
+
+.contact-topbar { position: relative; display: flex; justify-content: space-between; padding: 14px 14px 0; }
+.contact-back, .contact-overflow {
+  width: 36px; height: 36px; border: none; border-radius: 50%;
+  background: rgba(127, 127, 127, 0.16); color: var(--fh-text); cursor: pointer; font-size: 16px;
+}
+.contact-menu {
+  position: absolute; right: 14px; top: 52px; z-index: 5;
+  background: var(--fh-elevated); border: 1px solid var(--fh-border); border-radius: 12px;
+  padding: 6px; display: flex; flex-direction: column; min-width: 168px; box-shadow: var(--fh-shadow);
+}
+.contact-menu button {
+  background: none; border: none; color: var(--fh-text); text-align: left;
+  padding: 9px 12px; border-radius: 8px; font-size: 14px; cursor: pointer;
+}
+.contact-menu button:hover { background: rgba(127, 127, 127, 0.14); }
+.contact-menu button.danger { color: #ef4444; }
+
+.contact-hero { display: flex; flex-direction: column; align-items: center; padding: 8px 20px 18px; }
+.contact-avatar {
+  position: relative; width: 112px; height: 112px; border-radius: 50%;
+  display: grid; place-items: center; font-size: 46px; font-weight: 800; color: #fff;
+  background: linear-gradient(135deg, #f0883e, #f5a623); background-size: cover; background-position: center;
+  margin-bottom: 14px;
+}
+.contact-online-dot {
+  position: absolute; bottom: 8px; right: 8px; width: 18px; height: 18px;
+  border-radius: 50%; background: #22c55e; border: 3px solid var(--fh-panel);
+}
+.contact-name { font-size: 22px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+.contact-badge { color: #f5a623; font-size: 16px; }
+.contact-presence { font-size: 14px; color: var(--fh-muted); margin-top: 4px; }
+
+.contact-actions { display: flex; gap: 8px; padding: 0 16px 16px; }
+.contact-actions button {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 12px 4px; border: 1px solid var(--fh-border); border-radius: 14px;
+  background: var(--fh-elevated); color: var(--fh-accent); font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.contact-actions button span { font-size: 20px; }
+.contact-actions button:hover { border-color: var(--fh-accent); }
+
+.contact-fields { padding: 0 16px; display: flex; flex-direction: column; gap: 2px; }
+.contact-field { padding: 12px 14px; border-radius: 12px; background: var(--fh-elevated); margin-bottom: 8px; }
+.contact-field-val { font-size: 15px; }
+.contact-field-label { font-size: 12px; color: var(--fh-muted); margin-top: 2px; }
+
+.contact-blocked-note { margin: 8px 16px 0; font-size: 13px; color: #ef4444; text-align: center; }
+.contact-toast {
+  position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+  background: var(--fh-text); color: var(--fh-bg); padding: 9px 16px; border-radius: 999px;
+  font-size: 13px; font-weight: 600; box-shadow: var(--fh-shadow);
+}

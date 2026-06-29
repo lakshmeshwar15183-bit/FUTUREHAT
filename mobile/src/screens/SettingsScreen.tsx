@@ -1,7 +1,7 @@
 // FUTUREHAT mobile — Settings tab. Profile header, grouped settings rows,
 // owner credit footer, and sign out.
 import React, { useCallback, useMemo, useState } from 'react';
-import { Alert, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -60,7 +60,7 @@ export default function SettingsScreen() {
             {profile?.about || 'Hey there! I am using FUTUREHAT.'}
           </Text>
         </View>
-        <Ionicons name="qr-code-outline" size={24} color={colors.primary} />
+        <Ionicons name="chevron-forward" size={22} color={colors.textFaint} />
       </Pressable>
 
       <Pressable style={styles.premiumCard} onPress={() => navigation.navigate('Premium')}>
@@ -76,26 +76,25 @@ export default function SettingsScreen() {
 
       <Group>
         <Row icon="person-outline" label="Account" onPress={() => navigation.navigate('EditProfile')} />
-        <Row icon="lock-closed-outline" label="Privacy" onPress={() => notYet('Privacy controls')} />
-        <Row icon="shield-checkmark-outline" label="Security & App lock" onPress={() => navigation.navigate('AppLockSetup')} />
-        <Row icon="notifications-outline" label="Notifications" onPress={() => notYet('Notification settings')} />
+        <Row icon="key-outline" label="Account & security" onPress={() => navigation.navigate('AccountSecurity')} />
+        <Row icon="lock-closed-outline" label="Privacy" onPress={() => navigation.navigate('Privacy')} />
+        <Row icon="shield-checkmark-outline" label="App lock" onPress={() => navigation.navigate('AppLockSetup')} />
+        <Row icon="notifications-outline" label="Notifications" onPress={() => navigation.navigate('Notifications')} />
       </Group>
 
       <Group>
         <Row icon="color-palette-outline" label="Appearance & Themes" onPress={() => navigation.navigate('Appearance')} />
-        <Row icon="folder-outline" label="Storage & Data" onPress={() => notYet('Storage management')} />
-        <Row icon="cloud-upload-outline" label="Chat backup" onPress={() => notYet('Chat backup')} />
+        <Row icon="chatbubble-ellipses-outline" label="Chats" onPress={() => navigation.navigate('ChatSettings')} />
+        <Row icon="folder-outline" label="Storage & Data" onPress={() => navigation.navigate('StorageData')} />
+        <Row icon="archive-outline" label="Archived chats" onPress={() => navigation.navigate('ArchivedChats')} />
+        <Row icon="download-outline" label="Export my data" onPress={() => navigation.navigate('DataExport')} />
       </Group>
 
       <Group>
-        <Row
-          icon="share-social-outline"
-          label="Invite a friend"
-          onPress={() =>
-            Share.share({ message: `Join me on ${APP_NAME}! https://futurehat-app.netlify.app` })
-          }
-        />
+        <Row icon="share-social-outline" label="Invite a friend" onPress={() => navigation.navigate('Invite')} />
         <Row icon="help-circle-outline" label="Help & Support" onPress={() => navigation.navigate('HelpSupport')} />
+        <Row icon="document-text-outline" label="Legal & policies" onPress={() => navigation.navigate('Legal')} />
+        <Row icon="pulse-outline" label="Diagnostics" onPress={() => navigation.navigate('Diagnostics')} />
         <Row icon="log-out-outline" label="Sign out" danger onPress={doSignOut} />
       </Group>
 
@@ -103,10 +102,6 @@ export default function SettingsScreen() {
       <Text style={styles.version}>{APP_NAME} v{APP_VERSION}</Text>
     </ScrollView>
   );
-}
-
-function notYet(feature: string) {
-  Alert.alert(feature, `${feature} is coming in a later update.`);
 }
 
 function Group({ children }: { children: React.ReactNode }) {

@@ -1,0 +1,33 @@
+/* FUTUREHAT — Legal center modal, theme-aware via --fh-* vars. */
+
+.legal-modal {
+  position: relative;
+  width: min(560px, 100%);
+  max-height: 88vh;
+  overflow-y: auto;
+  background: var(--fh-panel);
+  color: var(--fh-text);
+  border: 1px solid var(--fh-border);
+  border-radius: var(--fh-radius, 18px);
+  box-shadow: var(--fh-shadow, 0 24px 60px rgba(0, 0, 0, 0.4));
+  padding: 28px;
+}
+.legal-modal .modal-close {
+  position: absolute; top: 16px; right: 16px;
+  width: 34px; height: 34px; border: none; border-radius: 50%;
+  background: rgba(127, 127, 127, 0.16); color: var(--fh-text); cursor: pointer; font-size: 14px;
+}
+.legal-title { margin: 0 0 16px; font-size: 22px; }
+.legal-tabs { display: flex; gap: 8px; margin-bottom: 18px; border-bottom: 1px solid var(--fh-border); }
+.legal-tabs button {
+  flex: 1; padding: 10px; background: none; border: none; border-bottom: 2px solid transparent;
+  color: var(--fh-muted); font-weight: 600; cursor: pointer;
+}
+.legal-tabs button.active { color: var(--fh-accent); border-bottom-color: var(--fh-accent); }
+.legal-body { font-size: 14px; line-height: 1.6; }
+.legal-body h3 { margin: 0 0 10px; font-size: 18px; }
+.legal-body h4 { margin: 16px 0 4px; font-size: 14px; color: var(--fh-accent); }
+.legal-body p { margin: 0 0 10px; color: var(--fh-text); }
+.legal-body ul { margin: 0 0 10px; padding-left: 20px; color: var(--fh-text); }
+.legal-body li { margin-bottom: 6px; }
+.legal-foot { margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--fh-border); font-size: 12px; color: var(--fh-muted); text-align: center; }

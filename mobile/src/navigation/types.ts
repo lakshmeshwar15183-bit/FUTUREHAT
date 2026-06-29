@@ -15,4 +15,15 @@ export type RootStackParamList = {
   CreateCommunity: undefined;
   CommunityDetail: { communityId: UUID; name: string };
   HelpSupport: undefined;
+  // Phase 4 settings & account screens
+  Privacy: undefined;
+  Notifications: undefined;
+  ChatSettings: undefined;
+  StorageData: undefined;
+  AccountSecurity: undefined;
+  DataExport: undefined;
+  ArchivedChats: undefined;
+  Legal: undefined;
+  Diagnostics: undefined;
+  Invite: undefined;
 };

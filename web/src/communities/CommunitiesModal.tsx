@@ -11,12 +11,13 @@ import {
   getMyCommunities, createCommunity, joinCommunity,
   getChannels, createChannel,
   getCommunityEvents, createEvent, rsvpEvent,
+  getCommunityMembers,
 } from '@shared/communitiesApi';
-import type { Community, Channel, CommunityEvent } from '@shared/communitiesApi';
+import type { Community, Channel, CommunityEvent, CommunityMember } from '@shared/communitiesApi';
 import { modalBackdrop, modalPanel } from '../motion';
 import './CommunitiesModal.css';
 
-type Tab = 'channels' | 'events';
+type Tab = 'channels' | 'events' | 'members';
 
 export function CommunitiesModal({ onClose, onOpenChannel }: {
   onClose: () => void;
@@ -35,6 +36,12 @@ export function CommunitiesModal({ onClose, onOpenChannel }: {
   const [joinId, setJoinId] = useState('');
 
   function flash(m: string) { setToast(m); setTimeout(() => setToast(null), 2400); }
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { if (active) setActive(null); else onClose(); } };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [active, onClose]);
 
   useEffect(() => { load(); }, []);
   async function load() {
@@ -135,6 +142,8 @@ function CommunityDetail({ community, myId, onBack, onOpenChannel, flash }: {
   const [tab, setTab] = useState<Tab>('channels');
   const [channels, setChannels] = useState<Channel[]>([]);
   const [events, setEvents] = useState<CommunityEvent[]>([]);
+  const [members, setMembers] = useState<CommunityMember[]>([]);
+  const [memberSearch, setMemberSearch] = useState('');
   const [loading, setLoading] = useState(true);
 
   // composer state
@@ -149,12 +158,21 @@ function CommunityDetail({ community, myId, onBack, onOpenChannel, flash }: {
   useEffect(() => { load(); }, [community.id]);
   async function load() {
     setLoading(true);
-    const [ch, ev] = await Promise.all([
+    const [ch, ev, mem] = await Promise.all([
       getChannels(supabase, community.id),
       getCommunityEvents(supabase, community.id),
+      getCommunityMembers(supabase, community.id),
     ]);
-    setChannels(ch); setEvents(ev); setLoading(false);
+    setChannels(ch); setEvents(ev); setMembers(mem); setLoading(false);
   }
+
+  const filteredMembers = members.filter((m) => {
+    const q = memberSearch.trim().toLowerCase();
+    if (!q) return true;
+    const p = m.profile;
+    return (p?.display_name || '').toLowerCase().includes(q) || (p?.username || '').toLowerCase().includes(q);
+  });
+  const roleOf = (m: CommunityMember) => (m.user_id === community.owner_id ? 'Owner' : m.role === 'admin' ? 'Admin' : null);
 
   async function addChannel() {
     if (!chName.trim()) return flash('Name the channel.');
@@ -198,6 +216,7 @@ function CommunityDetail({ community, myId, onBack, onOpenChannel, flash }: {
       <div className="comm-tabs">
         <button className={tab === 'channels' ? 'active' : ''} onClick={() => setTab('channels')}>Channels</button>
         <button className={tab === 'events' ? 'active' : ''} onClick={() => setTab('events')}>Events</button>
+        <button className={tab === 'members' ? 'active' : ''} onClick={() => setTab('members')}>Members</button>
       </div>
 
       {loading ? <div className="comm-empty">Loading…</div> : tab === 'channels' ? (
@@ -227,7 +246,7 @@ function CommunityDetail({ community, myId, onBack, onOpenChannel, flash }: {
             <button className="comm-btn primary wide" onClick={() => setShowChannelForm(true)}>+ New channel</button>
           ))}
         </div>
-      ) : (
+      ) : tab === 'events' ? (
         <div className="comm-section">
           {events.length === 0 && <div className="comm-empty">No events scheduled.</div>}
           {events.map((ev) => (
@@ -255,6 +274,20 @@ function CommunityDetail({ community, myId, onBack, onOpenChannel, flash }: {
           ) : (
             <button className="comm-btn primary wide" onClick={() => setShowEventForm(true)}>+ New event</button>
           )}
+        </div>
+      ) : (
+        <div className="comm-section">
+          <input className="comm-input" placeholder="Search members" value={memberSearch} onChange={(e) => setMemberSearch(e.target.value)} style={{ marginBottom: 8 }} />
+          {filteredMembers.length === 0 && <div className="comm-empty">No members found.</div>}
+          {filteredMembers.map((m) => (
+            <div key={m.user_id} className="channel-row" style={{ cursor: 'default' }}>
+              <span className="comm-avatar" style={{ width: 36, height: 36, fontSize: 15 }}>{m.profile?.display_name?.[0]?.toUpperCase() || '?'}</span>
+              <span className="channel-name">
+                {m.profile?.display_name || 'User'}{m.profile?.username ? ` · @${m.profile.username}` : ''}
+              </span>
+              {roleOf(m) && <span className="comm-admin-badge">{roleOf(m)}</span>}
+            </div>
+          ))}
         </div>
       )}
     </>

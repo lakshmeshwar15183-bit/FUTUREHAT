@@ -44,6 +44,12 @@ export function HelpSupportModal({ onClose }: { onClose: () => void }) {
   const activeKind = useMemo(() => KINDS.find((k) => k.id === kind)!, [kind]);
 
   useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  useEffect(() => {
     if (tab !== 'tickets') return;
     setLoadingTickets(true);
     getMyTickets(supabase).then((t) => { setTickets(t); setLoadingTickets(false); });
