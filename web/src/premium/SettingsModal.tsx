@@ -10,7 +10,12 @@ import { modalBackdrop, modalPanel } from '../motion';
 import { APP_VERSION, OWNER } from '../branding';
 import './SettingsModal.css';
 
-export function SettingsModal({ onClose, onEditProfile }: { onClose: () => void; onEditProfile: () => void }) {
+export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin }: {
+  onClose: () => void;
+  onEditProfile: () => void;
+  onHelp: () => void;
+  onAdmin?: () => void;
+}) {
   const { isPremium, isAdmin, preferences, setPreference } = usePremium();
   const { open: openUpgrade } = useUpgrade();
 
@@ -142,6 +147,19 @@ export function SettingsModal({ onClose, onEditProfile }: { onClose: () => void;
             <span className={`switch ${isPremium && preferences.app_lock ? 'on' : ''}`}><i /></span>
           </div>
           <p className="hint">Hide a chat from its conversation menu (•••).</p>
+        </section>
+
+        {/* Support & safety */}
+        <section className="settings-section">
+          <h3>🛟 Support &amp; safety</h3>
+          <button className="settings-link" onClick={() => { onClose(); onHelp(); }}>
+            Help &amp; Support · tickets · grievance →
+          </button>
+          {isAdmin && onAdmin && (
+            <button className="settings-link" onClick={() => { onClose(); onAdmin(); }}>
+              🛡️ Admin dashboard →
+            </button>
+          )}
         </section>
 
         {/* About */}

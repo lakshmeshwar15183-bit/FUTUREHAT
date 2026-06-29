@@ -1,0 +1,167 @@
+/* FUTUREHAT — Help & Support modal. Self-contained styling (theme-aware via
+   --fh-* vars) so it renders correctly no matter which CSS chunks have loaded. */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+}
+
+.help-modal {
+  position: relative;
+  width: min(560px, 100%);
+  max-height: 88vh;
+  overflow-y: auto;
+  background: var(--fh-panel);
+  color: var(--fh-text);
+  border: 1px solid var(--fh-border);
+  border-radius: var(--fh-radius, 18px);
+  box-shadow: var(--fh-shadow, 0 24px 60px rgba(0, 0, 0, 0.4));
+  padding: 28px;
+}
+
+.help-modal .modal-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(127, 127, 127, 0.16);
+  color: var(--fh-text);
+  cursor: pointer;
+  font-size: 14px;
+}
+.help-modal .modal-close:hover { background: rgba(127, 127, 127, 0.28); }
+
+.help-title { margin: 0 0 16px; font-size: 22px; }
+
+.help-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid var(--fh-border);
+}
+.help-tabs button {
+  flex: 1;
+  padding: 10px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--fh-muted);
+  font-weight: 600;
+  cursor: pointer;
+  transition: color .15s, border-color .15s;
+}
+.help-tabs button.active { color: var(--fh-accent); border-bottom-color: var(--fh-accent); }
+
+.help-section { margin-bottom: 24px; }
+.help-section h3 { margin: 0 0 12px; font-size: 15px; color: var(--fh-muted); text-transform: uppercase; letter-spacing: .04em; }
+
+.faq-list { display: flex; flex-direction: column; gap: 6px; }
+.faq-item { border: 1px solid var(--fh-border); border-radius: 12px; overflow: hidden; }
+.faq-q {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--fh-elevated);
+  border: none;
+  color: var(--fh-text);
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+.faq-caret { color: var(--fh-accent); font-weight: 700; }
+.faq-a { padding: 0 14px 14px; font-size: 13.5px; color: var(--fh-muted); line-height: 1.5; }
+
+.kind-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.kind-pill {
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--fh-border);
+  background: var(--fh-elevated);
+  color: var(--fh-text);
+  font-size: 13px;
+  cursor: pointer;
+}
+.kind-pill.active { background: var(--fh-accent); color: #fff; border-color: var(--fh-accent); }
+.kind-hint { margin: 0 0 12px; font-size: 12.5px; color: var(--fh-muted); }
+
+.help-input {
+  width: 100%;
+  padding: 11px 13px;
+  margin-bottom: 10px;
+  border-radius: 12px;
+  border: 1px solid var(--fh-border);
+  background: var(--fh-bg);
+  color: var(--fh-text);
+  font: inherit;
+  box-sizing: border-box;
+}
+.help-textarea { resize: vertical; min-height: 90px; }
+
+.help-submit {
+  width: 100%;
+  padding: 12px;
+  border: none;
+  border-radius: 12px;
+  background: var(--fh-accent);
+  color: #fff;
+  font-weight: 700;
+  cursor: pointer;
+}
+.help-submit:disabled { opacity: .6; cursor: default; }
+
+.legal-list { list-style: none; padding: 0; margin: 0 0 14px; display: flex; flex-direction: column; gap: 8px; }
+.legal-list li { font-size: 13px; color: var(--fh-muted); line-height: 1.45; }
+.help-credit { font-size: 12px; color: var(--fh-muted); text-align: center; opacity: .8; }
+
+.help-empty { text-align: center; color: var(--fh-muted); padding: 40px 0; font-size: 14px; }
+
+.ticket-list { display: flex; flex-direction: column; gap: 10px; }
+.ticket-card { border: 1px solid var(--fh-border); border-radius: 12px; padding: 14px; background: var(--fh-elevated); }
+.ticket-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.ticket-kind { font-size: 13px; font-weight: 700; }
+.ticket-status {
+  font-size: 11px;
+  text-transform: capitalize;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgba(127, 127, 127, 0.18);
+  color: var(--fh-muted);
+}
+.ticket-status.open { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
+.ticket-status.in_progress { background: rgba(59, 130, 246, 0.2); color: #3b82f6; }
+.ticket-status.resolved { background: rgba(34, 197, 94, 0.2); color: #22c55e; }
+.ticket-subject { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+.ticket-body { font-size: 13px; color: var(--fh-muted); line-height: 1.45; margin-bottom: 8px; white-space: pre-wrap; }
+.ticket-date { font-size: 11.5px; color: var(--fh-muted); opacity: .7; }
+
+.help-toast {
+  position: absolute;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--fh-text);
+  color: var(--fh-bg);
+  padding: 10px 18px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: var(--fh-shadow);
+  z-index: 5;
+}
+
+@media (max-width: 600px) {
+  .help-modal { padding: 20px 16px; max-height: 92vh; }
+}

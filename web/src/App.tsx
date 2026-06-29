@@ -13,6 +13,10 @@ import {
   getPinnedIds, pinConversation, unpinConversation,
   getHiddenIds, hideConversation, unhideConversation,
 } from '@shared/premiumApi';
+import {
+  getMutedIds, muteConversation, unmuteConversation,
+  getBlockedIds, blockUser, unblockUser, submitReport,
+} from '@shared/supportApi';
 import { FREE_LIMITS } from '@shared/premium/features';
 import type { ConversationSummary, Profile } from '@shared/types';
 import { ChatView } from './ChatView';
@@ -24,6 +28,7 @@ const ProfileModal = lazy(() => import('./ProfileModal').then((m) => ({ default:
 const GroupModal = lazy(() => import('./GroupModal').then((m) => ({ default: m.GroupModal })));
 const StatusView = lazy(() => import('./StatusView').then((m) => ({ default: m.StatusView })));
 const SettingsModal = lazy(() => import('./premium/SettingsModal').then((m) => ({ default: m.SettingsModal })));
+const HelpSupportModal = lazy(() => import('./support/HelpSupportModal').then((m) => ({ default: m.HelpSupportModal })));
 
 function AppInner() {
   const { profile } = useAuth();
@@ -41,11 +46,14 @@ function AppInner() {
   const [showGroup, setShowGroup] = useState(false);
   const [showStatus, setShowStatus] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
 
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
   const [showHidden, setShowHidden] = useState(false);
   const [menuFor, setMenuFor] = useState<string | null>(null);
+  const [mutedIds, setMutedIds] = useState<Set<string>>(new Set());
+  const [blockedIds, setBlockedIds] = useState<Set<string>>(new Set());
 
   const mountedRef = useRef(true);
   useEffect(() => {
@@ -53,6 +61,8 @@ function AppInner() {
     loadConversations();
     getPinnedIds(supabase).then((ids) => { if (mountedRef.current) setPinnedIds(new Set(ids)); }).catch(() => {});
     getHiddenIds(supabase).then((ids) => { if (mountedRef.current) setHiddenIds(new Set(ids)); }).catch(() => {});
+    getMutedIds(supabase).then((ids) => { if (mountedRef.current) setMutedIds(new Set(ids)); }).catch(() => {});
+    getBlockedIds(supabase).then((ids) => { if (mountedRef.current) setBlockedIds(new Set(ids)); }).catch(() => {});
     return () => { mountedRef.current = false; };
   }, []);
 
@@ -106,6 +116,44 @@ function AppInner() {
     if (error) { // roll back
       setHiddenIds((s) => { const n = new Set(s); wasHidden ? n.add(id) : n.delete(id); return n; });
     }
+  }
+
+  async function toggleMute(id: string) {
+    setMenuFor(null);
+    const wasMuted = mutedIds.has(id);
+    setMutedIds((s) => { const n = new Set(s); wasMuted ? n.delete(id) : n.add(id); return n; });
+    const { error } = wasMuted ? await unmuteConversation(supabase, id) : await muteConversation(supabase, id);
+    if (error) {
+      setMutedIds((s) => { const n = new Set(s); wasMuted ? n.add(id) : n.delete(id); return n; });
+    }
+  }
+
+  function otherId(conv: ConversationSummary): string | null {
+    if (conv.conversation.type !== 'direct') return null;
+    return conv.participants.find((p) => p.id !== profile?.id)?.id ?? null;
+  }
+
+  async function toggleBlock(conv: ConversationSummary) {
+    setMenuFor(null);
+    const uid = otherId(conv);
+    if (!uid) return;
+    const wasBlocked = blockedIds.has(uid);
+    if (!wasBlocked && !confirm('Block this user? They will no longer be able to reach you.')) return;
+    setBlockedIds((s) => { const n = new Set(s); wasBlocked ? n.delete(uid) : n.add(uid); return n; });
+    const { error } = wasBlocked ? await unblockUser(supabase, uid) : await blockUser(supabase, uid);
+    if (error) {
+      setBlockedIds((s) => { const n = new Set(s); wasBlocked ? n.add(uid) : n.delete(uid); return n; });
+    }
+  }
+
+  async function reportConv(conv: ConversationSummary) {
+    setMenuFor(null);
+    const uid = otherId(conv);
+    if (!uid) return;
+    const reason = prompt('Report this user — what is the issue? (spam, abuse, harassment, other)');
+    if (!reason || !reason.trim()) return;
+    const { error } = await submitReport(supabase, 'user', uid, reason.trim());
+    alert(error ? (error.message || 'Could not submit report.') : 'Report submitted. Our safety team will review it.');
   }
 
   // Sort: pinned first, then recent. Hidden filtered unless revealing.
@@ -213,6 +261,7 @@ function AppInner() {
                       {pinnedIds.has(id) && <span className="pin-mark">📌</span>}
                       {conv.title}
                       {otherIsPremium(conv) && <PremiumBadge compact />}
+                      {mutedIds.has(id) && <span className="mute-mark" title="Muted">🔕</span>}
                     </div>
                     <div className="conversation-preview">{conv.lastMessage?.content || 'No messages yet'}</div>
                   </div>
@@ -226,6 +275,15 @@ function AppInner() {
                         onClick={(e) => e.stopPropagation()}>
                         <button onClick={() => togglePin(id)}>{pinnedIds.has(id) ? 'Unpin' : '📌 Pin'}</button>
                         <button onClick={() => toggleHide(id)}>{hiddenIds.has(id) ? 'Unhide' : '🙈 Hide'}</button>
+                        <button onClick={() => toggleMute(id)}>{mutedIds.has(id) ? '🔔 Unmute' : '🔕 Mute'}</button>
+                        {otherId(conv) && (
+                          <button onClick={() => reportConv(conv)}>🚩 Report</button>
+                        )}
+                        {otherId(conv) && (
+                          <button className="danger" onClick={() => toggleBlock(conv)}>
+                            {blockedIds.has(otherId(conv)!) ? 'Unblock' : '🚫 Block'}
+                          </button>
+                        )}
                       </motion.div>
                     )}
                   </AnimatePresence>
@@ -261,7 +319,8 @@ function AppInner() {
       <Suspense fallback={null}>
         <AnimatePresence>
           {showProfile && <ProfileModal onClose={() => setShowProfile(false)} />}
-          {showSettings && <SettingsModal onClose={() => setShowSettings(false)} onEditProfile={() => setShowProfile(true)} />}
+          {showSettings && <SettingsModal onClose={() => setShowSettings(false)} onEditProfile={() => setShowProfile(true)} onHelp={() => setShowHelp(true)} />}
+          {showHelp && <HelpSupportModal onClose={() => setShowHelp(false)} />}
         </AnimatePresence>
         {showGroup && <GroupModal onClose={() => setShowGroup(false)} onCreated={() => { loadConversations(); setShowGroup(false); }} />}
         {showStatus && <StatusView onClose={() => setShowStatus(false)} />}
