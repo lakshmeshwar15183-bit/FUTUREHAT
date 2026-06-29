@@ -1,0 +1,174 @@
+/* FUTUREHAT — global styles + theme variable contract.
+   Defaults below mirror the Classic theme; the appearance engine
+   (theme/themes.ts) overrides these CSS variables at runtime. */
+
+:root {
+  --fh-bg: #111b21;
+  --fh-panel: #202c33;
+  --fh-elevated: #2a3942;
+  --fh-chat-bg: #0b141a;
+  --fh-accent: #00a884;
+  --fh-accent-2: #06cf9c;
+  --fh-bubble-mine: #005c4b;
+  --fh-bubble-theirs: #202c33;
+  --fh-text: #e9edef;
+  --fh-muted: #8696a0;
+  --fh-border: #2a3942;
+  --fh-font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --fh-radius: 14px;
+  --fh-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  --fh-shadow-soft: 0 4px 16px rgba(0, 0, 0, 0.25);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: var(--fh-font);
+  background: var(--fh-bg);
+  color: var(--fh-text);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+input, textarea {
+  font-family: inherit;
+}
+
+a {
+  color: var(--fh-accent);
+  text-decoration: none;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--fh-panel);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--fh-border);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--fh-muted);
+}
+
+/* ── Shared modal primitives ─────────────────────────────────────────────────
+   Used by ProfileModal, GroupModal and StatusView. These live here (always
+   loaded) rather than in a single component's stylesheet, because those modals
+   are code-split separately — a lazy modal must not depend on another modal's
+   chunk having been loaded first for its base styling. */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  backdrop-filter: blur(4px);
+  padding: 16px;
+}
+
+.modal-card {
+  background: #1f2937;
+  border-radius: 16px;
+  width: 100%;
+  max-width: 480px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px;
+  border-bottom: 1px solid #2a3942;
+}
+
+.modal-header h2 {
+  font-size: 20px;
+  font-weight: 600;
+  color: #e9edef;
+}
+
+.close-btn {
+  background: transparent;
+  border: none;
+  font-size: 24px;
+  color: #8696a0;
+  cursor: pointer;
+  padding: 4px 8px;
+  transition: color 0.2s;
+}
+
+.close-btn:hover {
+  color: #e9edef;
+}
+
+.error-msg {
+  background: #dc2626;
+  color: white;
+  padding: 12px;
+  border-radius: 8px;
+  font-size: 14px;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
+.modal-actions button {
+  padding: 12px 24px;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.modal-actions button:not(.primary) {
+  background: transparent;
+  color: #8696a0;
+}
+
+.modal-actions button:not(.primary):hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.modal-actions button.primary {
+  background: #00a884;
+  color: white;
+}
+
+.modal-actions button.primary:hover:not(:disabled) {
+  background: #059073;
+}
+
+.modal-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

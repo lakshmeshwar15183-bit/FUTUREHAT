@@ -1,0 +1,113 @@
+/* Group modal styles */
+
+.group-form {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.group-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 14px;
+  color: #8696a0;
+  font-weight: 600;
+}
+
+.group-form input {
+  background: #2a3942;
+  border: 1px solid #374248;
+  border-radius: 8px;
+  padding: 12px;
+  color: #e9edef;
+  font-size: 15px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.group-form input:focus {
+  border-color: #00a884;
+}
+
+.selected-users {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.selected-user {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #2a3942;
+  padding: 8px 12px;
+  border-radius: 20px;
+  font-size: 14px;
+}
+
+.selected-user button {
+  background: transparent;
+  border: none;
+  color: #8696a0;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.selected-user button:hover {
+  color: #e9edef;
+}
+
+.user-search-results {
+  max-height: 240px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.user-result {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.user-result:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.user-result.selected {
+  background: rgba(0, 168, 132, 0.2);
+}
+
+.user-result .avatar {
+  width: 40px;
+  height: 40px;
+  font-size: 16px;
+}
+
+.user-info {
+  flex: 1;
+}
+
+.user-name {
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.user-username {
+  font-size: 13px;
+  color: #8696a0;
+}
+
+.check-mark {
+  color: #00a884;
+  font-size: 18px;
+  font-weight: bold;
+}

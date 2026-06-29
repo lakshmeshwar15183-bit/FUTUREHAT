@@ -1,0 +1,131 @@
+/* FUTUREHAT+ — premium appearance reactions + shared polish utilities.
+   Driven by data attributes set on <html> by theme/themes.ts. */
+
+/* ── Animated wallpapers (applied to the chat surface) ─────────────────────── */
+:root[data-wallpaper] .messages-container {
+  background-color: var(--fh-chat-bg);
+  background-attachment: fixed;
+}
+
+:root[data-wallpaper="aurora"] .messages-container {
+  background-image:
+    radial-gradient(60% 50% at 20% 10%, rgba(43, 214, 192, 0.18), transparent 70%),
+    radial-gradient(50% 50% at 90% 30%, rgba(91, 140, 255, 0.16), transparent 70%),
+    radial-gradient(60% 60% at 50% 100%, rgba(110, 240, 200, 0.14), transparent 70%);
+  background-size: 200% 200%;
+  animation: fh-aurora 18s ease-in-out infinite alternate;
+}
+
+:root[data-wallpaper="mesh"] .messages-container {
+  background-image:
+    radial-gradient(40% 40% at 25% 25%, rgba(91, 140, 255, 0.22), transparent 70%),
+    radial-gradient(40% 40% at 80% 60%, rgba(179, 136, 255, 0.18), transparent 70%);
+  background-size: 180% 180%;
+  animation: fh-aurora 22s ease-in-out infinite alternate;
+}
+
+:root[data-wallpaper="dusk"] .messages-container {
+  background-image: linear-gradient(160deg, rgba(255, 122, 89, 0.16), transparent 55%),
+    radial-gradient(50% 40% at 80% 90%, rgba(255, 179, 122, 0.16), transparent 70%);
+  background-size: 200% 200%;
+  animation: fh-aurora 20s ease-in-out infinite alternate;
+}
+
+:root[data-wallpaper="grid"] .messages-container {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+:root[data-wallpaper="bubbles"] .messages-container {
+  background-image:
+    radial-gradient(circle at 70% 40%, rgba(179, 136, 255, 0.16), transparent 18%),
+    radial-gradient(circle at 20% 70%, rgba(91, 140, 255, 0.14), transparent 16%),
+    radial-gradient(circle at 85% 85%, rgba(110, 240, 200, 0.12), transparent 14%);
+  background-size: 160% 160%;
+  animation: fh-drift 26s ease-in-out infinite alternate;
+}
+
+@keyframes fh-aurora {
+  0% { background-position: 0% 0%; }
+  100% { background-position: 100% 100%; }
+}
+@keyframes fh-drift {
+  0% { background-position: 0% 0%; }
+  100% { background-position: 60% 100%; }
+}
+
+/* ── Bubble styles ────────────────────────────────────────────────────────── */
+:root[data-bubble="sharp"] .message-bubble { border-radius: 4px; }
+:root[data-bubble="minimal"] .message-bubble {
+  border-radius: 20px;
+  box-shadow: none;
+  border: 1px solid var(--fh-border);
+}
+:root[data-bubble="classic"] .message.mine .message-bubble { border-radius: 14px 14px 4px 14px; }
+:root[data-bubble="classic"] .message.theirs .message-bubble { border-radius: 14px 14px 14px 4px; }
+
+/* ── Glassmorphism utility ────────────────────────────────────────────────── */
+.glass {
+  background: rgba(28, 38, 46, 0.72);
+  backdrop-filter: blur(22px) saturate(160%);
+  -webkit-backdrop-filter: blur(22px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* ── FUTUREHAT+ badge ─────────────────────────────────────────────────────── */
+.fh-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  color: #1a1206;
+  background: linear-gradient(135deg, #ffd86b, #ff9e2c);
+  box-shadow: 0 1px 6px rgba(255, 158, 44, 0.45);
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.fh-badge.dot {
+  padding: 2px;
+  width: 16px;
+  height: 16px;
+  justify-content: center;
+}
+
+/* ── Loading shimmer / spinner ────────────────────────────────────────────── */
+.fh-spinner {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 3px solid rgba(255, 255, 255, 0.15);
+  border-top-color: var(--fh-accent);
+  animation: fh-spin 0.8s linear infinite;
+}
+@keyframes fh-spin { to { transform: rotate(360deg); } }
+
+.fh-splash {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  background: var(--fh-bg);
+  z-index: 50;
+}
+.fh-splash-logo { font-size: 56px; }
+
+/* shimmer skeleton for loading lists */
+.fh-skeleton {
+  background: linear-gradient(100deg, rgba(255,255,255,0.04) 30%, rgba(255,255,255,0.10) 50%, rgba(255,255,255,0.04) 70%);
+  background-size: 200% 100%;
+  animation: fh-shimmer 1.3s ease-in-out infinite;
+  border-radius: 8px;
+}
+@keyframes fh-shimmer { to { background-position: -200% 0; } }

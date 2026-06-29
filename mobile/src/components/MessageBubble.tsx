@@ -1,0 +1,182 @@
+// FUTUREHAT mobile — a single chat bubble. Handles text/image/video/audio/file,
+// reply preview, reaction chips, edited marker, and delivery ticks.
+import React, { useMemo } from 'react';
+import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+
+import type { Message, MessageReaction } from '../lib/shared';
+import { formatTime } from '../lib/time';
+import { useColors, radius, font, type Palette } from '../theme';
+import AudioMessage from './AudioMessage';
+
+export type TickStatus = 'sending' | 'sent' | 'delivered' | 'read';
+
+interface Props {
+  message: Message;
+  mine: boolean;
+  senderName?: string | null;
+  replyTo?: Message | null;
+  reactions?: MessageReaction[];
+  tick?: TickStatus;
+  onLongPress?: () => void;
+  onOpenImage?: (url: string) => void;
+  onReactionPress?: () => void;
+}
+
+function groupReactions(reactions: MessageReaction[]): { emoji: string; count: number }[] {
+  const map = new Map<string, number>();
+  for (const r of reactions) map.set(r.emoji, (map.get(r.emoji) ?? 0) + 1);
+  return [...map.entries()].map(([emoji, count]) => ({ emoji, count }));
+}
+
+export default function MessageBubble({
+  message,
+  mine,
+  senderName,
+  replyTo,
+  reactions = [],
+  tick,
+  onLongPress,
+  onOpenImage,
+  onReactionPress,
+}: Props) {
+  const colors = useColors();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const tint = mine ? '#E9EDEF' : colors.text;
+
+  if (message.is_deleted) {
+    return (
+      <View style={[styles.wrap, mine ? styles.wrapMine : styles.wrapTheirs]}>
+        <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs]}>
+          <Text style={[styles.deleted, { color: mine ? '#cfd9d6' : colors.textMuted }]}>
+            <Ionicons name="ban-outline" size={13} /> This message was deleted
+          </Text>
+        </View>
+      </View>
+    );
+  }
+
+  const grouped = groupReactions(reactions);
+
+  return (
+    <Pressable
+      onLongPress={onLongPress}
+      delayLongPress={250}
+      style={[styles.wrap, mine ? styles.wrapMine : styles.wrapTheirs]}
+    >
+      <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs]}>
+        {!mine && senderName && <Text style={styles.sender}>{senderName}</Text>}
+
+        {replyTo && (
+          <View style={[styles.reply, { borderLeftColor: colors.primary }]}>
+            <Text style={styles.replyName} numberOfLines={1}>
+              {replyTo.is_deleted ? 'Message' : 'Replying to'}
+            </Text>
+            <Text style={[styles.replyText, { color: mine ? '#cfd9d6' : colors.textMuted }]} numberOfLines={1}>
+              {replyTo.type === 'text' ? replyTo.content : `📎 ${replyTo.type}`}
+            </Text>
+          </View>
+        )}
+
+        {message.type === 'image' && message.media_url && (
+          <Pressable onPress={() => onOpenImage?.(message.media_url!)}>
+            <Image source={{ uri: message.media_url }} style={styles.image} />
+          </Pressable>
+        )}
+
+        {message.type === 'audio' && message.media_url && (
+          <AudioMessage uri={message.media_url} tint={mine ? '#E9EDEF' : colors.primary} />
+        )}
+
+        {message.type === 'file' && message.media_url && (
+          <View style={styles.file}>
+            <Ionicons name="document-outline" size={28} color={tint} />
+            <Text style={[styles.fileName, { color: tint }]} numberOfLines={1}>
+              {message.content || 'Attachment'}
+            </Text>
+          </View>
+        )}
+
+        {message.type === 'text' && !!message.content && (
+          <Text style={[styles.text, { color: tint }]}>{message.content}</Text>
+        )}
+
+        <View style={styles.meta}>
+          {message.edited_at && <Text style={styles.edited}>edited</Text>}
+          <Text style={[styles.time, { color: mine ? '#a9c8bf' : colors.textFaint }]}>
+            {formatTime(message.created_at)}
+          </Text>
+          {mine && tick && (
+            <Ionicons
+              name={tick === 'sending' ? 'time-outline' : tick === 'sent' ? 'checkmark' : 'checkmark-done'}
+              size={15}
+              color={tick === 'read' ? '#53BDEB' : mine ? '#a9c8bf' : colors.textFaint}
+              style={{ marginLeft: 3 }}
+            />
+          )}
+        </View>
+      </View>
+
+      {grouped.length > 0 && (
+        <Pressable
+          onPress={onReactionPress}
+          style={[styles.reactions, mine ? styles.reactionsMine : styles.reactionsTheirs]}
+        >
+          {grouped.map((g) => (
+            <Text key={g.emoji} style={styles.reactionChip}>
+              {g.emoji}
+              {g.count > 1 ? ` ${g.count}` : ''}
+            </Text>
+          ))}
+        </Pressable>
+      )}
+    </Pressable>
+  );
+}
+
+const makeStyles = (colors: Palette) =>
+  StyleSheet.create({
+    wrap: { marginVertical: 3, paddingHorizontal: 10, maxWidth: '100%' },
+    wrapMine: { alignItems: 'flex-end' },
+    wrapTheirs: { alignItems: 'flex-start' },
+    bubble: {
+      maxWidth: '82%',
+      borderRadius: radius.lg,
+      paddingHorizontal: 10,
+      paddingVertical: 7,
+    },
+    bubbleMine: { backgroundColor: colors.bubbleOut, borderTopRightRadius: 4 },
+    bubbleTheirs: { backgroundColor: colors.bubbleIn, borderTopLeftRadius: 4 },
+    sender: { color: colors.primary, fontSize: font.small, fontWeight: '700', marginBottom: 2 },
+    text: { fontSize: font.body, lineHeight: 20 },
+    deleted: { fontSize: font.body, fontStyle: 'italic' },
+    image: { width: 220, height: 220, borderRadius: radius.md, marginBottom: 2 },
+    file: { flexDirection: 'row', alignItems: 'center', paddingVertical: 4, minWidth: 180 },
+    fileName: { fontSize: font.body, marginLeft: 8, flex: 1 },
+    reply: {
+      borderLeftWidth: 3,
+      paddingLeft: 8,
+      paddingVertical: 3,
+      marginBottom: 4,
+      borderRadius: 4,
+      backgroundColor: 'rgba(0,0,0,0.15)',
+    },
+    replyName: { color: colors.primary, fontSize: font.tiny, fontWeight: '700' },
+    replyText: { fontSize: font.small },
+    meta: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-end', marginTop: 2 },
+    edited: { color: '#a9c8bf', fontSize: 10, marginRight: 4 },
+    time: { fontSize: 10 },
+    reactions: {
+      flexDirection: 'row',
+      backgroundColor: colors.surfaceAlt,
+      borderRadius: radius.pill,
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      marginTop: -6,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    reactionsMine: { marginRight: 6 },
+    reactionsTheirs: { marginLeft: 6 },
+    reactionChip: { fontSize: 13, marginHorizontal: 1, color: colors.text },
+  });
