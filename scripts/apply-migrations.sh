@@ -24,7 +24,10 @@ if [[ -z "${SUPABASE_DB_PASSWORD:-}" ]]; then
 fi
 
 # Pooler connection string (session mode, port 5432).
-DB_URL="postgresql://postgres.${PROJECT_REF}:${SUPABASE_DB_PASSWORD}@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres"
+# NOTE: this project is on the aws-1 pooler generation, NOT aws-0. Using aws-0
+# returns "tenant/user not found". The direct host db.<ref>.supabase.co has no
+# IPv4 A record from this network, so the pooler is the only working path.
+DB_URL="postgresql://postgres.${PROJECT_REF}:${SUPABASE_DB_PASSWORD}@aws-1-ap-northeast-2.pooler.supabase.com:5432/postgres"
 
 echo "Applying migrations 0007 + 0008 to project ${PROJECT_REF}…"
 npx --yes --cache "${NPM_CACHE}" supabase db push --db-url "${DB_URL}"
