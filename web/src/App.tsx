@@ -20,6 +20,8 @@ import {
 import { FREE_LIMITS } from '@shared/premium/features';
 import type { ConversationSummary, Profile } from '@shared/types';
 import { ChatView } from './ChatView';
+import { StatusIcon, CommunitiesIcon, NewGroupIcon, NewChatIcon, SettingsIcon, SignOutIcon } from './Icons';
+import { format, isToday, isYesterday } from 'date-fns';
 import { listItem, spring } from './motion';
 import './App.css';
 
@@ -187,6 +189,30 @@ function AppInner() {
     return other ? onlineIds.has(other.id) : false;
   }
 
+  // WhatsApp-style list timestamp + media-aware last-message preview.
+  function lastMsgTime(conv: ConversationSummary): string {
+    const t = conv.lastMessage?.created_at;
+    if (!t) return '';
+    const d = new Date(t);
+    return isToday(d) ? format(d, 'h:mm a') : isYesterday(d) ? 'Yesterday' : format(d, 'MM/dd/yy');
+  }
+  function previewText(conv: ConversationSummary): string {
+    const m = conv.lastMessage;
+    if (!m) return 'No messages yet';
+    if (m.is_deleted) return 'This message was deleted';
+    const body =
+      m.type === 'image' ? '📷 Photo' :
+      m.type === 'audio' ? '🎤 Voice message' :
+      m.type === 'file' ? `📎 ${m.content || 'File'}` :
+      (m.content || '');
+    if (m.sender_id === profile?.id) return `You: ${body}`;
+    if (conv.conversation.type === 'group') {
+      const s = conv.participants.find((p) => p.id === m.sender_id)?.display_name;
+      return s ? `${s.split(' ')[0]}: ${body}` : body;
+    }
+    return body;
+  }
+
   return (
     <div className={`app ${selectedConvId ? 'chat-open' : ''}`} onClick={() => setMenuFor(null)}>
       <div className="sidebar">
@@ -196,12 +222,12 @@ function AppInner() {
             {!isPremium && (
               <button onClick={openUpgrade} className="icon-btn upgrade-pill" title="Upgrade to FUTUREHAT+" aria-label="Upgrade to FUTUREHAT+">✦</button>
             )}
-            <button onClick={() => setShowStatus(true)} className="icon-btn" title="Status" aria-label="Status">📸</button>
-            <button onClick={() => setShowCommunities(true)} className="icon-btn" title="Communities" aria-label="Communities">🌐</button>
-            <button onClick={() => setShowGroup(true)} className="icon-btn" title="New group" aria-label="New group">👥</button>
-            <button onClick={() => setShowSearch(!showSearch)} className="icon-btn" title="New chat" aria-label="New chat">➕</button>
-            <button onClick={() => setShowSettings(true)} className="icon-btn" title="Settings" aria-label="Settings">⚙️</button>
-            <button onClick={() => signOut(supabase)} className="icon-btn" title="Sign out" aria-label="Sign out">🚪</button>
+            <button onClick={() => setShowStatus(true)} className="icon-btn" title="Status" aria-label="Status"><StatusIcon /></button>
+            <button onClick={() => setShowCommunities(true)} className="icon-btn" title="Communities" aria-label="Communities"><CommunitiesIcon /></button>
+            <button onClick={() => setShowGroup(true)} className="icon-btn" title="New group" aria-label="New group"><NewGroupIcon /></button>
+            <button onClick={() => setShowSearch(!showSearch)} className="icon-btn" title="New chat" aria-label="New chat"><NewChatIcon /></button>
+            <button onClick={() => setShowSettings(true)} className="icon-btn" title="Settings" aria-label="Settings"><SettingsIcon /></button>
+            <button onClick={() => signOut(supabase)} className="icon-btn" title="Sign out" aria-label="Sign out"><SignOutIcon /></button>
           </div>
         </div>
 
@@ -254,7 +280,7 @@ function AppInner() {
                   initial="initial"
                   animate="animate"
                   exit="exit"
-                  className={`conversation-item ${selectedConvId === id ? 'active' : ''} ${hiddenIds.has(id) ? 'is-hidden' : ''}`}
+                  className={`conversation-item ${selectedConvId === id ? 'active' : ''} ${hiddenIds.has(id) ? 'is-hidden' : ''} ${conv.unreadCount > 0 ? 'unread' : ''}`}
                   onClick={() => setSelectedConvId(id)}
                 >
                   <div className="avatar avatar-wrap">
@@ -264,11 +290,16 @@ function AppInner() {
                   <div className="conversation-info">
                     <div className="conversation-title">
                       {pinnedIds.has(id) && <span className="pin-mark">📌</span>}
-                      {conv.title}
+                      {conv.conversation.type === 'group' && <CommunitiesIcon size={14} className="group-mark" />}
+                      <span className="conv-name">{conv.title}</span>
                       {otherIsPremium(conv) && <PremiumBadge compact />}
                       {mutedIds.has(id) && <span className="mute-mark" title="Muted">🔕</span>}
+                      <span className="conversation-time">{lastMsgTime(conv)}</span>
                     </div>
-                    <div className="conversation-preview">{conv.lastMessage?.content || 'No messages yet'}</div>
+                    <div className="conversation-bottom">
+                      <div className="conversation-preview">{previewText(conv)}</div>
+                      {conv.unreadCount > 0 && <span className="unread-badge">{conv.unreadCount > 99 ? '99+' : conv.unreadCount}</span>}
+                    </div>
                   </div>
                   <button
                     className="conv-menu-btn"

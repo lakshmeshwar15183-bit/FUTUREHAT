@@ -187,11 +187,36 @@ export async function getMyConversations(
         : otherProfiles[0]?.display_name || 'Unknown';
     const avatarUrl = conv.type === 'group' ? conv.avatar_url : otherProfiles[0]?.avatar_url;
 
+    // Unread = messages from others in this conversation that I haven't read.
+    // Best-effort + clamped: any error or over-count falls back to 0 (never wrong-high).
+    let unreadCount = 0;
+    if (lastMsg && lastMsg.sender_id !== user.id) {
+      try {
+        const [fromOthers, readByMe] = await Promise.all([
+          client
+            .from('messages')
+            .select('id', { count: 'exact', head: true })
+            .eq('conversation_id', conv.id)
+            .neq('sender_id', user.id),
+          client
+            .from('message_receipts')
+            .select('message_id, messages!inner(conversation_id, sender_id)', { count: 'exact', head: true })
+            .eq('user_id', user.id)
+            .eq('status', 'read')
+            .eq('messages.conversation_id', conv.id)
+            .neq('messages.sender_id', user.id),
+        ]);
+        unreadCount = Math.max(0, (fromOthers.count || 0) - (readByMe.count || 0));
+      } catch {
+        unreadCount = 0;
+      }
+    }
+
     summaries.push({
       conversation: conv,
       participants: profiles || [],
       lastMessage: lastMsg || null,
-      unreadCount: 0, // TODO: compute from receipts
+      unreadCount,
       title,
       avatarUrl,
     });
@@ -279,7 +304,13 @@ export async function forwardMessage(
   targetConversationId: UUID,
   source: Pick<Message, 'type' | 'content' | 'media_url'>,
 ): Promise<{ message: Message | null; error: Error | null }> {
-  return sendMessage(client, targetConversationId, source.content ?? '', source.type, source.media_url ?? undefined);
+  const res = await sendMessage(client, targetConversationId, source.content ?? '', source.type, source.media_url ?? undefined);
+  // Best-effort "Forwarded" flag — column added in migration 0011; ignore if absent.
+  if (res.message && !res.error) {
+    await client.from('messages').update({ is_forwarded: true }).eq('id', res.message.id).then(undefined, () => {});
+    (res.message as Message).is_forwarded = true;
+  }
+  return res;
 }
 
 export async function markMessageAsRead(

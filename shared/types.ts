@@ -45,6 +45,9 @@ export interface Message {
   is_deleted: boolean;
   created_at: string;
   edited_at: string | null;
+  /** Set when this message was forwarded from another chat (see 0011). Optional
+   *  so the field is safe before the migration is applied. */
+  is_forwarded?: boolean | null;
 }
 
 export interface MessageReceipt {

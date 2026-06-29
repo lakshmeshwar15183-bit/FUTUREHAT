@@ -14,7 +14,7 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { supabase } from '../lib/supabase';
-import { getMyConversations } from '../lib/shared';
+import { getMyConversations, getCurrentUser } from '../lib/shared';
 import type { ConversationSummary } from '../lib/shared';
 import { formatListTimestamp } from '../lib/time';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
@@ -31,6 +31,15 @@ export default function ConversationsScreen() {
   const [items, setItems] = useState<ConversationSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [uid, setUid] = useState<string | null>(null);
+
+  useFocusEffect(
+    useCallback(() => {
+      let alive = true;
+      getCurrentUser(supabase).then((u) => { if (alive) setUid(u?.id ?? null); }).catch(() => {});
+      return () => { alive = false; };
+    }, []),
+  );
 
   const load = useCallback(async () => {
     try {
@@ -54,16 +63,17 @@ export default function ConversationsScreen() {
     const m = c.lastMessage;
     if (!m) return 'Tap to start chatting';
     if (m.is_deleted) return 'This message was deleted';
-    switch (m.type) {
-      case 'image':
-        return '📷 Photo';
-      case 'audio':
-        return '🎤 Voice message';
-      case 'file':
-        return '📎 Attachment';
-      default:
-        return m.content ?? '';
+    const body =
+      m.type === 'image' ? '📷 Photo' :
+      m.type === 'audio' ? '🎤 Voice message' :
+      m.type === 'file' ? '📎 Attachment' :
+      (m.content ?? '');
+    if (uid && m.sender_id === uid) return `You: ${body}`;
+    if (c.conversation.type === 'group') {
+      const name = c.participants.find((p) => p.id === m.sender_id)?.display_name;
+      return name ? `${name.split(' ')[0]}: ${body}` : body;
     }
+    return body;
   };
 
   const renderItem = ({ item }: { item: ConversationSummary }) => (

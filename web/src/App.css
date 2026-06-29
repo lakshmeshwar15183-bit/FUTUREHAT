@@ -133,7 +133,23 @@
 
 .conversation-item.is-hidden { opacity: 0.55; }
 .conversation-title { display: flex; align-items: center; gap: 6px; }
+.conv-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
+.conversation-time { margin-left: auto; flex-shrink: 0; font-size: 12px; font-weight: 400; color: var(--fh-muted); }
+.group-mark { color: var(--fh-muted); flex-shrink: 0; }
 .pin-mark { font-size: 11px; }
+
+/* Bottom row: preview + unread badge (WhatsApp). */
+.conversation-bottom { display: flex; align-items: center; gap: 8px; }
+.unread-badge {
+  margin-left: auto; flex-shrink: 0;
+  min-width: 20px; height: 20px; padding: 0 6px;
+  border-radius: 10px; background: var(--fh-accent); color: #04130d;
+  font-size: 12px; font-weight: 700; line-height: 20px; text-align: center;
+}
+/* Unread conversations: bolder name + accent time, like WhatsApp. */
+.conversation-item.unread .conv-name { font-weight: 700; }
+.conversation-item.unread .conversation-preview { color: var(--fh-text); }
+.conversation-item.unread .conversation-time { color: var(--fh-accent); font-weight: 600; }
 
 .conv-menu-btn {
   opacity: 0;
@@ -244,6 +260,13 @@
   font-weight: 600;
   font-size: 16px;
   margin-bottom: 4px;
+}
+
+/* Gentle pulse on the presence dot (chat list + chat header). */
+.online-dot { animation: fh-online-pulse 2.4s ease-in-out infinite; }
+@keyframes fh-online-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(49, 201, 80, 0.5); }
+  50% { box-shadow: 0 0 0 4px rgba(49, 201, 80, 0); }
 }
 
 .conversation-preview {

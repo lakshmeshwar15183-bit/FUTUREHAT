@@ -231,12 +231,8 @@ is registered so the browser's native install prompt already works.
 |---|---|---|
 | 0001–0008 | ✅ applied | — |
 | 0009_admin | ✅ applied + verified | — |
-| 0010_account_privacy | ⏳ PENDING | `pg` client → `postgresql://postgres.toscljrivrawvlfebdzz:<pw>@aws-1-ap-northeast-2.pooler.supabase.com:5432/postgres` (run from `web/` where `pg` resolves), or paste into Dashboard SQL editor |
-- [ ] Apply 0010 (idempotent). Verify tables exist: archived_conversations,
-      account_deletion_requests, audit_log, security_events; column
-      profiles.links; security_events in supabase_realtime publication.
-- [ ] Re-check RLS: every new table has self-scoped policies; audit_log read =
-      self OR is_admin.
+| 0010_account_privacy | ✅ applied + verified (2026-06-30) | archived_conversations, account_deletion_requests, audit_log, security_events tables; profiles.links column; security_events in realtime — all verified present |
+| 0011_message_extras | ✅ applied + verified (2026-06-30) | messages.is_forwarded column + starred_messages + hidden_messages tables + self-scoped RLS — all verified present |
 
 ## 5. Complete feature inventory
 **✅ Implemented & committed (verified earlier):** core chat, groups, reactions,
