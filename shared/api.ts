@@ -270,6 +270,52 @@ export async function getSharedMedia(
   }
 }
 
+/** A message that matched a global search, with its conversation id for routing. */
+export interface MessageSearchHit {
+  message: Message;
+  conversationId: UUID;
+}
+
+/**
+ * Global message search across all of my conversations (RLS scopes access).
+ * Matches non-deleted text content, newest first. Best-effort: [] on error.
+ */
+export async function searchAllMessages(
+  client: SupabaseClient,
+  query: string,
+  limit = 40,
+): Promise<MessageSearchHit[]> {
+  const q = query.trim();
+  if (!q) return [];
+  try {
+    const { data } = await client
+      .from('messages')
+      .select('*')
+      .eq('is_deleted', false)
+      .ilike('content', `%${q}%`)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    return (data || []).map((m) => ({ message: m as Message, conversationId: (m as Message).conversation_id }));
+  } catch {
+    return [];
+  }
+}
+
+/** A URL anywhere in text — used to classify "link" messages in search filters. */
+export const LINK_RE = /https?:\/\/[^\s]+|www\.[^\s]+/i;
+
+/** Message-kind buckets for filtered (media / links / docs / voice) search. */
+export type SearchKind = 'all' | 'media' | 'links' | 'docs' | 'voice';
+export function messageMatchesKind(m: Message, kind: SearchKind): boolean {
+  switch (kind) {
+    case 'media': return m.type === 'image' || (m.type === 'file' && /\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(m.media_url ?? ''));
+    case 'links': return m.type === 'text' && LINK_RE.test(m.content ?? '');
+    case 'docs': return m.type === 'file' && !/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(m.media_url ?? '');
+    case 'voice': return m.type === 'audio';
+    default: return true;
+  }
+}
+
 export async function sendMessage(
   client: SupabaseClient,
   conversationId: UUID,

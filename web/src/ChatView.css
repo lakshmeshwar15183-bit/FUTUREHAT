@@ -432,19 +432,38 @@
 .chat-header-info + .header-icon-btn.call { margin-left: auto; }
 
 .chat-search-bar {
-  display: flex; align-items: center; gap: 10px;
+  display: flex; flex-direction: column; gap: 8px;
   padding: 10px 16px; border-bottom: 1px solid var(--fh-border); background: var(--fh-bg);
 }
+.chat-search-row { display: flex; align-items: center; gap: 8px; }
+.chat-search-icon { color: var(--fh-muted); flex: none; }
 .chat-search-bar input {
   flex: 1; padding: 9px 12px; border-radius: 10px;
   border: 1px solid var(--fh-border); background: var(--fh-elevated); color: var(--fh-text); font: inherit;
 }
-.chat-search-count { font-size: 12px; color: var(--fh-muted); flex: none; }
-.chat-search-bar button {
+.chat-search-count { font-size: 12px; color: var(--fh-muted); flex: none; font-variant-numeric: tabular-nums; min-width: 56px; text-align: right; }
+.chat-search-nav, .chat-search-close {
   border: none; background: rgba(127, 127, 127, 0.16); color: var(--fh-text);
-  width: 30px; height: 30px; border-radius: 50%; cursor: pointer; flex: none;
+  width: 30px; height: 30px; border-radius: 50%; cursor: pointer; flex: none; font-size: 14px;
 }
+.chat-search-nav:disabled { opacity: 0.4; cursor: default; }
+.chat-search-nav:not(:disabled):hover, .chat-search-close:hover { background: rgba(127, 127, 127, 0.28); }
+
+.chat-search-filters { display: flex; gap: 6px; flex-wrap: wrap; }
+.chat-search-chip {
+  border: 1px solid var(--fh-border); background: transparent; color: var(--fh-muted);
+  padding: 3px 12px; border-radius: 999px; font-size: 12px; font-weight: 600; cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.chat-search-chip.active { background: var(--fh-accent); color: #04130d; border-color: var(--fh-accent); }
+
 .search-hit { background: var(--fh-accent); color: #fff; border-radius: 3px; padding: 0 2px; }
+
+/* Active search match gets a subtle ring + lift. */
+.message.search-match-active .message-bubble {
+  box-shadow: 0 0 0 2px var(--fh-accent), 0 4px 16px rgba(0, 0, 0, 0.25);
+}
+.message.search-match { scroll-margin: 80px; }
 
 /* ── AI summary banner ────────────────────────────────────────────────────── */
 .ai-summary {

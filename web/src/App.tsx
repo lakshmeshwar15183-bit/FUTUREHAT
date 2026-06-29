@@ -8,7 +8,7 @@ import { usePresence } from './PresenceContext';
 import { UpgradeProvider, useUpgrade } from './premium/UpgradeProvider';
 import { PremiumBadge } from './premium/PremiumBadge';
 import { supabase } from './supabase';
-import { signOut, getMyConversations, searchProfiles, startDirectConversation } from '@shared/api';
+import { signOut, getMyConversations, searchProfiles, startDirectConversation, searchAllMessages, type MessageSearchHit } from '@shared/api';
 import {
   getPinnedIds, pinConversation, unpinConversation,
   getHiddenIds, hideConversation, unhideConversation,
@@ -20,7 +20,7 @@ import {
 import { FREE_LIMITS } from '@shared/premium/features';
 import type { ConversationSummary, Profile } from '@shared/types';
 import { ChatView } from './ChatView';
-import { StatusIcon, CommunitiesIcon, NewGroupIcon, NewChatIcon, SettingsIcon, SignOutIcon } from './Icons';
+import { StatusIcon, CommunitiesIcon, NewGroupIcon, NewChatIcon, SettingsIcon, SignOutIcon, SearchIcon } from './Icons';
 import { format, isToday, isYesterday } from 'date-fns';
 import { listItem, spring } from './motion';
 import './App.css';
@@ -163,8 +163,30 @@ function AppInner() {
   }
 
   // Sort: pinned first, then recent. Hidden filtered unless revealing.
+  // Global chat-list search: filters conversations by title and runs a debounced
+  // message search across all chats.
+  const [chatFilter, setChatFilter] = useState('');
+  const [msgHits, setMsgHits] = useState<MessageSearchHit[]>([]);
+  const filterQ = chatFilter.trim().toLowerCase();
+  const convById = useMemo(() => {
+    const m = new Map<string, ConversationSummary>();
+    conversations.forEach((c) => m.set(c.conversation.id, c));
+    return m;
+  }, [conversations]);
+  useEffect(() => {
+    const q = chatFilter.trim();
+    if (q.length < 2) { setMsgHits([]); return; }
+    let alive = true;
+    const t = setTimeout(async () => {
+      const hits = await searchAllMessages(supabase, q);
+      if (alive) setMsgHits(hits.filter((h) => convById.has(h.conversationId)));
+    }, 250);
+    return () => { alive = false; clearTimeout(t); };
+  }, [chatFilter, convById]);
+
   const visibleConvs = useMemo(() => {
-    const list = conversations.filter((c) => showHidden || !hiddenIds.has(c.conversation.id));
+    const list = conversations.filter((c) => (showHidden || !hiddenIds.has(c.conversation.id))
+      && (!filterQ || c.title.toLowerCase().includes(filterQ)));
     return [...list].sort((a, b) => {
       const ap = pinnedIds.has(a.conversation.id) ? 1 : 0;
       const bp = pinnedIds.has(b.conversation.id) ? 1 : 0;
@@ -173,7 +195,7 @@ function AppInner() {
       const bt = b.lastMessage?.created_at || b.conversation.created_at;
       return new Date(bt).getTime() - new Date(at).getTime();
     });
-  }, [conversations, pinnedIds, hiddenIds, showHidden]);
+  }, [conversations, pinnedIds, hiddenIds, showHidden, filterQ]);
 
   const selectedConv = conversations.find((c) => c.conversation.id === selectedConvId);
 
@@ -262,10 +284,40 @@ function AppInner() {
           )}
         </AnimatePresence>
 
+        {/* Global search: filter chats by name + search all messages */}
+        <div className="chatlist-search">
+          <SearchIcon size={16} />
+          <input
+            type="text"
+            placeholder="Search chats and messages"
+            value={chatFilter}
+            onChange={(e) => setChatFilter(e.target.value)}
+          />
+          {chatFilter && <button className="chatlist-search-clear" onClick={() => setChatFilter('')} aria-label="Clear search">✕</button>}
+        </div>
+
         {hiddenIds.size > 0 && (
           <button className="hidden-toggle" onClick={() => setShowHidden((v) => !v)}>
             {showHidden ? 'Hide private chats' : `Show hidden chats (${hiddenIds.size})`}
           </button>
+        )}
+
+        {msgHits.length > 0 && (
+          <div className="msg-hits">
+            <div className="msg-hits-head">Messages</div>
+            {msgHits.slice(0, 12).map((h) => {
+              const conv = convById.get(h.conversationId)!;
+              return (
+                <button key={h.message.id} className="msg-hit" onClick={() => { setSelectedConvId(h.conversationId); setChatFilter(''); }}>
+                  <div className="avatar small">{conv.title[0]}</div>
+                  <div className="msg-hit-info">
+                    <div className="msg-hit-title">{conv.title}</div>
+                    <div className="msg-hit-snippet">{h.message.content}</div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
         )}
 
         <div className="conversation-list">

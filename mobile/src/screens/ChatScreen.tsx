@@ -47,8 +47,9 @@ import {
   getPolls,
   getPollVotes,
   votePoll,
+  messageMatchesKind,
 } from '../lib/shared';
-import type { Message, MessageReaction, Profile, ConversationSummary, Poll, PollVote } from '../lib/shared';
+import type { Message, MessageReaction, Profile, ConversationSummary, Poll, PollVote, SearchKind } from '../lib/shared';
 import { uploadMediaFromUri } from '../lib/media';
 import { formatLastSeen, formatDaySeparator } from '../lib/time';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
@@ -99,6 +100,10 @@ export default function ChatScreen() {
   const [selectionForward, setSelectionForward] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
   const [viewerUrl, setViewerUrl] = useState<string | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [searchKind, setSearchKind] = useState<SearchKind>('all');
+  const [activeMatch, setActiveMatch] = useState(0);
   const [forwardOpen, setForwardOpen] = useState(false);
   const [forwardList, setForwardList] = useState<ConversationSummary[]>([]);
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
@@ -312,18 +317,23 @@ export default function ChatScreen() {
       ),
       // Group calling isn't implemented yet, so 1:1 call buttons are only shown
       // in direct chats — no dead/"coming soon" buttons in groups.
-      headerRight: isGroup
-        ? undefined
-        : () => (
-            <View style={styles.headerActions}>
-              <Pressable hitSlop={8} onPress={() => placeCall('audio')}>
+      headerRight: () => (
+        <View style={styles.headerActions}>
+          <Pressable hitSlop={8} onPress={() => setSearchOpen((v) => !v)}>
+            <Ionicons name="search-outline" size={21} color={colors.text} />
+          </Pressable>
+          {!isGroup && (
+            <>
+              <Pressable hitSlop={8} onPress={() => placeCall('audio')} style={{ marginLeft: 18 }}>
                 <Ionicons name="call-outline" size={22} color={colors.text} />
               </Pressable>
               <Pressable hitSlop={8} onPress={() => placeCall('video')} style={{ marginLeft: 18 }}>
                 <Ionicons name="videocam-outline" size={24} color={colors.text} />
               </Pressable>
-            </View>
-          ),
+            </>
+          )}
+        </View>
+      ),
     });
   }, [navigation, params.title, subtitle, peers, colors, styles, selectionMode, selectedIds, isGroup]);
 
@@ -629,9 +639,44 @@ export default function ChatScreen() {
         }}
         onPress={selectionMode ? () => toggleSelect(msg) : undefined}
         onOpenImage={(url) => (selectionMode ? toggleSelect(msg) : setViewerUrl(url))}
+        highlight={searchActive ? search : ''}
+        activeMatch={msg.id === activeMatchId}
       />
     );
   };
+
+  const inverted = useMemo(() => [...timeline].reverse(), [timeline]);
+
+  // In-chat search: jump between matching messages (no filtering).
+  const search = searchTerm.trim().toLowerCase();
+  const searchActive = searchOpen && (!!search || searchKind !== 'all');
+  const matchIds = useMemo(() => {
+    if (!searchActive) return [] as string[];
+    return messages
+      .filter((m) => !m.is_deleted && messageMatchesKind(m, searchKind) && (!search || (m.content ?? '').toLowerCase().includes(search)))
+      .map((m) => m.id);
+  }, [messages, search, searchKind, searchActive]);
+  const activeMatchId = matchIds[activeMatch];
+
+  const scrollToMessage = useCallback((id: string) => {
+    const idx = inverted.findIndex((it) => it.id === id);
+    if (idx >= 0) {
+      try { listRef.current?.scrollToIndex({ index: idx, animated: true, viewPosition: 0.5 }); } catch { /* measured later */ }
+    }
+  }, [inverted]);
+  function jumpMatch(delta: number) {
+    if (matchIds.length === 0) return;
+    const next = (activeMatch + delta + matchIds.length) % matchIds.length;
+    setActiveMatch(next);
+    scrollToMessage(matchIds[next]);
+  }
+  useEffect(() => {
+    if (!searchActive || matchIds.length === 0) { setActiveMatch(0); return; }
+    setActiveMatch(0);
+    const t = setTimeout(() => scrollToMessage(matchIds[0]), 80);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, searchKind, searchActive]);
 
   if (loading) {
     return (
@@ -641,14 +686,53 @@ export default function ChatScreen() {
     );
   }
 
-  const inverted = [...timeline].reverse();
-
   return (
     <KeyboardAvoidingView
       style={styles.flex}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
     >
+      {searchOpen && (
+        <View style={styles.searchBar}>
+          <View style={styles.searchRow}>
+            <Ionicons name="search" size={16} color={colors.textMuted} />
+            <TextInput
+              autoFocus
+              style={styles.searchInput}
+              placeholder="Search in this chat"
+              placeholderTextColor={colors.textFaint}
+              value={searchTerm}
+              onChangeText={setSearchTerm}
+              returnKeyType="search"
+              onSubmitEditing={() => jumpMatch(1)}
+            />
+            {searchActive && (
+              <Text style={styles.searchCount}>
+                {matchIds.length === 0 ? '0' : `${activeMatch + 1}/${matchIds.length}`}
+              </Text>
+            )}
+            <Pressable hitSlop={8} disabled={matchIds.length === 0} onPress={() => jumpMatch(-1)}>
+              <Ionicons name="chevron-up" size={20} color={matchIds.length ? colors.text : colors.textFaint} />
+            </Pressable>
+            <Pressable hitSlop={8} disabled={matchIds.length === 0} onPress={() => jumpMatch(1)} style={{ marginLeft: 12 }}>
+              <Ionicons name="chevron-down" size={20} color={matchIds.length ? colors.text : colors.textFaint} />
+            </Pressable>
+            <Pressable hitSlop={8} onPress={() => { setSearchOpen(false); setSearchTerm(''); setSearchKind('all'); }} style={{ marginLeft: 12 }}>
+              <Ionicons name="close" size={20} color={colors.textMuted} />
+            </Pressable>
+          </View>
+          <View style={styles.searchChips}>
+            {(['all', 'media', 'links', 'docs', 'voice'] as SearchKind[]).map((k) => (
+              <Pressable key={k} onPress={() => setSearchKind(k)} style={[styles.searchChip, searchKind === k && styles.searchChipActive]}>
+                <Text style={[styles.searchChipText, searchKind === k && styles.searchChipTextActive]}>
+                  {k === 'all' ? 'All' : k === 'media' ? 'Media' : k === 'links' ? 'Links' : k === 'docs' ? 'Docs' : 'Voice'}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+      )}
+
       <FlatList
         ref={listRef}
         data={inverted}
@@ -656,6 +740,11 @@ export default function ChatScreen() {
         keyExtractor={(it) => it.id}
         renderItem={renderItem}
         contentContainerStyle={styles.listContent}
+        onScrollToIndexFailed={(info) => {
+          setTimeout(() => {
+            try { listRef.current?.scrollToIndex({ index: info.index, animated: true, viewPosition: 0.5 }); } catch { /* give up */ }
+          }, 120);
+        }}
       />
 
       {/* Reply / edit preview bar */}
@@ -908,6 +997,21 @@ const makeStyles = (colors: Palette) =>
     headerTitle: { color: colors.text, fontSize: font.heading, fontWeight: '600' },
     headerSub: { color: colors.textMuted, fontSize: font.tiny },
     headerActions: { flexDirection: 'row', alignItems: 'center' },
+    searchBar: {
+      backgroundColor: colors.surface, paddingHorizontal: 12, paddingTop: 8, paddingBottom: 8,
+      borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, gap: 8,
+    },
+    searchRow: {
+      flexDirection: 'row', alignItems: 'center', gap: 8,
+      backgroundColor: colors.surfaceAlt, borderRadius: radius.md, paddingHorizontal: 12, paddingVertical: 6,
+    },
+    searchInput: { flex: 1, color: colors.text, fontSize: font.body, paddingVertical: 2 },
+    searchCount: { color: colors.textMuted, fontSize: font.small, minWidth: 36, textAlign: 'right' },
+    searchChips: { flexDirection: 'row', gap: 6 },
+    searchChip: { paddingHorizontal: 12, paddingVertical: 4, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.border },
+    searchChipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+    searchChipText: { color: colors.textMuted, fontSize: font.small, fontWeight: '600' },
+    searchChipTextActive: { color: '#fff' },
     previewBar: {
       flexDirection: 'row',
       alignItems: 'center',

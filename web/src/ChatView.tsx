@@ -14,6 +14,7 @@ import {
   getMessages, sendMessage, subscribeToMessages, markMessageAsRead, uploadMedia,
   getReceipts, subscribeToReceipts, getReactions, toggleReaction, subscribeToReactions,
   createTypingChannel, editMessage, deleteMessage, forwardMessage, getMyConversations,
+  messageMatchesKind, type SearchKind,
 } from '@shared/api';
 import { scheduleMessage, getScheduledMessages, dispatchDueMessages } from '@shared/premiumApi';
 import { createPoll, getPolls } from '@shared/communitiesApi';
@@ -112,6 +113,8 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
   // in-conversation search
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [searchKind, setSearchKind] = useState<SearchKind>('all');
+  const [activeMatch, setActiveMatch] = useState(0);
 
   // contact profile (direct chats)
   const [showContact, setShowContact] = useState(false);
@@ -476,10 +479,38 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
 
   // In-conversation search: when active, only matching messages are shown.
   const search = searchTerm.trim().toLowerCase();
-  const displayMessages = useMemo(() => {
-    const base = messages.filter((m) => !hiddenMsgIds.has(m.id));
-    return search ? base.filter((m) => !m.is_deleted && (m.content ?? '').toLowerCase().includes(search)) : base;
-  }, [messages, search, hiddenMsgIds]);
+  // WhatsApp-style search: keep the whole thread visible and jump between
+  // matches rather than filtering. A kind filter (media/links/docs/voice) can
+  // narrow the set, with or without a text query.
+  const displayMessages = useMemo(() => messages.filter((m) => !hiddenMsgIds.has(m.id)), [messages, hiddenMsgIds]);
+  const searchActive = searchOpen && (!!search || searchKind !== 'all');
+  const matchIds = useMemo(() => {
+    if (!searchActive) return [] as string[];
+    return displayMessages
+      .filter((m) => !m.is_deleted && messageMatchesKind(m, searchKind) && (!search || (m.content ?? '').toLowerCase().includes(search)))
+      .map((m) => m.id);
+  }, [displayMessages, search, searchKind, searchActive]);
+  const activeMatchId = matchIds[activeMatch];
+
+  function scrollToMatch(idx: number) {
+    const id = matchIds[idx];
+    if (!id) return;
+    document.getElementById(`m-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+  function jumpMatch(delta: number) {
+    if (matchIds.length === 0) return;
+    const next = (activeMatch + delta + matchIds.length) % matchIds.length;
+    setActiveMatch(next);
+    scrollToMatch(next);
+  }
+  // Reset to the newest match whenever the query/filter changes.
+  useEffect(() => {
+    if (!searchActive || matchIds.length === 0) { setActiveMatch(0); return; }
+    setActiveMatch(0);
+    const t = setTimeout(() => scrollToMatch(0), 60);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, searchKind, searchActive]);
 
   // Image/video messages in this conversation — backs the full-screen lightbox.
   const mediaItems = useMemo<MediaItem[]>(() => messages
@@ -537,16 +568,34 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
           </>
         )}
         <button className="header-icon-btn" title="Search messages" aria-label="Search messages"
-          onClick={() => { setSearchOpen((v) => !v); if (searchOpen) setSearchTerm(''); }}><SearchIcon size={18} /></button>
+          onClick={() => { setSearchOpen((v) => !v); if (searchOpen) { setSearchTerm(''); setSearchKind('all'); } }}><SearchIcon size={18} /></button>
         {ghost && <span className="ghost-indicator" title="Ghost mode on">👻</span>}
       </div>
 
       <AnimatePresence>
         {searchOpen && (
           <motion.div className="chat-search-bar" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}>
-            <input autoFocus type="text" placeholder="Search in this conversation…" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
-            {search && <span className="chat-search-count">{displayMessages.length} match{displayMessages.length === 1 ? '' : 'es'}</span>}
-            <button onClick={() => { setSearchOpen(false); setSearchTerm(''); }}>✕</button>
+            <div className="chat-search-row">
+              <SearchIcon size={16} className="chat-search-icon" />
+              <input autoFocus type="text" placeholder="Search in this conversation…" value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') jumpMatch(e.shiftKey ? -1 : 1); }} />
+              {searchActive && (
+                <span className="chat-search-count">
+                  {matchIds.length === 0 ? 'No results' : `${activeMatch + 1} / ${matchIds.length}`}
+                </span>
+              )}
+              <button className="chat-search-nav" disabled={matchIds.length === 0} onClick={() => jumpMatch(-1)} aria-label="Previous match" title="Previous (Shift+Enter)">↑</button>
+              <button className="chat-search-nav" disabled={matchIds.length === 0} onClick={() => jumpMatch(1)} aria-label="Next match" title="Next (Enter)">↓</button>
+              <button className="chat-search-close" onClick={() => { setSearchOpen(false); setSearchTerm(''); setSearchKind('all'); }} aria-label="Close search">✕</button>
+            </div>
+            <div className="chat-search-filters">
+              {(['all', 'media', 'links', 'docs', 'voice'] as SearchKind[]).map((k) => (
+                <button key={k} className={`chat-search-chip ${searchKind === k ? 'active' : ''}`} onClick={() => setSearchKind(k)}>
+                  {k === 'all' ? 'All' : k === 'media' ? 'Media' : k === 'links' ? 'Links' : k === 'docs' ? 'Docs' : 'Voice'}
+                </button>
+              ))}
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -585,15 +634,17 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
             const msgReactions = reactionsByMessage[msg.id] || [];
             const replied = repliedOf(msg);
             const prev = displayMessages[i - 1];
-            const showDaySep = !search && (!prev || !isSameDay(new Date(prev.created_at), new Date(msg.created_at)));
-            const grouped = !search && !!prev && !showDaySep && prev.sender_id === msg.sender_id
+            const showDaySep = !prev || !isSameDay(new Date(prev.created_at), new Date(msg.created_at));
+            const grouped = !!prev && !showDaySep && prev.sender_id === msg.sender_id
               && new Date(msg.created_at).getTime() - new Date(prev.created_at).getTime() < GROUP_WINDOW_MS;
+            const isActiveMatch = msg.id === activeMatchId;
+            const isMatch = searchActive && matchIds.includes(msg.id);
             return [
               showDaySep && (
                 <div key={`${msg.id}-sep`} className="day-sep"><span>{daySepLabel(msg.created_at)}</span></div>
               ),
-              <motion.div key={msg.id} layout variants={isMine ? bubbleMine : bubbleTheirs} initial="initial" animate="animate"
-                className={`message ${isMine ? 'mine' : 'theirs'} ${grouped ? 'grouped' : ''}`}>
+              <motion.div key={msg.id} id={`m-${msg.id}`} layout variants={isMine ? bubbleMine : bubbleTheirs} initial="initial" animate="animate"
+                className={`message ${isMine ? 'mine' : 'theirs'} ${grouped ? 'grouped' : ''} ${isMatch ? 'search-match' : ''} ${isActiveMatch ? 'search-match-active' : ''}`}>
                 {!isMine && isGroup && !msg.is_deleted && !grouped && <div className="message-sender">{sender?.display_name || 'Unknown'}</div>}
                 <div className="message-row">
                   <div className={`message-bubble ${msg.is_deleted ? 'deleted' : ''}`}>

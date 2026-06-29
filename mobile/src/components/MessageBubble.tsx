@@ -31,6 +31,26 @@ interface Props {
   grouped?: boolean;
   onOpenImage?: (url: string) => void;
   onReactionPress?: () => void;
+  /** Lowercased search term to highlight inside text bodies. */
+  highlight?: string;
+  /** This bubble is the active search match (gets a ring). */
+  activeMatch?: boolean;
+}
+
+/** Split text into <Text> runs, wrapping case-insensitive matches of `term`. */
+function renderHighlighted(text: string, term: string, baseStyle: any, hitStyle: any) {
+  if (!term) return <Text style={baseStyle}>{text}</Text>;
+  const lower = text.toLowerCase();
+  const parts: React.ReactNode[] = [];
+  let i = 0, k = 0;
+  while (i < text.length) {
+    const idx = lower.indexOf(term, i);
+    if (idx === -1) { parts.push(<Text key={k++}>{text.slice(i)}</Text>); break; }
+    if (idx > i) parts.push(<Text key={k++}>{text.slice(i, idx)}</Text>);
+    parts.push(<Text key={k++} style={hitStyle}>{text.slice(idx, idx + term.length)}</Text>);
+    i = idx + term.length;
+  }
+  return <Text style={baseStyle}>{parts}</Text>;
 }
 
 function groupReactions(
@@ -61,6 +81,8 @@ export default function MessageBubble({
   grouped: groupedRun,
   onOpenImage,
   onReactionPress,
+  highlight = '',
+  activeMatch = false,
 }: Props) {
   const colors = useColors();
   const styles = useMemo(() => makeStyles(colors), [colors]);
@@ -92,7 +114,7 @@ export default function MessageBubble({
       delayLongPress={250}
       style={[styles.wrap, wrapTight, mine ? styles.wrapMine : styles.wrapTheirs, selected && styles.wrapSelected]}
     >
-      <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs, bubbleShape]}>
+      <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs, bubbleShape, activeMatch && styles.bubbleActiveMatch]}>
         {!mine && senderName && !groupedRun && <Text style={styles.sender}>{senderName}</Text>}
 
         {replyTo && (
@@ -133,7 +155,7 @@ export default function MessageBubble({
         )}
 
         {message.type === 'text' && !!message.content && (
-          <Text style={[styles.text, { color: tint }]}>{message.content}</Text>
+          renderHighlighted(message.content, highlight, [styles.text, { color: tint }], styles.highlightHit)
         )}
 
         <View style={styles.meta}>
@@ -183,6 +205,8 @@ const makeStyles = (colors: Palette) =>
     },
     bubbleMine: { backgroundColor: colors.bubbleOut, borderTopRightRadius: 4 },
     bubbleTheirs: { backgroundColor: colors.bubbleIn, borderTopLeftRadius: 4 },
+    bubbleActiveMatch: { borderWidth: 2, borderColor: colors.primary },
+    highlightHit: { backgroundColor: colors.primary, color: '#fff' },
     sender: { color: colors.primary, fontSize: font.small, fontWeight: '700', marginBottom: 2 },
     text: { fontSize: font.body, lineHeight: 20 },
     deleted: { fontSize: font.body, fontStyle: 'italic' },
