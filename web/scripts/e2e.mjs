@@ -91,7 +91,10 @@ async function main() {
   // persistSession/autoRefresh); this headless client has them off, so set it
   // explicitly — mirrors what the app does, isolating the realtime feature.
   const bSession = (await cb.auth.getSession()).data.session;
-  if (bSession) cb.realtime.setAuth(bSession.access_token);
+  // setAuth is ASYNC in realtime-js v2 — it pushes the JWT to the socket and any
+  // channels. It MUST be awaited before subscribe(), or the channel joins with the
+  // anon token and RLS-gated postgres_changes are silently never delivered.
+  if (bSession) await cb.realtime.setAuth(bSession.access_token);
 
   let rt = false;
   const chan = cb.channel(`e2e:${convId}`).on('postgres_changes',
@@ -100,7 +103,8 @@ async function main() {
 
   const m1 = await ca.from('messages').insert({ conversation_id: convId, sender_id: aId, type: 'text', content: 'hello from A' }).select().single();
   ok('Send message', !m1.error && !!m1.data, m1.error?.message);
-  await sleep(4000);
+  // Poll for delivery rather than a fixed sleep — realtime latency varies.
+  for (let i = 0; i < 30 && !rt; i++) await sleep(300);
   ok('Realtime message delivery', rt);
   if (!m1.data) { await chan.unsubscribe(); return finish(ca, cb); } // bail cleanly so results print
   await chan.unsubscribe();
