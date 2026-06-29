@@ -22,6 +22,7 @@ import type { RootStackParamList } from './src/navigation/types';
 import AuthScreen from './src/screens/AuthScreen';
 import ConversationsScreen from './src/screens/ConversationsScreen';
 import StatusScreen from './src/screens/StatusScreen';
+import CommunitiesScreen from './src/screens/CommunitiesScreen';
 import CallsScreen from './src/screens/CallsScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 import ChatScreen from './src/screens/ChatScreen';
@@ -32,6 +33,9 @@ import EditProfileScreen from './src/screens/EditProfileScreen';
 import AppearanceScreen from './src/screens/AppearanceScreen';
 import PremiumScreen from './src/screens/PremiumScreen';
 import AppLockSetupScreen from './src/screens/AppLockSetupScreen';
+import CreateCommunityScreen from './src/screens/CreateCommunityScreen';
+import CommunityDetailScreen from './src/screens/CommunityDetailScreen';
+import HelpSupportScreen from './src/screens/HelpSupportScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator();
@@ -51,6 +55,7 @@ function MainTabs() {
           const map: Record<string, [keyof typeof Ionicons.glyphMap, keyof typeof Ionicons.glyphMap]> = {
             Chats: ['chatbubbles', 'chatbubbles-outline'],
             Status: ['radio', 'radio-outline'],
+            Communities: ['people', 'people-outline'],
             Calls: ['call', 'call-outline'],
             Settings: ['settings', 'settings-outline'],
           };
@@ -61,6 +66,7 @@ function MainTabs() {
     >
       <Tab.Screen name="Chats" component={ConversationsScreen} options={{ title: APP_NAME }} />
       <Tab.Screen name="Status" component={StatusScreen} />
+      <Tab.Screen name="Communities" component={CommunitiesScreen} />
       <Tab.Screen name="Calls" component={CallsScreen} />
       <Tab.Screen name="Settings" component={SettingsScreen} />
     </Tab.Navigator>
@@ -139,6 +145,9 @@ function RootNavigator() {
               <Stack.Screen name="Appearance" component={AppearanceScreen} options={{ title: 'Appearance' }} />
               <Stack.Screen name="Premium" component={PremiumScreen} options={{ title: `${APP_NAME}+` }} />
               <Stack.Screen name="AppLockSetup" component={AppLockSetupScreen} options={{ title: 'App lock' }} />
+              <Stack.Screen name="CreateCommunity" component={CreateCommunityScreen} options={{ title: 'New community' }} />
+              <Stack.Screen name="CommunityDetail" component={CommunityDetailScreen} options={{ title: '' }} />
+              <Stack.Screen name="HelpSupport" component={HelpSupportScreen} options={{ title: 'Help & Support' }} />
             </>
           ) : (
             <Stack.Screen name="Auth" component={AuthScreen} options={{ headerShown: false }} />

@@ -44,12 +44,17 @@ import {
   joinPresence,
   getCurrentUser,
   getMyConversations,
+  createPoll,
+  getPolls,
+  getPollVotes,
+  votePoll,
 } from '../lib/shared';
-import type { Message, MessageReaction, Profile, ConversationSummary } from '../lib/shared';
+import type { Message, MessageReaction, Profile, ConversationSummary, Poll, PollVote } from '../lib/shared';
 import { uploadMediaFromUri } from '../lib/media';
 import { formatLastSeen } from '../lib/time';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import MessageBubble, { type TickStatus } from '../components/MessageBubble';
+import PollCard from '../components/PollCard';
 import { useCalls } from '../calls/CallContext';
 import type { RootStackParamList } from '../navigation/types';
 
@@ -57,6 +62,11 @@ type Nav = NativeStackNavigationProp<RootStackParamList, 'Chat'>;
 type Rt = RouteProp<RootStackParamList, 'Chat'>;
 
 const QUICK_EMOJI = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+
+// The thread renders messages and polls interleaved by time.
+type TimelineItem =
+  | { kind: 'msg'; id: string; at: string; message: Message }
+  | { kind: 'poll'; id: string; at: string; poll: Poll };
 
 export default function ChatScreen() {
   const navigation = useNavigation<Nav>();
@@ -90,7 +100,14 @@ export default function ChatScreen() {
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [sending, setSending] = useState(false);
 
-  const listRef = useRef<FlatList<Message>>(null);
+  const [polls, setPolls] = useState<Poll[]>([]);
+  const [pollVotes, setPollVotes] = useState<Map<string, PollVote[]>>(new Map());
+  const [pollBuilder, setPollBuilder] = useState(false);
+  const [pollQuestion, setPollQuestion] = useState('');
+  const [pollOptions, setPollOptions] = useState<string[]>(['', '']);
+  const [pollMultiple, setPollMultiple] = useState(false);
+
+  const listRef = useRef<FlatList<TimelineItem>>(null);
   const typingChannel = useRef<ReturnType<typeof createTypingChannel> | null>(null);
   const typingTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -101,6 +118,44 @@ export default function ChatScreen() {
       return next;
     });
   }, []);
+
+  const loadPolls = useCallback(async () => {
+    const ps = await getPolls(supabase, conversationId);
+    setPolls(ps);
+    const entries = await Promise.all(
+      ps.map(async (p) => [p.id, await getPollVotes(supabase, p.id)] as const),
+    );
+    setPollVotes(new Map(entries));
+  }, [conversationId]);
+
+  const onVotePoll = useCallback(
+    async (poll: Poll, optionIndex: number) => {
+      await votePoll(supabase, poll.id, optionIndex, poll.multiple);
+      const fresh = await getPollVotes(supabase, poll.id);
+      setPollVotes((prev) => new Map(prev).set(poll.id, fresh));
+    },
+    [],
+  );
+
+  async function submitPoll() {
+    const q = pollQuestion.trim();
+    const opts = pollOptions.map((o) => o.trim()).filter(Boolean);
+    if (!q || opts.length < 2) {
+      Alert.alert('Incomplete poll', 'Add a question and at least two options.');
+      return;
+    }
+    setPollBuilder(false);
+    const { error } = await createPoll(supabase, conversationId, q, opts, pollMultiple);
+    if (error) {
+      Alert.alert('Could not create poll', error.message);
+      return;
+    }
+    setPollQuestion('');
+    setPollOptions(['', '']);
+    setPollMultiple(false);
+    await loadPolls();
+    requestAnimationFrame(() => listRef.current?.scrollToOffset({ offset: 0, animated: true }));
+  }
 
   // ── Bootstrap: who am I, conversation peers, history ──────────────────────
   useEffect(() => {
@@ -128,6 +183,7 @@ export default function ChatScreen() {
       if (!active) return;
       setReactions(rx);
       applyReceipts(rc);
+      loadPolls().catch(() => {});
 
       // mark unread incoming as read
       msgs
@@ -400,21 +456,42 @@ export default function ChatScreen() {
     return map;
   }, [reactions]);
 
-  const renderItem = ({ item }: { item: Message }) => {
-    const mine = item.sender_id === uid;
-    const replyTo = item.reply_to ? messages.find((m) => m.id === item.reply_to) ?? null : null;
-    const senderName = isGroup ? peers.find((p) => p.id === item.sender_id)?.display_name : null;
+  // Merge messages and polls into one chronological timeline.
+  const timeline = useMemo<TimelineItem[]>(() => {
+    const items: TimelineItem[] = [
+      ...messages.map((m): TimelineItem => ({ kind: 'msg', id: m.id, at: m.created_at, message: m })),
+      ...polls.map((p): TimelineItem => ({ kind: 'poll', id: `poll:${p.id}`, at: p.created_at, poll: p })),
+    ];
+    items.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+    return items;
+  }, [messages, polls]);
+
+  const renderItem = ({ item }: { item: TimelineItem }) => {
+    if (item.kind === 'poll') {
+      return (
+        <PollCard
+          poll={item.poll}
+          votes={pollVotes.get(item.poll.id) ?? []}
+          myUserId={uid}
+          onVote={(optionIndex) => onVotePoll(item.poll, optionIndex)}
+        />
+      );
+    }
+    const msg = item.message;
+    const mine = msg.sender_id === uid;
+    const replyTo = msg.reply_to ? messages.find((m) => m.id === msg.reply_to) ?? null : null;
+    const senderName = isGroup ? peers.find((p) => p.id === msg.sender_id)?.display_name : null;
     return (
       <MessageBubble
-        message={item}
+        message={msg}
         mine={mine}
         senderName={senderName}
         replyTo={replyTo}
-        reactions={reactionsByMsg.get(item.id)}
-        tick={mine ? receipts.get(item.id) ?? 'sent' : undefined}
+        reactions={reactionsByMsg.get(msg.id)}
+        tick={mine ? receipts.get(msg.id) ?? 'sent' : undefined}
         onLongPress={() => {
           Haptics.selectionAsync().catch(() => {});
-          setSelected(item);
+          setSelected(msg);
         }}
         onOpenImage={(url) => setViewerUrl(url)}
       />
@@ -429,7 +506,7 @@ export default function ChatScreen() {
     );
   }
 
-  const inverted = [...messages].reverse();
+  const inverted = [...timeline].reverse();
 
   return (
     <KeyboardAvoidingView
@@ -441,7 +518,7 @@ export default function ChatScreen() {
         ref={listRef}
         data={inverted}
         inverted
-        keyExtractor={(m) => m.id}
+        keyExtractor={(it) => it.id}
         renderItem={renderItem}
         contentContainerStyle={styles.listContent}
       />
@@ -515,7 +592,55 @@ export default function ChatScreen() {
             <AttachOption icon="image" label="Photo / Video" color="#5B6EF5" onPress={() => pickImage(false)} />
             <AttachOption icon="camera" label="Camera" color="#E8638A" onPress={() => pickImage(true)} />
             <AttachOption icon="document" label="Document" color="#F7A948" onPress={pickDocument} />
+            <AttachOption
+              icon="bar-chart"
+              label="Poll"
+              color="#00A884"
+              onPress={() => {
+                setAttachOpen(false);
+                setPollBuilder(true);
+              }}
+            />
           </View>
+        </Pressable>
+      </Modal>
+
+      {/* Poll builder */}
+      <Modal visible={pollBuilder} transparent animationType="slide" onRequestClose={() => setPollBuilder(false)}>
+        <Pressable style={styles.backdrop} onPress={() => setPollBuilder(false)}>
+          <Pressable style={[styles.sheet, styles.pollSheet, { paddingBottom: insets.bottom + 16 }]} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.sheetTitle}>New poll</Text>
+            <TextInput
+              style={styles.pollInput}
+              placeholder="Ask a question"
+              placeholderTextColor={colors.textFaint}
+              value={pollQuestion}
+              onChangeText={setPollQuestion}
+            />
+            {pollOptions.map((opt, i) => (
+              <TextInput
+                key={i}
+                style={styles.pollInput}
+                placeholder={`Option ${i + 1}`}
+                placeholderTextColor={colors.textFaint}
+                value={opt}
+                onChangeText={(t) => setPollOptions((prev) => prev.map((o, j) => (j === i ? t : o)))}
+              />
+            ))}
+            {pollOptions.length < 6 && (
+              <Pressable style={styles.pollAddOpt} onPress={() => setPollOptions((prev) => [...prev, ''])}>
+                <Ionicons name="add" size={18} color={colors.primary} />
+                <Text style={styles.pollAddOptText}>Add option</Text>
+              </Pressable>
+            )}
+            <Pressable style={styles.pollToggle} onPress={() => setPollMultiple((v) => !v)}>
+              <Ionicons name={pollMultiple ? 'checkbox' : 'square-outline'} size={20} color={colors.primary} />
+              <Text style={styles.pollToggleText}>Allow multiple answers</Text>
+            </Pressable>
+            <Pressable style={styles.pollCreate} onPress={submitPoll}>
+              <Text style={styles.pollCreateText}>Create poll</Text>
+            </Pressable>
+          </Pressable>
         </Pressable>
       </Modal>
 
@@ -695,6 +820,22 @@ const makeStyles = (colors: Palette) =>
     },
     sheetTitle: { color: colors.text, fontSize: font.heading, fontWeight: '700', marginBottom: 8 },
     forwardSheet: { maxHeight: '60%' },
+    pollSheet: { maxHeight: '80%' },
+    pollInput: {
+      backgroundColor: colors.surfaceAlt,
+      color: colors.text,
+      borderRadius: radius.md,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      fontSize: font.body,
+      marginBottom: 8,
+    },
+    pollAddOpt: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8 },
+    pollAddOptText: { color: colors.primary, fontSize: font.body, fontWeight: '600', marginLeft: 6 },
+    pollToggle: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12 },
+    pollToggleText: { color: colors.text, fontSize: font.body, marginLeft: 10 },
+    pollCreate: { backgroundColor: colors.primary, borderRadius: radius.md, paddingVertical: 14, alignItems: 'center', marginTop: 8 },
+    pollCreateText: { color: '#fff', fontSize: font.heading, fontWeight: '700' },
     forwardRow: { paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
     forwardName: { color: colors.text, fontSize: font.body },
     emojiRow: {

@@ -5,6 +5,8 @@ export * from '../../../shared/api';
 export * from '../../../shared/types';
 export * from '../../../shared/premiumApi';
 export * from '../../../shared/callsApi';
+export * from '../../../shared/communitiesApi';
+export * from '../../../shared/supportApi';
 export * from '../../../shared/premium/plans';
 export * from '../../../shared/premium/features';
 export { createFutureHatClient } from '../../../shared/client';

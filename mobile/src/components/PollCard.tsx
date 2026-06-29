@@ -1,0 +1,76 @@
+// FUTUREHAT mobile — a poll rendered inside a chat thread. Shows live tallies
+// with progress bars; tap an option to (un)vote. Respects single/multiple choice.
+import React, { useMemo } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import type { Poll, PollVote } from '../lib/shared';
+import { useColors, spacing, radius, font, type Palette } from '../theme';
+
+interface Props {
+  poll: Poll;
+  votes: PollVote[];
+  myUserId: string | null;
+  onVote: (optionIndex: number) => void;
+}
+
+export default function PollCard({ poll, votes, myUserId, onVote }: Props) {
+  const colors = useColors();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
+
+  const total = votes.length;
+  const countFor = (i: number) => votes.filter((v) => v.option_index === i).length;
+  const mine = useMemo(
+    () => new Set(votes.filter((v) => v.user_id === myUserId).map((v) => v.option_index)),
+    [votes, myUserId],
+  );
+
+  return (
+    <View style={styles.card}>
+      <View style={styles.head}>
+        <Ionicons name="bar-chart" size={16} color={colors.primary} />
+        <Text style={styles.kind}>{poll.multiple ? 'Select one or more' : 'Select one'}</Text>
+      </View>
+      <Text style={styles.question}>{poll.question}</Text>
+
+      {poll.options.map((opt, i) => {
+        const c = countFor(i);
+        const pct = total ? Math.round((c / total) * 100) : 0;
+        const chosen = mine.has(i);
+        return (
+          <Pressable key={i} style={styles.opt} onPress={() => onVote(i)}>
+            <View style={styles.barTrack}>
+              <View style={[styles.barFill, { width: `${pct}%`, backgroundColor: chosen ? colors.primary : colors.surfaceAlt }]} />
+            </View>
+            <View style={styles.optRow}>
+              <Ionicons
+                name={chosen ? (poll.multiple ? 'checkbox' : 'radio-button-on') : poll.multiple ? 'square-outline' : 'radio-button-off'}
+                size={16}
+                color={chosen ? colors.primary : colors.textMuted}
+              />
+              <Text style={[styles.optText, chosen && styles.optTextOn]} numberOfLines={2}>{opt}</Text>
+              <Text style={styles.pct}>{pct}%</Text>
+            </View>
+          </Pressable>
+        );
+      })}
+
+      <Text style={styles.total}>{total} vote{total === 1 ? '' : 's'}</Text>
+    </View>
+  );
+}
+
+const makeStyles = (colors: Palette) =>
+  StyleSheet.create({
+    card: { alignSelf: 'flex-start', maxWidth: '86%', backgroundColor: colors.bubbleIn, borderRadius: radius.md, padding: spacing(3), marginHorizontal: spacing(3), marginVertical: spacing(1) },
+    head: { flexDirection: 'row', alignItems: 'center', marginBottom: spacing(1) },
+    kind: { color: colors.primary, fontSize: font.tiny, fontWeight: '700', marginLeft: spacing(1.5), textTransform: 'uppercase', letterSpacing: 0.4 },
+    question: { color: colors.text, fontSize: font.body, fontWeight: '700', marginBottom: spacing(2) },
+    opt: { marginBottom: spacing(2) },
+    barTrack: { ...StyleSheet.absoluteFillObject, borderRadius: radius.sm, overflow: 'hidden' },
+    barFill: { height: '100%', opacity: 0.25, borderRadius: radius.sm },
+    optRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: spacing(2), paddingHorizontal: spacing(2) },
+    optText: { flex: 1, color: colors.text, fontSize: font.small, marginLeft: spacing(2) },
+    optTextOn: { fontWeight: '700' },
+    pct: { color: colors.textMuted, fontSize: font.small, fontWeight: '600', marginLeft: spacing(2) },
+    total: { color: colors.textFaint, fontSize: font.tiny, marginTop: spacing(1) },
+  });

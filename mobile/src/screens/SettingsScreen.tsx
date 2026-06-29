@@ -95,7 +95,7 @@ export default function SettingsScreen() {
             Share.share({ message: `Join me on ${APP_NAME}! https://futurehat-app.netlify.app` })
           }
         />
-        <Row icon="help-circle-outline" label="Help & About" onPress={() => Alert.alert(`${APP_NAME} v${APP_VERSION}`, CREDIT)} />
+        <Row icon="help-circle-outline" label="Help & Support" onPress={() => navigation.navigate('HelpSupport')} />
         <Row icon="log-out-outline" label="Sign out" danger onPress={doSignOut} />
       </Group>
 

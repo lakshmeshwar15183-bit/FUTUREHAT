@@ -12,4 +12,7 @@ export type RootStackParamList = {
   Appearance: undefined;
   Premium: undefined;
   AppLockSetup: undefined;
+  CreateCommunity: undefined;
+  CommunityDetail: { communityId: UUID; name: string };
+  HelpSupport: undefined;
 };
