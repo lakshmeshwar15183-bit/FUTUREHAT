@@ -11,6 +11,10 @@ import AudioMessage from './AudioMessage';
 
 export type TickStatus = 'sending' | 'sent' | 'delivered' | 'read';
 
+// Videos are stored as type 'file'; detect them by extension.
+const VIDEO_RE = /\.(mp4|webm|mov|m4v|ogv|ogg)(\?|#|$)/i;
+export const isVideoUrl = (url?: string | null) => !!url && VIDEO_RE.test(url);
+
 interface Props {
   message: Message;
   mine: boolean;
@@ -112,7 +116,14 @@ export default function MessageBubble({
           <AudioMessage uri={message.media_url} tint={mine ? '#E9EDEF' : colors.primary} />
         )}
 
-        {message.type === 'file' && message.media_url && (
+        {message.type === 'file' && message.media_url && isVideoUrl(message.media_url) && (
+          <Pressable onPress={() => onOpenImage?.(message.media_url!)} style={styles.videoTile}>
+            <Ionicons name="play-circle" size={48} color="#fff" />
+            <Text style={styles.videoLabel} numberOfLines={1}>{message.content || 'Video'}</Text>
+          </Pressable>
+        )}
+
+        {message.type === 'file' && message.media_url && !isVideoUrl(message.media_url) && (
           <View style={styles.file}>
             <Ionicons name="document-outline" size={28} color={tint} />
             <Text style={[styles.fileName, { color: tint }]} numberOfLines={1}>
@@ -178,6 +189,11 @@ const makeStyles = (colors: Palette) =>
     image: { width: 220, height: 220, borderRadius: radius.md, marginBottom: 2 },
     file: { flexDirection: 'row', alignItems: 'center', paddingVertical: 4, minWidth: 180 },
     fileName: { fontSize: font.body, marginLeft: 8, flex: 1 },
+    videoTile: {
+      width: 220, height: 140, borderRadius: radius.md, marginBottom: 2,
+      backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center',
+    },
+    videoLabel: { color: '#fff', fontSize: font.small, marginTop: 4, maxWidth: 200 },
     reply: {
       borderLeftWidth: 3,
       paddingLeft: 8,

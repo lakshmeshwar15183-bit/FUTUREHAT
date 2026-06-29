@@ -140,6 +140,14 @@ export const ForwardIcon = ({ size, ...p }: P) => (
   </svg>
 );
 
+export const DownloadIcon = ({ size, ...p }: P) => (
+  <svg {...base(size)} {...p}>
+    <path d="M12 3v12" />
+    <path d="M7 10l5 5 5-5" />
+    <path d="M5 21h14" />
+  </svg>
+);
+
 export const CopyIcon = ({ size, ...p }: P) => (
   <svg {...base(size)} {...p}>
     <rect x="9" y="9" width="11" height="11" rx="2" />

@@ -156,6 +156,23 @@
   display: block;
 }
 
+/* Clickable image/video → opens the lightbox. */
+.message-image-btn, .message-video-btn {
+  display: block; padding: 0; border: none; background: none; cursor: pointer;
+  max-width: 260px; border-radius: 8px; overflow: hidden; position: relative;
+}
+.message-image-btn img, .message-video-btn video {
+  transition: filter 0.15s ease, transform 0.2s ease; max-width: 100%; margin-bottom: 8px;
+}
+.message-image-btn:hover img, .message-video-btn:hover video { filter: brightness(1.05); }
+.message-video-play {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, calc(-50% - 4px));
+  width: 52px; height: 52px; border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55); color: #fff; font-size: 20px;
+  display: flex; align-items: center; justify-content: center; padding-left: 4px;
+  pointer-events: none;
+}
+
 .message-file {
   display: block;
   color: var(--fh-accent);

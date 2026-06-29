@@ -22,6 +22,8 @@ import { aiRewrite, aiTranslate, aiSummarize, aiSmartReply } from '@shared/aiCli
 import { PollCard } from './communities/PollCard';
 import { VoiceMessage } from './voice/VoiceMessage';
 import { ContactProfileModal } from './profile/ContactProfileModal';
+import { MediaLightbox, type MediaItem } from './media/MediaLightbox';
+import './media/MediaLightbox.css';
 import { getStarredIds, starMessage, unstarMessage, getHiddenMessageIds, hideMessageForMe } from '@shared/messageExtras';
 import {
   PhoneIcon, VideoIcon, SearchIcon, PaperclipIcon, PollIcon, ClockIcon, MicIcon, SendIcon,
@@ -46,6 +48,9 @@ const LANGUAGES = ['English', 'Hindi', 'Spanish', 'French', 'Japanese', 'German'
 const TYPING_TIMEOUT = 2500;
 // AI assistant tools are hidden until the feature is finalized. Flip to true to restore.
 const AI_ENABLED = false;
+// Videos are stored as type 'file'; detect them by extension so the lightbox can play them.
+const VIDEO_RE = /\.(mp4|webm|mov|m4v|ogv|ogg)(\?|#|$)/i;
+const isVideoUrl = (url?: string | null) => !!url && VIDEO_RE.test(url);
 // WhatsApp-style clock time on bubbles + day-separator labels.
 const clockTime = (d: string) => format(new Date(d), 'h:mm a');
 const daySepLabel = (d: string) => {
@@ -67,6 +72,7 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
   const otherUser = conversation.participants.find((p) => p.id !== profile?.id);
 
   const [messages, setMessages] = useState<Message[]>([]);
+  const [lightboxId, setLightboxId] = useState<string | null>(null);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -475,6 +481,19 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
     return search ? base.filter((m) => !m.is_deleted && (m.content ?? '').toLowerCase().includes(search)) : base;
   }, [messages, search, hiddenMsgIds]);
 
+  // Image/video messages in this conversation — backs the full-screen lightbox.
+  const mediaItems = useMemo<MediaItem[]>(() => messages
+    .filter((m) => !m.is_deleted && m.media_url && (m.type === 'image' || (m.type === 'file' && isVideoUrl(m.media_url))))
+    .map((m) => ({
+      id: m.id,
+      url: m.media_url!,
+      kind: m.type === 'image' ? ('image' as const) : ('video' as const),
+      caption: m.type === 'image' ? (m.content || undefined) : undefined,
+      sender: m.sender_id === profile?.id ? 'You' : (conversation.participants.find((p) => p.id === m.sender_id)?.display_name || undefined),
+      time: clockTime(m.created_at),
+    })), [messages, profile?.id, conversation.participants]);
+  const lightboxIndex = lightboxId ? mediaItems.findIndex((x) => x.id === lightboxId) : -1;
+
   async function toggleStar(m: Message) {
     setActionFor(null);
     const was = starredIds.has(m.id);
@@ -591,9 +610,19 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
                             <span className="reply-quote-text">{replied.content || '[media]'}</span>
                           </div>
                         )}
-                        {msg.type === 'image' && msg.media_url && <img src={msg.media_url} alt="Attachment" className="message-image" />}
+                        {msg.type === 'image' && msg.media_url && (
+                          <button type="button" className="message-image-btn" onClick={() => setLightboxId(msg.id)} aria-label="View photo">
+                            <img src={msg.media_url} alt="Attachment" className="message-image" />
+                          </button>
+                        )}
                         {msg.type === 'audio' && msg.media_url && <VoiceMessage url={msg.media_url} mine={isMine} />}
-                        {msg.type === 'file' && msg.media_url && (
+                        {msg.type === 'file' && msg.media_url && isVideoUrl(msg.media_url) && (
+                          <button type="button" className="message-video-btn" onClick={() => setLightboxId(msg.id)} aria-label="Play video">
+                            <video src={msg.media_url} className="message-image" preload="metadata" muted />
+                            <span className="message-video-play">▶</span>
+                          </button>
+                        )}
+                        {msg.type === 'file' && msg.media_url && !isVideoUrl(msg.media_url) && (
                           <a href={msg.media_url} target="_blank" rel="noopener noreferrer" className="message-file">📎 {msg.content || 'File'}</a>
                         )}
                         {(msg.type === 'text' || (msg.content && msg.type !== 'audio')) && <div className="message-text">{highlight(msg.content ?? '')}</div>}
@@ -803,6 +832,17 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
               </div>
             </motion.div>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {lightboxIndex >= 0 && (
+          <MediaLightbox
+            items={mediaItems}
+            index={lightboxIndex}
+            onClose={() => setLightboxId(null)}
+            onIndexChange={(idx) => setLightboxId(mediaItems[idx]?.id ?? null)}
+          />
         )}
       </AnimatePresence>
 

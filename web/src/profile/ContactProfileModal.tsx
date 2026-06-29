@@ -16,6 +16,8 @@ import {
 } from '@shared/supportApi';
 import { getSharedMedia } from '@shared/api';
 import type { Profile, Message } from '@shared/types';
+import { MediaLightbox, type MediaItem } from '../media/MediaLightbox';
+import '../media/MediaLightbox.css';
 import { formatDistanceToNow } from 'date-fns';
 import { modalBackdrop, modalPanel } from '../motion';
 import './ContactProfileModal.css';
@@ -51,6 +53,8 @@ export function ContactProfileModal({ profile, online, isPremium, conversationId
 
   const photos = media.filter((m) => m.type === 'image');
   const docs = media.filter((m) => m.type === 'file');
+  const galleryItems: MediaItem[] = photos.map((m) => ({ id: m.id, url: m.media_url!, kind: 'image' as const, caption: m.content || undefined }));
+  const lightboxIndex = lightbox ? galleryItems.findIndex((g) => g.url === lightbox) : -1;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -180,14 +184,16 @@ export function ContactProfileModal({ profile, online, isPremium, conversationId
 
         {blocked && <div className="contact-blocked-note">🚫 You have blocked this user.</div>}
         {toast && <div className="contact-toast">{toast}</div>}
-
-        {lightbox && (
-          <div className="contact-lightbox" onClick={() => setLightbox(null)}>
-            <button className="contact-lightbox-close" onClick={() => setLightbox(null)} aria-label="Close">✕</button>
-            <img src={lightbox} alt="Shared media" onClick={(e) => e.stopPropagation()} />
-          </div>
-        )}
       </motion.div>
+
+      {lightboxIndex >= 0 && (
+        <MediaLightbox
+          items={galleryItems}
+          index={lightboxIndex}
+          onClose={() => setLightbox(null)}
+          onIndexChange={(idx) => setLightbox(galleryItems[idx]?.url ?? null)}
+        />
+      )}
     </motion.div>
   );
 }

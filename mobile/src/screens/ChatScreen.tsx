@@ -6,7 +6,6 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
-  Image,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -53,7 +52,8 @@ import type { Message, MessageReaction, Profile, ConversationSummary, Poll, Poll
 import { uploadMediaFromUri } from '../lib/media';
 import { formatLastSeen, formatDaySeparator } from '../lib/time';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
-import MessageBubble, { type TickStatus } from '../components/MessageBubble';
+import MessageBubble, { type TickStatus, isVideoUrl } from '../components/MessageBubble';
+import MediaViewer, { type ViewerItem } from '../components/MediaViewer';
 import PollCard from '../components/PollCard';
 import { useCalls } from '../calls/CallContext';
 import type { RootStackParamList } from '../navigation/types';
@@ -549,6 +549,13 @@ export default function ChatScreen() {
     return map;
   }, [reactions]);
 
+  // Image/video messages — backs the swipeable full-screen viewer.
+  const viewerItems = useMemo<ViewerItem[]>(() => messages
+    .filter((m) => !m.is_deleted && m.media_url && (m.type === 'image' || (m.type === 'file' && isVideoUrl(m.media_url))))
+    .map((m) => ({ id: m.id, url: m.media_url!, kind: m.type === 'image' ? ('image' as const) : ('video' as const) })),
+    [messages]);
+  const viewerIndex = viewerUrl ? Math.max(0, viewerItems.findIndex((v) => v.url === viewerUrl)) : -1;
+
   // Merge messages and polls into one chronological timeline, then insert day
   // separators and flag consecutive same-sender messages (WhatsApp grouping).
   const timeline = useMemo<TimelineItem[]>(() => {
@@ -828,12 +835,10 @@ export default function ChatScreen() {
         </Pressable>
       </Modal>
 
-      {/* Full-screen image viewer */}
-      <Modal visible={!!viewerUrl} transparent animationType="fade" onRequestClose={() => setViewerUrl(null)}>
-        <Pressable style={styles.viewer} onPress={() => setViewerUrl(null)}>
-          {viewerUrl && <Image source={{ uri: viewerUrl }} style={styles.viewerImg} resizeMode="contain" />}
-        </Pressable>
-      </Modal>
+      {/* Full-screen media viewer (swipe / zoom / video) */}
+      {viewerIndex >= 0 && (
+        <MediaViewer items={viewerItems} index={viewerIndex} onClose={() => setViewerUrl(null)} />
+      )}
     </KeyboardAvoidingView>
   );
 }
@@ -983,6 +988,4 @@ const makeStyles = (colors: Palette) =>
       borderBottomColor: colors.border,
     },
     emoji: { fontSize: 30 },
-    viewer: { flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', alignItems: 'center', justifyContent: 'center' },
-    viewerImg: { width: '100%', height: '80%' },
   });
