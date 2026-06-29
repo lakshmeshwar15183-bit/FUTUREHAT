@@ -51,7 +51,7 @@ import {
 } from '../lib/shared';
 import type { Message, MessageReaction, Profile, ConversationSummary, Poll, PollVote } from '../lib/shared';
 import { uploadMediaFromUri } from '../lib/media';
-import { formatLastSeen } from '../lib/time';
+import { formatLastSeen, formatDaySeparator } from '../lib/time';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import MessageBubble, { type TickStatus } from '../components/MessageBubble';
 import PollCard from '../components/PollCard';
@@ -65,8 +65,9 @@ const QUICK_EMOJI = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 
 // The thread renders messages and polls interleaved by time.
 type TimelineItem =
-  | { kind: 'msg'; id: string; at: string; message: Message }
-  | { kind: 'poll'; id: string; at: string; poll: Poll };
+  | { kind: 'msg'; id: string; at: string; message: Message; grouped?: boolean }
+  | { kind: 'poll'; id: string; at: string; poll: Poll }
+  | { kind: 'day'; id: string; at: string; label: string };
 
 export default function ChatScreen() {
   const navigation = useNavigation<Nav>();
@@ -548,17 +549,47 @@ export default function ChatScreen() {
     return map;
   }, [reactions]);
 
-  // Merge messages and polls into one chronological timeline.
+  // Merge messages and polls into one chronological timeline, then insert day
+  // separators and flag consecutive same-sender messages (WhatsApp grouping).
   const timeline = useMemo<TimelineItem[]>(() => {
-    const items: TimelineItem[] = [
+    const merged: TimelineItem[] = [
       ...messages.map((m): TimelineItem => ({ kind: 'msg', id: m.id, at: m.created_at, message: m })),
       ...polls.map((p): TimelineItem => ({ kind: 'poll', id: `poll:${p.id}`, at: p.created_at, poll: p })),
     ];
-    items.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
-    return items;
+    merged.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+
+    const GROUP_WINDOW_MS = 5 * 60 * 1000;
+    const out: TimelineItem[] = [];
+    let lastDay = '';
+    let prevMsg: Message | null = null;
+    for (const it of merged) {
+      const day = formatDaySeparator(it.at);
+      if (day !== lastDay) {
+        out.push({ kind: 'day', id: `day:${day}:${it.id}`, at: it.at, label: day });
+        lastDay = day;
+        prevMsg = null; // a new day always restarts grouping
+      }
+      if (it.kind === 'msg') {
+        const grouped = !!prevMsg && prevMsg.sender_id === it.message.sender_id &&
+          new Date(it.at).getTime() - new Date(prevMsg.created_at).getTime() < GROUP_WINDOW_MS;
+        out.push({ ...it, grouped });
+        prevMsg = it.message;
+      } else {
+        out.push(it);
+        prevMsg = null; // a poll breaks the run
+      }
+    }
+    return out;
   }, [messages, polls]);
 
   const renderItem = ({ item }: { item: TimelineItem }) => {
+    if (item.kind === 'day') {
+      return (
+        <View style={styles.daySep}>
+          <Text style={styles.daySepText}>{item.label}</Text>
+        </View>
+      );
+    }
     if (item.kind === 'poll') {
       return (
         <PollCard
@@ -577,6 +608,7 @@ export default function ChatScreen() {
       <MessageBubble
         message={msg}
         mine={mine}
+        grouped={item.grouped}
         senderName={senderName}
         replyTo={replyTo}
         reactions={reactionsByMsg.get(msg.id)}
@@ -861,6 +893,12 @@ const makeStyles = (colors: Palette) =>
     flex: { flex: 1, backgroundColor: colors.bg },
     center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg },
     listContent: { paddingVertical: 8 },
+    daySep: { alignItems: 'center', marginVertical: 10 },
+    daySepText: {
+      color: colors.textMuted, fontSize: font.tiny, fontWeight: '600',
+      backgroundColor: colors.surface, paddingHorizontal: 12, paddingVertical: 5,
+      borderRadius: radius.sm, overflow: 'hidden',
+    },
     headerTitle: { color: colors.text, fontSize: font.heading, fontWeight: '600' },
     headerSub: { color: colors.textMuted, fontSize: font.tiny },
     headerActions: { flexDirection: 'row', alignItems: 'center' },

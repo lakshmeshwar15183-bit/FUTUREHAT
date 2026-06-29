@@ -22,9 +22,14 @@ import { aiRewrite, aiTranslate, aiSummarize, aiSmartReply } from '@shared/aiCli
 import { PollCard } from './communities/PollCard';
 import { VoiceMessage } from './voice/VoiceMessage';
 import { ContactProfileModal } from './profile/ContactProfileModal';
+import { getStarredIds, starMessage, unstarMessage, getHiddenMessageIds, hideMessageForMe } from '@shared/messageExtras';
+import {
+  PhoneIcon, VideoIcon, SearchIcon, PaperclipIcon, PollIcon, ClockIcon, MicIcon, SendIcon,
+  StarIcon, ReplyIcon, ForwardIcon, CopyIcon, EditIcon, TrashIcon, SmileIcon, MinimizeIcon,
+} from './Icons';
 import { FREE_LIMITS, PREMIUM_LIMITS } from '@shared/premium/features';
 import type { ConversationSummary, Message, MessageReceipt, MessageReaction } from '@shared/types';
-import { formatDistanceToNow } from 'date-fns';
+import { formatDistanceToNow, format, isToday, isYesterday, isSameDay } from 'date-fns';
 import { bubbleMine, bubbleTheirs, spring } from './motion';
 import { STICKERS } from './premium/stickers';
 import './ChatView.css';
@@ -39,6 +44,16 @@ const QUICK_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 const PREMIUM_EMOJIS = ['🔥', '🎉', '🥳', '💯', '👀', '🤝', '✨', '🫶'];
 const LANGUAGES = ['English', 'Hindi', 'Spanish', 'French', 'Japanese', 'German'];
 const TYPING_TIMEOUT = 2500;
+// AI assistant tools are hidden until the feature is finalized. Flip to true to restore.
+const AI_ENABLED = false;
+// WhatsApp-style clock time on bubbles + day-separator labels.
+const clockTime = (d: string) => format(new Date(d), 'h:mm a');
+const daySepLabel = (d: string) => {
+  const x = new Date(d);
+  return isToday(x) ? 'Today' : isYesterday(x) ? 'Yesterday' : format(x, 'EEEE, MMMM d');
+};
+// Consecutive messages from the same sender within this window stack as a group.
+const GROUP_WINDOW_MS = 5 * 60 * 1000;
 
 export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
   const { profile } = useAuth();
@@ -95,6 +110,10 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
   // contact profile (direct chats)
   const [showContact, setShowContact] = useState(false);
 
+  // starred + per-user hidden ("delete for me") messages
+  const [starredIds, setStarredIds] = useState<Set<string>>(new Set());
+  const [hiddenMsgIds, setHiddenMsgIds] = useState<Set<string>>(new Set());
+
   // polls
   const [polls, setPolls] = useState<Poll[]>([]);
   const [showPolls, setShowPolls] = useState(true);
@@ -105,6 +124,7 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const [showJump, setShowJump] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesRef = useRef<Message[]>([]);
   useEffect(() => { messagesRef.current = messages; }, [messages]);
@@ -138,6 +158,8 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
 
     getScheduledMessages(supabase, convId).then((s) => setScheduledCount(s.length)).catch(() => {});
     getPolls(supabase, convId).then((p) => { if (active) setPolls(p); }).catch(() => {});
+    getStarredIds(supabase).then((ids) => { if (active) setStarredIds(new Set(ids)); }).catch(() => {});
+    getHiddenMessageIds(supabase).then((ids) => { if (active) setHiddenMsgIds(new Set(ids)); }).catch(() => {});
 
     const msgChannel = subscribeToMessages(
       supabase, convId,
@@ -431,10 +453,22 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
 
   // In-conversation search: when active, only matching messages are shown.
   const search = searchTerm.trim().toLowerCase();
-  const displayMessages = useMemo(
-    () => (search ? messages.filter((m) => !m.is_deleted && (m.content ?? '').toLowerCase().includes(search)) : messages),
-    [messages, search],
-  );
+  const displayMessages = useMemo(() => {
+    const base = messages.filter((m) => !hiddenMsgIds.has(m.id));
+    return search ? base.filter((m) => !m.is_deleted && (m.content ?? '').toLowerCase().includes(search)) : base;
+  }, [messages, search, hiddenMsgIds]);
+
+  async function toggleStar(m: Message) {
+    setActionFor(null);
+    const was = starredIds.has(m.id);
+    setStarredIds((s) => { const n = new Set(s); was ? n.delete(m.id) : n.add(m.id); return n; });
+    await (was ? unstarMessage(supabase, m.id) : starMessage(supabase, m.id)).catch?.(() => {});
+  }
+  async function deleteForMe(m: Message) {
+    setActionFor(null);
+    setHiddenMsgIds((s) => { const n = new Set(s); n.add(m.id); return n; });
+    await hideMessageForMe(supabase, m.id);
+  }
   function highlight(text: string): ReactNode {
     if (!search) return text;
     const idx = text.toLowerCase().indexOf(search);
@@ -461,13 +495,13 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
         {!isGroup && (
           <>
             <button className="header-icon-btn call" title="Voice call" aria-label="Start voice call" disabled={callBusy}
-              onClick={() => startCall(convId, 'audio', otherUser?.display_name || conversation.title)}>📞</button>
+              onClick={() => startCall(convId, 'audio', otherUser?.display_name || conversation.title)}><PhoneIcon size={20} /></button>
             <button className="header-icon-btn call" title="Video call" aria-label="Start video call" disabled={callBusy}
-              onClick={() => startCall(convId, 'video', otherUser?.display_name || conversation.title)}>🎥</button>
+              onClick={() => startCall(convId, 'video', otherUser?.display_name || conversation.title)}><VideoIcon size={20} /></button>
           </>
         )}
         <button className="header-icon-btn" title="Search messages" aria-label="Search messages"
-          onClick={() => { setSearchOpen((v) => !v); if (searchOpen) setSearchTerm(''); }}>🔍</button>
+          onClick={() => { setSearchOpen((v) => !v); if (searchOpen) setSearchTerm(''); }}><SearchIcon size={18} /></button>
         {ghost && <span className="ghost-indicator" title="Ghost mode on">👻</span>}
       </div>
 
@@ -505,23 +539,33 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
         )}
       </AnimatePresence>
 
-      <div ref={messagesContainerRef} className="messages-container" onClick={() => { setPickerFor(null); setActionFor(null); setAiOpen(false); setStickersOpen(false); }}>
+      <div ref={messagesContainerRef} className="messages-container"
+        onScroll={(e) => { const c = e.currentTarget; setShowJump(c.scrollHeight - c.scrollTop - c.clientHeight > 240); }}
+        onClick={() => { setPickerFor(null); setActionFor(null); setAiOpen(false); setStickersOpen(false); }}>
         <AnimatePresence initial={false}>
-          {displayMessages.map((msg) => {
+          {displayMessages.map((msg, i) => {
             const isMine = msg.sender_id === profile?.id;
             const sender = conversation.participants.find((p) => p.id === msg.sender_id);
             const msgReactions = reactionsByMessage[msg.id] || [];
             const replied = repliedOf(msg);
-            return (
+            const prev = displayMessages[i - 1];
+            const showDaySep = !search && (!prev || !isSameDay(new Date(prev.created_at), new Date(msg.created_at)));
+            const grouped = !search && !!prev && !showDaySep && prev.sender_id === msg.sender_id
+              && new Date(msg.created_at).getTime() - new Date(prev.created_at).getTime() < GROUP_WINDOW_MS;
+            return [
+              showDaySep && (
+                <div key={`${msg.id}-sep`} className="day-sep"><span>{daySepLabel(msg.created_at)}</span></div>
+              ),
               <motion.div key={msg.id} layout variants={isMine ? bubbleMine : bubbleTheirs} initial="initial" animate="animate"
-                className={`message ${isMine ? 'mine' : 'theirs'}`}>
-                {!isMine && isGroup && !msg.is_deleted && <div className="message-sender">{sender?.display_name || 'Unknown'}</div>}
+                className={`message ${isMine ? 'mine' : 'theirs'} ${grouped ? 'grouped' : ''}`}>
+                {!isMine && isGroup && !msg.is_deleted && !grouped && <div className="message-sender">{sender?.display_name || 'Unknown'}</div>}
                 <div className="message-row">
                   <div className={`message-bubble ${msg.is_deleted ? 'deleted' : ''}`}>
                     {msg.is_deleted ? (
                       <div className="message-text deleted-text">🚫 This message was deleted</div>
                     ) : (
                       <>
+                        {msg.is_forwarded && <div className="forwarded-tag"><ForwardIcon size={12} /> Forwarded</div>}
                         {replied && (
                           <div className="reply-quote">
                             <span className="reply-quote-name">
@@ -537,8 +581,9 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
                         )}
                         {(msg.type === 'text' || (msg.content && msg.type !== 'audio')) && <div className="message-text">{highlight(msg.content ?? '')}</div>}
                         <div className="message-time">
+                          {starredIds.has(msg.id) && <StarIcon size={11} filled className="msg-star" />}
                           {msg.edited_at && <span className="edited-tag">edited</span>}
-                          {formatDistanceToNow(new Date(msg.created_at), { addSuffix: true })}
+                          {clockTime(msg.created_at)}
                           {isMine && (
                             <motion.span key={readMessageIds.has(msg.id) ? 'read' : 'sent'} initial={{ scale: 0.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={spring}
                               className={`read-receipt ${readMessageIds.has(msg.id) ? 'read' : ''}`}>
@@ -575,23 +620,35 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
                     )}
                     {actionFor === msg.id && (
                       <motion.div className="action-menu glass" initial={{ opacity: 0, y: 6, scale: 0.95 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} onClick={(e) => e.stopPropagation()}>
-                        <button onClick={() => startReply(msg)}>↩︎ Reply</button>
-                        <button onClick={() => openForward(msg)}>↪︎ Forward</button>
-                        {msg.content && <button onClick={() => copyText(msg)}>⧉ Copy</button>}
-                        {isMine && msg.type === 'text' && <button onClick={() => startEdit(msg)}>✎ Edit</button>}
-                        {isMine && <button className="danger" onClick={() => doDelete(msg)}>🗑 Delete</button>}
+                        <button onClick={() => startReply(msg)}><ReplyIcon size={16} /> Reply</button>
+                        <button onClick={() => openForward(msg)}><ForwardIcon size={16} /> Forward</button>
+                        <button onClick={() => toggleStar(msg)}><StarIcon size={16} filled={starredIds.has(msg.id)} /> {starredIds.has(msg.id) ? 'Unstar' : 'Star'}</button>
+                        {msg.content && <button onClick={() => copyText(msg)}><CopyIcon size={16} /> Copy</button>}
+                        {isMine && msg.type === 'text' && <button onClick={() => startEdit(msg)}><EditIcon size={16} /> Edit</button>}
+                        <button onClick={() => deleteForMe(msg)}><TrashIcon size={16} /> Delete for me</button>
+                        {isMine && <button className="danger" onClick={() => doDelete(msg)}><TrashIcon size={16} /> Delete for everyone</button>}
                       </motion.div>
                     )}
                   </AnimatePresence>
                 </div>
-              </motion.div>
-            );
+              </motion.div>,
+            ];
           })}
         </AnimatePresence>
         {search && displayMessages.length === 0 && <div className="empty-state">No messages match “{searchTerm.trim()}”.</div>}
         {uploading && <div className="message mine"><div className="message-bubble uploading">Uploading...</div></div>}
         <div ref={messagesEndRef} />
       </div>
+
+      <AnimatePresence>
+        {showJump && (
+          <motion.button className="jump-bottom" title="Scroll to latest"
+            initial={{ opacity: 0, scale: 0.7, y: 8 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.7, y: 8 }}
+            onClick={() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })}>
+            <MinimizeIcon size={22} />
+          </motion.button>
+        )}
+      </AnimatePresence>
 
       {/* Smart reply suggestions */}
       <AnimatePresence>
@@ -661,13 +718,15 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
 
       <form onSubmit={handleSend} className="message-input-form">
         <input ref={fileInputRef} type="file" onChange={handleFileUpload} style={{ display: 'none' }} disabled={uploading} />
-        <button type="button" onClick={() => fileInputRef.current?.click()} disabled={uploading} className="attach-btn" title="Attach file">📎</button>
+        <button type="button" onClick={() => fileInputRef.current?.click()} disabled={uploading} className="attach-btn" title="Attach file" aria-label="Attach file"><PaperclipIcon size={22} /></button>
 
-        <button type="button" className={`tool-btn ${isPremium ? '' : 'locked'}`} title="Stickers"
-          onClick={() => (isPremium ? (setStickersOpen((v) => !v), setAiOpen(false)) : openUpgrade())}>🧩</button>
+        <button type="button" className={`tool-btn ${isPremium ? '' : 'locked'}`} title="Stickers" aria-label="Stickers"
+          onClick={() => (isPremium ? (setStickersOpen((v) => !v), setAiOpen(false)) : openUpgrade())}><SmileIcon size={22} /></button>
 
         <div className="ai-wrap">
+          {AI_ENABLED && (
           <button type="button" className={`tool-btn ${isPremium ? '' : 'locked'}`} title="AI tools" onClick={() => (isPremium ? setAiOpen((v) => !v) : openUpgrade())}>✨</button>
+          )}
           <AnimatePresence>
             {aiOpen && (
               <motion.div className="ai-menu glass" initial={{ opacity: 0, y: 8, scale: 0.95 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}>
@@ -685,27 +744,27 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
           </AnimatePresence>
         </div>
 
-        <button type="button" className="tool-btn" title="Create poll" onClick={() => { setPollComposerOpen((v) => !v); setScheduleOpen(false); setStickersOpen(false); setAiOpen(false); }}>📊</button>
+        <button type="button" className="tool-btn" title="Create poll" aria-label="Create poll" onClick={() => { setPollComposerOpen((v) => !v); setScheduleOpen(false); setStickersOpen(false); setAiOpen(false); }}><PollIcon size={20} /></button>
 
-        <button type="button" className={`tool-btn ${isPremium ? '' : 'locked'}`} title="Schedule" onClick={() => (isPremium ? setScheduleOpen((v) => !v) : openUpgrade())}>
-          ⏰{scheduledCount > 0 && <span className="sched-badge">{scheduledCount}</span>}
+        <button type="button" className={`tool-btn ${isPremium ? '' : 'locked'}`} title="Schedule" aria-label="Schedule message" onClick={() => (isPremium ? setScheduleOpen((v) => !v) : openUpgrade())}>
+          <ClockIcon size={20} />{scheduledCount > 0 && <span className="sched-badge">{scheduledCount}</span>}
         </button>
 
         {recording ? (
           <div className="voice-rec-bar">
             <span className="voice-rec-dot" />
             <span className="voice-rec-time">{fmtRec(recordSecs)}</span>
-            <span className="voice-rec-hint">Recording… ➤ send · 🗑 cancel</span>
-            <button type="button" className="voice-rec-cancel" onClick={() => stopRecording(true)} title="Cancel" aria-label="Cancel recording">🗑</button>
-            <button type="button" className="voice-rec-send" onClick={() => stopRecording(false)} title="Send voice message" aria-label="Send voice message">➤</button>
+            <span className="voice-rec-hint">Recording…</span>
+            <button type="button" className="voice-rec-cancel" onClick={() => stopRecording(true)} title="Cancel" aria-label="Cancel recording"><TrashIcon size={18} /></button>
+            <button type="button" className="voice-rec-send" onClick={() => stopRecording(false)} title="Send voice message" aria-label="Send voice message"><SendIcon size={18} /></button>
           </div>
         ) : (
           <>
             <input type="text" placeholder={editing ? 'Edit your message…' : 'Type a message'} value={input} onChange={handleInputChange} onBlur={stopTyping} disabled={sending || uploading} />
             {input.trim() || editing ? (
-              <motion.button whileTap={{ scale: 0.9 }} type="submit" disabled={!input.trim() || sending || uploading}>{editing ? '✓' : '➤'}</motion.button>
+              <motion.button whileTap={{ scale: 0.9 }} type="submit" disabled={!input.trim() || sending || uploading} aria-label={editing ? 'Save' : 'Send'}>{editing ? '✓' : <SendIcon size={18} />}</motion.button>
             ) : (
-              <button type="button" className="mic-btn tool-btn" onClick={startRecording} disabled={uploading} title="Record voice message" aria-label="Record voice message">🎙️</button>
+              <button type="button" className="mic-btn tool-btn" onClick={startRecording} disabled={uploading} title="Record voice message" aria-label="Record voice message"><MicIcon size={20} /></button>
             )}
           </>
         )}

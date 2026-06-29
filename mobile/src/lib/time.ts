@@ -30,6 +30,26 @@ export function formatListTimestamp(iso?: string | null): string {
   return d.toLocaleDateString(undefined, { day: '2-digit', month: '2-digit', year: '2-digit' });
 }
 
+// WhatsApp-style day-separator label: Today / Yesterday / weekday+date.
+export function formatDaySeparator(iso?: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const now = new Date();
+  const sameDay = (a: Date, b: Date) =>
+    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  if (sameDay(d, now)) return 'Today';
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (sameDay(d, yesterday)) return 'Yesterday';
+  return d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+}
+
+export function isSameCalendarDay(a?: string | null, b?: string | null): boolean {
+  if (!a || !b) return false;
+  const x = new Date(a), y = new Date(b);
+  return x.getFullYear() === y.getFullYear() && x.getMonth() === y.getMonth() && x.getDate() === y.getDate();
+}
+
 export function formatLastSeen(iso?: string | null): string {
   if (!iso) return '';
   const diffMs = Date.now() - new Date(iso).getTime();

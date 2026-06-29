@@ -21,6 +21,8 @@ interface Props {
   onLongPress?: () => void;
   onPress?: () => void;
   selected?: boolean;
+  /** Continuation of a run from the same sender — hides the tail + sender name. */
+  grouped?: boolean;
   onOpenImage?: (url: string) => void;
   onReactionPress?: () => void;
 }
@@ -41,17 +43,23 @@ export default function MessageBubble({
   onLongPress,
   onPress,
   selected,
+  grouped: groupedRun,
   onOpenImage,
   onReactionPress,
 }: Props) {
   const colors = useColors();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const tint = mine ? '#E9EDEF' : colors.text;
+  // Continuation bubbles stack tightly with no tail (WhatsApp grouping).
+  const bubbleShape = groupedRun
+    ? { borderTopRightRadius: radius.lg, borderTopLeftRadius: radius.lg }
+    : null;
+  const wrapTight = groupedRun ? { marginVertical: 1 } : null;
 
   if (message.is_deleted) {
     return (
-      <View style={[styles.wrap, mine ? styles.wrapMine : styles.wrapTheirs, selected && styles.wrapSelected]}>
-        <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs]}>
+      <View style={[styles.wrap, wrapTight, mine ? styles.wrapMine : styles.wrapTheirs, selected && styles.wrapSelected]}>
+        <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs, bubbleShape]}>
           <Text style={[styles.deleted, { color: mine ? '#cfd9d6' : colors.textMuted }]}>
             <Ionicons name="ban-outline" size={13} /> This message was deleted
           </Text>
@@ -67,10 +75,10 @@ export default function MessageBubble({
       onLongPress={onLongPress}
       onPress={onPress}
       delayLongPress={250}
-      style={[styles.wrap, mine ? styles.wrapMine : styles.wrapTheirs, selected && styles.wrapSelected]}
+      style={[styles.wrap, wrapTight, mine ? styles.wrapMine : styles.wrapTheirs, selected && styles.wrapSelected]}
     >
-      <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs]}>
-        {!mine && senderName && <Text style={styles.sender}>{senderName}</Text>}
+      <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs, bubbleShape]}>
+        {!mine && senderName && !groupedRun && <Text style={styles.sender}>{senderName}</Text>}
 
         {replyTo && (
           <View style={[styles.reply, { borderLeftColor: colors.primary }]}>
