@@ -126,6 +126,7 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const [showJump, setShowJump] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesRef = useRef<Message[]>([]);
   useEffect(() => { messagesRef.current = messages; }, [messages]);
   // Read ghost mode through a ref inside realtime callbacks so toggling it does
@@ -237,13 +238,29 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
     isTypingRef.current = typing;
     notifyTypingRef.current({ userId: profile.id, name: profile.display_name || 'Someone', typing });
   }
-  function handleInputChange(e: ChangeEvent<HTMLInputElement>) {
+  function handleInputChange(e: ChangeEvent<HTMLTextAreaElement>) {
     setInput(e.target.value);
     broadcastTyping(true);
     if (typingStopRef.current) clearTimeout(typingStopRef.current);
     typingStopRef.current = setTimeout(() => broadcastTyping(false), TYPING_TIMEOUT);
   }
   function stopTyping() { if (typingStopRef.current) clearTimeout(typingStopRef.current); broadcastTyping(false); }
+
+  // Enter sends; Shift+Enter inserts a newline (WhatsApp/desktop convention).
+  function handleComposerKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSend(e as unknown as FormEvent);
+    }
+  }
+
+  // Auto-grow the composer textarea up to a max height, then scroll internally.
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 140)}px`;
+  }, [input]);
 
   // ── Send / edit ──────────────────────────────────────────────────────────────
   async function handleSend(e: FormEvent) {
@@ -760,7 +777,7 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
           </div>
         ) : (
           <>
-            <input type="text" placeholder={editing ? 'Edit your message…' : 'Type a message'} value={input} onChange={handleInputChange} onBlur={stopTyping} disabled={sending || uploading} />
+            <textarea ref={textareaRef} rows={1} placeholder={editing ? 'Edit your message…' : 'Type a message'} value={input} onChange={handleInputChange} onKeyDown={handleComposerKeyDown} onBlur={stopTyping} disabled={sending || uploading} />
             {input.trim() || editing ? (
               <motion.button whileTap={{ scale: 0.9 }} type="submit" disabled={!input.trim() || sending || uploading} aria-label={editing ? 'Save' : 'Send'}>{editing ? '✓' : <SendIcon size={18} />}</motion.button>
             ) : (

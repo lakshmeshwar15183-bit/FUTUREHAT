@@ -608,6 +608,7 @@ export default function ChatScreen() {
       <MessageBubble
         message={msg}
         mine={mine}
+        myId={uid}
         grouped={item.grouped}
         senderName={senderName}
         replyTo={replyTo}
@@ -701,11 +702,11 @@ export default function ChatScreen() {
             multiline
           />
           {text.trim().length > 0 ? (
-            <Pressable onPress={handleSend} style={styles.sendBtn} disabled={sending}>
+            <Pressable onPress={handleSend} style={({ pressed }) => [styles.sendBtn, pressed && styles.sendBtnPressed]} disabled={sending}>
               <Ionicons name={editing ? 'checkmark' : 'send'} size={20} color="#fff" />
             </Pressable>
           ) : (
-            <Pressable onPress={startRecording} style={styles.sendBtn}>
+            <Pressable onPress={startRecording} style={({ pressed }) => [styles.sendBtn, pressed && styles.sendBtnPressed]}>
               <Ionicons name="mic" size={20} color="#fff" />
             </Pressable>
           )}
@@ -941,6 +942,7 @@ const makeStyles = (colors: Palette) =>
       alignItems: 'center',
       justifyContent: 'center',
     },
+    sendBtnPressed: { transform: [{ scale: 0.9 }], opacity: 0.9 },
     recordingPill: { flex: 1, flexDirection: 'row', alignItems: 'center', marginHorizontal: 12 },
     recDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.danger, marginRight: 8 },
     recText: { color: colors.textMuted, fontSize: font.small },

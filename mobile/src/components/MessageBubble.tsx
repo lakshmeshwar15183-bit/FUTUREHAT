@@ -14,6 +14,8 @@ export type TickStatus = 'sending' | 'sent' | 'delivered' | 'read';
 interface Props {
   message: Message;
   mine: boolean;
+  /** Current user id — used to highlight reactions I made. */
+  myId?: string | null;
   senderName?: string | null;
   replyTo?: Message | null;
   reactions?: MessageReaction[];
@@ -27,15 +29,24 @@ interface Props {
   onReactionPress?: () => void;
 }
 
-function groupReactions(reactions: MessageReaction[]): { emoji: string; count: number }[] {
-  const map = new Map<string, number>();
-  for (const r of reactions) map.set(r.emoji, (map.get(r.emoji) ?? 0) + 1);
-  return [...map.entries()].map(([emoji, count]) => ({ emoji, count }));
+function groupReactions(
+  reactions: MessageReaction[],
+  myId?: string | null,
+): { emoji: string; count: number; mine: boolean }[] {
+  const map = new Map<string, { count: number; mine: boolean }>();
+  for (const r of reactions) {
+    const cur = map.get(r.emoji) ?? { count: 0, mine: false };
+    cur.count += 1;
+    if (myId && r.user_id === myId) cur.mine = true;
+    map.set(r.emoji, cur);
+  }
+  return [...map.entries()].map(([emoji, v]) => ({ emoji, count: v.count, mine: v.mine }));
 }
 
 export default function MessageBubble({
   message,
   mine,
+  myId,
   senderName,
   replyTo,
   reactions = [],
@@ -68,7 +79,7 @@ export default function MessageBubble({
     );
   }
 
-  const grouped = groupReactions(reactions);
+  const grouped = groupReactions(reactions, myId);
 
   return (
     <Pressable
@@ -136,7 +147,7 @@ export default function MessageBubble({
           style={[styles.reactions, mine ? styles.reactionsMine : styles.reactionsTheirs]}
         >
           {grouped.map((g) => (
-            <Text key={g.emoji} style={styles.reactionChip}>
+            <Text key={g.emoji} style={[styles.reactionChip, g.mine && styles.reactionChipMine]}>
               {g.emoji}
               {g.count > 1 ? ` ${g.count}` : ''}
             </Text>
@@ -193,4 +204,5 @@ const makeStyles = (colors: Palette) =>
     reactionsMine: { marginRight: 6 },
     reactionsTheirs: { marginLeft: 6 },
     reactionChip: { fontSize: 13, marginHorizontal: 1, color: colors.text },
+    reactionChipMine: { color: colors.primary, fontWeight: '700' },
   });

@@ -303,6 +303,7 @@
 
 .message-input-form {
   display: flex;
+  align-items: flex-end;
   gap: 12px;
   padding: 16px 20px;
   background: var(--fh-panel);
@@ -334,19 +335,30 @@
   cursor: not-allowed;
 }
 
-.message-input-form input[type="text"] {
+.message-input-form textarea {
   flex: 1;
+  min-width: 0;
   background: var(--fh-border);
   border: 1px solid var(--fh-border);
-  border-radius: 24px;
-  padding: 12px 20px;
+  border-radius: 22px;
+  padding: 11px 18px;
   color: var(--fh-text);
   font-size: 15px;
+  font-family: inherit;
+  line-height: 1.4;
   outline: none;
+  resize: none;
+  max-height: 140px;
+  overflow-y: auto;
+  transition: border-color 0.18s ease, background 0.18s ease;
+  scrollbar-width: thin;
 }
 
-.message-input-form input[type="text"]:focus {
+.message-input-form textarea::placeholder { color: var(--fh-muted); }
+
+.message-input-form textarea:focus {
   border-color: var(--fh-accent);
+  background: var(--fh-panel);
 }
 
 .message-input-form button[type="submit"] {
@@ -625,7 +637,7 @@
   .message-input-form { gap: 8px; padding: 12px; }
   .attach-btn, .tool-btn,
   .message-input-form button[type="submit"] { width: 42px; height: 42px; font-size: 17px; }
-  .message-input-form input[type="text"] { padding: 11px 14px; min-width: 0; }
+  .message-input-form textarea { padding: 10px 14px; min-width: 0; }
   .ai-menu { left: 0; }
   .schedule-pop { left: 16px; right: 16px; transform: none; }
   .poll-pop { left: 16px; right: 16px; transform: none; width: auto; }
