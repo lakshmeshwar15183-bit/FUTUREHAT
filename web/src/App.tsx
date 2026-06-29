@@ -30,6 +30,7 @@ const StatusView = lazy(() => import('./StatusView').then((m) => ({ default: m.S
 const SettingsModal = lazy(() => import('./premium/SettingsModal').then((m) => ({ default: m.SettingsModal })));
 const HelpSupportModal = lazy(() => import('./support/HelpSupportModal').then((m) => ({ default: m.HelpSupportModal })));
 const CommunitiesModal = lazy(() => import('./communities/CommunitiesModal').then((m) => ({ default: m.CommunitiesModal })));
+const AdminDashboard = lazy(() => import('./admin/AdminDashboard').then((m) => ({ default: m.AdminDashboard })));
 
 function AppInner() {
   const { profile } = useAuth();
@@ -49,6 +50,7 @@ function AppInner() {
   const [showSettings, setShowSettings] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [showCommunities, setShowCommunities] = useState(false);
+  const [showAdmin, setShowAdmin] = useState(false);
 
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
@@ -322,8 +324,9 @@ function AppInner() {
       <Suspense fallback={null}>
         <AnimatePresence>
           {showProfile && <ProfileModal onClose={() => setShowProfile(false)} />}
-          {showSettings && <SettingsModal onClose={() => setShowSettings(false)} onEditProfile={() => setShowProfile(true)} onHelp={() => setShowHelp(true)} />}
+          {showSettings && <SettingsModal onClose={() => setShowSettings(false)} onEditProfile={() => setShowProfile(true)} onHelp={() => setShowHelp(true)} onAdmin={() => setShowAdmin(true)} />}
           {showHelp && <HelpSupportModal onClose={() => setShowHelp(false)} />}
+          {showAdmin && <AdminDashboard onClose={() => setShowAdmin(false)} />}
           {showCommunities && (
             <CommunitiesModal
               onClose={() => setShowCommunities(false)}

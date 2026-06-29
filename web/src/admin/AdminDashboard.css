@@ -1,0 +1,72 @@
+/* FUTUREHAT — Admin dashboard styling, theme-aware via --fh-* vars. */
+
+.admin-modal {
+  position: relative;
+  width: min(640px, 100%);
+  max-height: 88vh;
+  overflow-y: auto;
+  background: var(--fh-panel);
+  color: var(--fh-text);
+  border: 1px solid var(--fh-border);
+  border-radius: var(--fh-radius, 18px);
+  box-shadow: var(--fh-shadow, 0 24px 60px rgba(0, 0, 0, 0.4));
+  padding: 28px;
+}
+.admin-modal .modal-close {
+  position: absolute; top: 16px; right: 16px;
+  width: 34px; height: 34px; border: none; border-radius: 50%;
+  background: rgba(127, 127, 127, 0.16); color: var(--fh-text); cursor: pointer; font-size: 14px;
+}
+.admin-title { margin: 0 0 16px; font-size: 22px; }
+.admin-empty { text-align: center; color: var(--fh-muted); padding: 34px 0; font-size: 14px; }
+.admin-warn {
+  background: rgba(245, 158, 11, 0.14); color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 10px;
+  padding: 10px 12px; font-size: 13px; margin-bottom: 14px;
+}
+
+.admin-tabs { display: flex; gap: 8px; margin-bottom: 18px; border-bottom: 1px solid var(--fh-border); }
+.admin-tabs button {
+  flex: 1; padding: 10px; background: none; border: none; border-bottom: 2px solid transparent;
+  color: var(--fh-muted); font-weight: 600; cursor: pointer;
+}
+.admin-tabs button.active { color: var(--fh-accent); border-bottom-color: var(--fh-accent); }
+
+.admin-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.admin-stat {
+  border: 1px solid var(--fh-border); border-radius: 14px; padding: 16px 10px;
+  background: var(--fh-elevated); text-align: center;
+}
+.admin-stat-icon { font-size: 20px; margin-bottom: 6px; }
+.admin-stat-num { font-size: 22px; font-weight: 800; }
+.admin-stat-label { font-size: 11.5px; color: var(--fh-muted); margin-top: 2px; }
+
+.admin-list { display: flex; flex-direction: column; gap: 10px; }
+.admin-row { border: 1px solid var(--fh-border); border-radius: 12px; padding: 14px; background: var(--fh-elevated); }
+.admin-row-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.admin-tag {
+  font-size: 11px; font-weight: 700; text-transform: capitalize;
+  background: rgba(124, 92, 255, 0.18); color: #7c5cff; padding: 2px 8px; border-radius: 999px;
+}
+.admin-status {
+  margin-left: auto; font-size: 11px; text-transform: capitalize;
+  padding: 3px 9px; border-radius: 999px; background: rgba(127, 127, 127, 0.18); color: var(--fh-muted);
+}
+.admin-status.open { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
+.admin-status.reviewing, .admin-status.in_progress { background: rgba(59, 130, 246, 0.2); color: #3b82f6; }
+.admin-status.resolved { background: rgba(34, 197, 94, 0.2); color: #22c55e; }
+.admin-status.dismissed { background: rgba(127, 127, 127, 0.2); color: var(--fh-muted); }
+.admin-row-title { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+.admin-row-body { font-size: 13px; color: var(--fh-muted); line-height: 1.45; margin-bottom: 6px; white-space: pre-wrap; }
+.admin-row-meta { font-size: 11.5px; color: var(--fh-muted); opacity: .75; margin-bottom: 2px; }
+.admin-actions { display: flex; gap: 6px; margin-top: 10px; }
+.admin-actions button {
+  flex: 1; padding: 7px; border-radius: 8px; border: 1px solid var(--fh-border);
+  background: var(--fh-bg); color: var(--fh-text); font-size: 12.5px; font-weight: 600; cursor: pointer;
+}
+.admin-actions button:hover { border-color: var(--fh-accent); color: var(--fh-accent); }
+
+@media (max-width: 600px) {
+  .admin-modal { padding: 20px 16px; max-height: 92vh; }
+  .admin-grid { grid-template-columns: repeat(2, 1fr); }
+}
