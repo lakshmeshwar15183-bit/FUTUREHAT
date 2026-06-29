@@ -15,6 +15,8 @@ import type {
   MessageReceipt,
   MessageReaction,
   Status,
+  StatusType,
+  StatusViewer,
   UUID,
   MessageType,
 } from './types.js';
@@ -569,18 +571,39 @@ export function createTypingChannel(
 
 // ── Status/Stories ──────────────────────────────────────────────────────────
 
+// Active (non-expired) statuses, newest first, with the author's profile joined
+// so the tray can show names/avatars without N extra round-trips.
 export async function getActiveStatuses(client: SupabaseClient): Promise<Status[]> {
-  const { data } = await client
+  const { data, error } = await client
     .from('statuses')
-    .select('*')
+    .select('*, profile:profiles!statuses_user_id_fkey(id, display_name, avatar_url)')
     .gt('expires_at', new Date().toISOString())
     .order('created_at', { ascending: false });
-  return data || [];
+  // Fall back to the unjoined query if the FK alias isn't recognised (older schema cache).
+  if (error) {
+    const { data: plain } = await client
+      .from('statuses')
+      .select('*')
+      .gt('expires_at', new Date().toISOString())
+      .order('created_at', { ascending: false });
+    return (plain as Status[]) || [];
+  }
+  return ((data || []) as unknown[]).map((row) => {
+    const r = row as Status & { profile?: unknown };
+    return { ...r, profile: flattenJoin(r.profile) } as Status;
+  });
+}
+
+// PostgREST returns embedded one-to-one joins as either an object or a 1-element
+// array depending on schema-cache state; normalise to a single object.
+function flattenJoin<T>(v: unknown): T | null {
+  if (Array.isArray(v)) return (v[0] as T) ?? null;
+  return (v as T) ?? null;
 }
 
 export async function createStatus(
   client: SupabaseClient,
-  type: 'image' | 'text',
+  type: StatusType,
   content?: string,
   mediaUrl?: string,
   background?: string,
@@ -594,6 +617,56 @@ export async function createStatus(
     .select()
     .single();
   return { status: data, error };
+}
+
+// Delete one of your own statuses (RLS enforces ownership).
+export async function deleteStatus(
+  client: SupabaseClient,
+  statusId: UUID,
+): Promise<{ error: Error | null }> {
+  const { error } = await client.from('statuses').delete().eq('id', statusId);
+  return { error };
+}
+
+// Record that the current user has viewed a status. Idempotent (PK upsert);
+// no-op on your own status to keep the "seen by" list to genuine viewers.
+export async function markStatusViewed(
+  client: SupabaseClient,
+  statusId: UUID,
+  ownerId?: UUID,
+): Promise<void> {
+  const user = await getCurrentUser(client);
+  if (!user || user.id === ownerId) return;
+  await client
+    .from('status_views')
+    .upsert({ status_id: statusId, viewer_id: user.id }, { onConflict: 'status_id,viewer_id' });
+}
+
+// Status ids the current user has already viewed — used to render seen/unseen rings.
+export async function getMyViewedStatusIds(client: SupabaseClient): Promise<Set<UUID>> {
+  const user = await getCurrentUser(client);
+  if (!user) return new Set();
+  const { data } = await client
+    .from('status_views')
+    .select('status_id')
+    .eq('viewer_id', user.id);
+  return new Set((data || []).map((r: { status_id: UUID }) => r.status_id));
+}
+
+// The "seen by" list for one of your statuses (RLS only returns rows the owner may read).
+export async function getStatusViewers(
+  client: SupabaseClient,
+  statusId: UUID,
+): Promise<StatusViewer[]> {
+  const { data } = await client
+    .from('status_views')
+    .select('viewer_id, viewed_at, profile:profiles!status_views_viewer_id_fkey(id, display_name, avatar_url)')
+    .eq('status_id', statusId)
+    .order('viewed_at', { ascending: false });
+  return ((data || []) as unknown[]).map((row) => {
+    const r = row as StatusViewer & { profile?: unknown };
+    return { ...r, profile: flattenJoin(r.profile) } as StatusViewer;
+  });
 }
 
 // ── Storage (media uploads) ─────────────────────────────────────────────────

@@ -120,15 +120,26 @@ export interface ScheduledMessage {
   created_at: string;
 }
 
+export type StatusType = 'image' | 'text' | 'video';
+
 export interface Status {
   id: UUID;
   user_id: UUID;
-  type: 'image' | 'text';
+  type: StatusType;
   content: string | null;
   media_url: string | null;
   background: string | null;
   created_at: string;
   expires_at: string;
+  // Joined author profile (display_name + avatar_url), best-effort.
+  profile?: { id: UUID; display_name: string | null; avatar_url: string | null } | null;
+}
+
+// A single viewer of a status (for the "seen by" list on your own status).
+export interface StatusViewer {
+  viewer_id: UUID;
+  viewed_at: string;
+  profile?: { id: UUID; display_name: string | null; avatar_url: string | null } | null;
 }
 
 // ── Calling ───────────────────────────────────────────────────────────────────
