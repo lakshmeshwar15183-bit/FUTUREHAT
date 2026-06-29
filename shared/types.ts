@@ -127,3 +127,19 @@ export interface Status {
   created_at: string;
   expires_at: string;
 }
+
+// ── Calling ───────────────────────────────────────────────────────────────────
+
+export type CallType = 'audio' | 'video';
+export type CallStatus = 'ringing' | 'accepted' | 'declined' | 'missed' | 'ended';
+
+export interface Call {
+  id: UUID;
+  conversation_id: UUID;
+  caller_id: UUID;
+  type: CallType;
+  status: CallStatus;
+  started_at: string;
+  answered_at: string | null;
+  ended_at: string | null;
+}

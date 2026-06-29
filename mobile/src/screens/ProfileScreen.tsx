@@ -8,8 +8,9 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { supabase } from '../lib/supabase';
 import { getCurrentUser, getProfile, startDirectConversation } from '../lib/shared';
-import type { Profile } from '../lib/shared';
+import type { Profile, CallType } from '../lib/shared';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
+import { useCalls } from '../calls/CallContext';
 import Avatar from '../components/Avatar';
 import type { RootStackParamList } from '../navigation/types';
 
@@ -21,6 +22,7 @@ export default function ProfileScreen() {
   const { params } = useRoute<Rt>();
   const colors = useColors();
   const styles = useMemo(() => makeStyles(colors), [colors]);
+  const { startCall } = useCalls();
 
   const [profile, setProfile] = useState<Profile | null>(null);
   const [isMe, setIsMe] = useState(false);
@@ -46,6 +48,12 @@ export default function ProfileScreen() {
     }
   }
 
+  async function call(type: CallType) {
+    if (!profile) return;
+    const { conversationId } = await startDirectConversation(supabase, params.userId);
+    if (conversationId) startCall(conversationId, profile, type);
+  }
+
   if (loading) {
     return (
       <View style={styles.center}>
@@ -65,8 +73,8 @@ export default function ProfileScreen() {
       {!isMe && (
         <View style={styles.actions}>
           <ActionButton icon="chatbubble" label="Message" onPress={message} />
-          <ActionButton icon="call" label="Voice" onPress={() => notYet('Voice calling')} />
-          <ActionButton icon="videocam" label="Video" onPress={() => notYet('Video calling')} />
+          <ActionButton icon="call" label="Voice" onPress={() => call('audio')} />
+          <ActionButton icon="videocam" label="Video" onPress={() => call('video')} />
         </View>
       )}
 

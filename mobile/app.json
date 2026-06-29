@@ -89,6 +89,7 @@
           }
         }
       ],
+      "@config-plugins/react-native-webrtc",
       "./plugins/withReleaseSigning"
     ]
   }

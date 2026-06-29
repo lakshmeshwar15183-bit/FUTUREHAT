@@ -50,6 +50,7 @@ import { uploadMediaFromUri } from '../lib/media';
 import { formatLastSeen } from '../lib/time';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import MessageBubble, { type TickStatus } from '../components/MessageBubble';
+import { useCalls } from '../calls/CallContext';
 import type { RootStackParamList } from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'Chat'>;
@@ -63,6 +64,7 @@ export default function ChatScreen() {
   const { conversationId } = params;
   const colors = useColors();
   const insets = useSafeAreaInsets();
+  const { startCall } = useCalls();
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
   const [uid, setUid] = useState<string | null>(null);
@@ -225,10 +227,10 @@ export default function ChatScreen() {
       ),
       headerRight: () => (
         <View style={styles.headerActions}>
-          <Pressable hitSlop={8} onPress={() => startCall('audio')}>
+          <Pressable hitSlop={8} onPress={() => placeCall('audio')}>
             <Ionicons name="call-outline" size={22} color={colors.text} />
           </Pressable>
-          <Pressable hitSlop={8} onPress={() => startCall('video')} style={{ marginLeft: 18 }}>
+          <Pressable hitSlop={8} onPress={() => placeCall('video')} style={{ marginLeft: 18 }}>
             <Ionicons name="videocam-outline" size={24} color={colors.text} />
           </Pressable>
         </View>
@@ -236,9 +238,14 @@ export default function ChatScreen() {
     });
   }, [navigation, params.title, subtitle, peers, colors, styles]);
 
-  function startCall(kind: 'audio' | 'video') {
-    // Calling arrives in Phase 2 (WebRTC). Surfaced now so the UI is complete.
-    Alert.alert('Calling', `${kind === 'video' ? 'Video' : 'Voice'} calling is coming in the next update.`);
+  function placeCall(kind: 'audio' | 'video') {
+    if (isGroup) {
+      Alert.alert('Group calls', 'Group calling is coming soon. Open a 1:1 chat to call now.');
+      return;
+    }
+    const peer = peers[0];
+    if (!peer) return;
+    startCall(conversationId, peer, kind);
   }
 
   // ── Compose / send ────────────────────────────────────────────────────────

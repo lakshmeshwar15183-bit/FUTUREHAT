@@ -14,6 +14,7 @@ import { supabase } from './src/lib/supabase';
 import { getCurrentUser, onAuthChange } from './src/lib/shared';
 import { ThemeProvider, useTheme } from './src/theme';
 import { AppLockProvider, useAppLock } from './src/security/AppLock';
+import { CallProvider } from './src/calls/CallContext';
 import LockScreen from './src/security/LockScreen';
 import { APP_NAME } from './src/branding';
 import type { RootStackParamList } from './src/navigation/types';
@@ -21,6 +22,7 @@ import type { RootStackParamList } from './src/navigation/types';
 import AuthScreen from './src/screens/AuthScreen';
 import ConversationsScreen from './src/screens/ConversationsScreen';
 import StatusScreen from './src/screens/StatusScreen';
+import CallsScreen from './src/screens/CallsScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 import ChatScreen from './src/screens/ChatScreen';
 import NewChatScreen from './src/screens/NewChatScreen';
@@ -49,6 +51,7 @@ function MainTabs() {
           const map: Record<string, [keyof typeof Ionicons.glyphMap, keyof typeof Ionicons.glyphMap]> = {
             Chats: ['chatbubbles', 'chatbubbles-outline'],
             Status: ['radio', 'radio-outline'],
+            Calls: ['call', 'call-outline'],
             Settings: ['settings', 'settings-outline'],
           };
           const [on, off] = map[route.name] ?? ['ellipse', 'ellipse-outline'];
@@ -58,6 +61,7 @@ function MainTabs() {
     >
       <Tab.Screen name="Chats" component={ConversationsScreen} options={{ title: APP_NAME }} />
       <Tab.Screen name="Status" component={StatusScreen} />
+      <Tab.Screen name="Calls" component={CallsScreen} />
       <Tab.Screen name="Settings" component={SettingsScreen} />
     </Tab.Navigator>
   );
@@ -156,7 +160,9 @@ export default function App() {
       <SafeAreaProvider>
         <ThemeProvider>
           <AppLockProvider>
-            <RootNavigator />
+            <CallProvider>
+              <RootNavigator />
+            </CallProvider>
           </AppLockProvider>
         </ThemeProvider>
       </SafeAreaProvider>
