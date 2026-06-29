@@ -7,7 +7,7 @@ export type RootStackParamList = {
   Chat: { conversationId: UUID; title: string };
   NewChat: undefined;
   NewGroup: undefined;
-  Profile: { userId: UUID };
+  Profile: { userId: UUID; conversationId?: UUID };
   EditProfile: undefined;
   Appearance: undefined;
   Premium: undefined;

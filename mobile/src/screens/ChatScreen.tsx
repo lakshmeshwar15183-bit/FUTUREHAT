@@ -303,7 +303,7 @@ export default function ChatScreen() {
     navigation.setOptions({
       headerLeft: undefined,
       headerTitle: () => (
-        <Pressable onPress={() => peers[0] && navigation.navigate('Profile', { userId: peers[0].id })}>
+        <Pressable onPress={() => peers[0] && navigation.navigate('Profile', { userId: peers[0].id, conversationId })}>
           <Text style={styles.headerTitle} numberOfLines={1}>
             {params.title}
           </Text>

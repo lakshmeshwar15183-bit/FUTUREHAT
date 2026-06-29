@@ -14,7 +14,8 @@ import {
   blockUser, unblockUser, getBlockedIds, submitReport,
   muteConversation, unmuteConversation, getMutedIds,
 } from '@shared/supportApi';
-import type { Profile } from '@shared/types';
+import { getSharedMedia } from '@shared/api';
+import type { Profile, Message } from '@shared/types';
 import { formatDistanceToNow } from 'date-fns';
 import { modalBackdrop, modalPanel } from '../motion';
 import './ContactProfileModal.css';
@@ -35,19 +36,31 @@ export function ContactProfileModal({ profile, online, isPremium, conversationId
   const [muted, setMuted] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [media, setMedia] = useState<Message[]>([]);
+  const [lightbox, setLightbox] = useState<string | null>(null);
 
   function flash(m: string) { setToast(m); setTimeout(() => setToast(null), 2400); }
 
   useEffect(() => {
     getBlockedIds(supabase).then((ids) => setBlocked(ids.includes(profile.id))).catch(() => {});
-    if (conversationId) getMutedIds(supabase).then((ids) => setMuted(ids.includes(conversationId))).catch(() => {});
+    if (conversationId) {
+      getMutedIds(supabase).then((ids) => setMuted(ids.includes(conversationId))).catch(() => {});
+      getSharedMedia(supabase, conversationId).then(setMedia).catch(() => {});
+    }
   }, [profile.id, conversationId]);
 
+  const photos = media.filter((m) => m.type === 'image');
+  const docs = media.filter((m) => m.type === 'file');
+
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (lightbox) setLightbox(null);
+      else onClose();
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, lightbox]);
 
   async function toggleBlock() {
     setMenuOpen(false);
@@ -133,8 +146,47 @@ export function ContactProfileModal({ profile, online, isPremium, conversationId
           )}
         </div>
 
+        {conversationId && (photos.length > 0 || docs.length > 0) && (
+          <div className="contact-media">
+            <div className="contact-media-head">
+              <span>Media, links and docs</span>
+              <span className="contact-media-count">{photos.length + docs.length}</span>
+            </div>
+            {photos.length > 0 && (
+              <div className="contact-media-grid">
+                {photos.slice(0, 12).map((m) => (
+                  <button
+                    key={m.id}
+                    className="contact-media-thumb"
+                    style={{ backgroundImage: `url(${m.media_url})` }}
+                    onClick={() => setLightbox(m.media_url!)}
+                    aria-label="View photo"
+                  />
+                ))}
+              </div>
+            )}
+            {docs.length > 0 && (
+              <div className="contact-doc-list">
+                {docs.slice(0, 8).map((m) => (
+                  <a key={m.id} href={m.media_url!} target="_blank" rel="noreferrer" className="contact-doc">
+                    <span className="contact-doc-icon">📎</span>
+                    <span className="contact-doc-name">{m.content || 'Attachment'}</span>
+                  </a>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {blocked && <div className="contact-blocked-note">🚫 You have blocked this user.</div>}
         {toast && <div className="contact-toast">{toast}</div>}
+
+        {lightbox && (
+          <div className="contact-lightbox" onClick={() => setLightbox(null)}>
+            <button className="contact-lightbox-close" onClick={() => setLightbox(null)} aria-label="Close">✕</button>
+            <img src={lightbox} alt="Shared media" onClick={(e) => e.stopPropagation()} />
+          </div>
+        )}
       </motion.div>
     </motion.div>
   );

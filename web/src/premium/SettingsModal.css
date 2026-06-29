@@ -40,6 +40,14 @@
 }
 .membership-label { font-weight: 600; display: flex; align-items: center; gap: 8px; }
 .membership-sub { font-size: 13px; color: var(--fh-muted); margin-top: 3px; }
+
+/* Settings profile header */
+.settings-profile { display: flex; align-items: center; gap: 14px; }
+.settings-avatar { width: 64px; height: 64px; font-size: 26px; flex: none; }
+.settings-profile-meta { min-width: 0; }
+.settings-profile-name { font-size: 18px; font-weight: 700; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.settings-profile-handle { font-size: 13px; color: var(--fh-accent); margin-top: 2px; }
+
 .settings-cta {
   background: linear-gradient(135deg, var(--fh-accent), var(--fh-accent-2));
   color: #fff;

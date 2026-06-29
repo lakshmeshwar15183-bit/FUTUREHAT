@@ -3,6 +3,7 @@
 
 import { useState, lazy, Suspense } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useAuth } from '../AuthContext';
 import { usePremium } from '../PremiumContext';
 import { useUpgrade } from './UpgradeProvider';
 import { PremiumBadge } from './PremiumBadge';
@@ -31,6 +32,7 @@ export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin }: {
   onHelp: () => void;
   onAdmin?: () => void;
 }) {
+  const { profile } = useAuth();
   const { isPremium, isAdmin, preferences, setPreference } = usePremium();
   const { open: openUpgrade } = useUpgrade();
   const [sub, setSub] = useState<SubPanel | null>(null);
@@ -54,6 +56,29 @@ export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin }: {
       <motion.div className="settings-modal glass" variants={modalPanel} onClick={(e) => e.stopPropagation()}>
         <button className="modal-close" onClick={onClose}>✕</button>
         <h2 className="settings-title">⚙️ Settings</h2>
+
+        {/* Profile header */}
+        <section className="settings-section">
+          <div className="settings-profile">
+            <div
+              className="avatar avatar-wrap settings-avatar"
+              style={profile?.avatar_url ? { backgroundImage: `url(${profile.avatar_url})`, backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
+            >
+              {!profile?.avatar_url && (profile?.display_name?.[0]?.toUpperCase() || '?')}
+            </div>
+            <div className="settings-profile-meta">
+              <div className="settings-profile-name">
+                {profile?.display_name || 'FUTUREHAT user'}
+                {isPremium && <PremiumBadge compact />}
+                {isAdmin && <span className="dev-badge">DEV</span>}
+              </div>
+              {profile?.username && <div className="settings-profile-handle">@{profile.username}</div>}
+              <div className="membership-sub">
+                {isAdmin ? 'FUTUREHAT+ · Lifetime membership' : isPremium ? 'FUTUREHAT+ member' : 'Free plan'}
+              </div>
+            </div>
+          </div>
+        </section>
 
         {/* Membership */}
         <section className="settings-section">

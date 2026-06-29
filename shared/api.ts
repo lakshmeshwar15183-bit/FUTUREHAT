@@ -245,6 +245,31 @@ export async function getMessages(
   return (data || []).reverse();
 }
 
+/**
+ * Media / files shared in a conversation, newest first — backs the "shared
+ * media" gallery in contact info. Excludes deleted messages. Best-effort:
+ * returns [] on error so callers can render an empty gallery.
+ */
+export async function getSharedMedia(
+  client: SupabaseClient,
+  conversationId: UUID,
+  limit = 60,
+): Promise<Message[]> {
+  try {
+    const { data } = await client
+      .from('messages')
+      .select('*')
+      .eq('conversation_id', conversationId)
+      .in('type', ['image', 'file'])
+      .eq('is_deleted', false)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    return (data || []).filter((m) => m.media_url);
+  } catch {
+    return [];
+  }
+}
+
 export async function sendMessage(
   client: SupabaseClient,
   conversationId: UUID,

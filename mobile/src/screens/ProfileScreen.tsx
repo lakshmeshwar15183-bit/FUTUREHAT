@@ -1,7 +1,7 @@
 // FUTUREHAT mobile — view a user's profile. Shows avatar/name/username/about
 // and contextual actions (message / call, or edit when it's me).
 import React, { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, Modal, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -9,9 +9,9 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { supabase } from '../lib/supabase';
 import {
   getCurrentUser, getProfile, startDirectConversation,
-  blockUser, unblockUser, getBlockedIds, submitReport,
+  blockUser, unblockUser, getBlockedIds, submitReport, getSharedMedia,
 } from '../lib/shared';
-import type { Profile, CallType } from '../lib/shared';
+import type { Profile, CallType, Message } from '../lib/shared';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import { useCalls } from '../calls/CallContext';
 import Avatar from '../components/Avatar';
@@ -31,6 +31,8 @@ export default function ProfileScreen() {
   const [isMe, setIsMe] = useState(false);
   const [loading, setLoading] = useState(true);
   const [blocked, setBlocked] = useState(false);
+  const [photos, setPhotos] = useState<Message[]>([]);
+  const [viewerUrl, setViewerUrl] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -41,8 +43,12 @@ export default function ProfileScreen() {
       const ids = await getBlockedIds(supabase).catch(() => [] as string[]);
       setBlocked(ids.includes(params.userId));
       setLoading(false);
+      if (params.conversationId) {
+        const media = await getSharedMedia(supabase, params.conversationId).catch(() => [] as Message[]);
+        setPhotos(media.filter((m) => m.type === 'image' && m.media_url));
+      }
     })();
-  }, [params.userId]);
+  }, [params.userId, params.conversationId]);
 
   async function toggleBlock() {
     const was = blocked;
@@ -121,6 +127,18 @@ export default function ProfileScreen() {
         </Section>
       )}
 
+      {photos.length > 0 && (
+        <Section title={`Media · ${photos.length}`}>
+          <View style={styles.mediaGrid}>
+            {photos.slice(0, 12).map((m) => (
+              <Pressable key={m.id} onPress={() => setViewerUrl(m.media_url!)}>
+                <Image source={{ uri: m.media_url! }} style={styles.mediaThumb} />
+              </Pressable>
+            ))}
+          </View>
+        </Section>
+      )}
+
       {isMe && (
         <Pressable style={styles.editBtn} onPress={() => navigation.navigate('EditProfile')}>
           <Ionicons name="create-outline" size={20} color={colors.primary} />
@@ -146,6 +164,12 @@ export default function ProfileScreen() {
           </Pressable>
         </View>
       )}
+
+      <Modal visible={!!viewerUrl} transparent animationType="fade" onRequestClose={() => setViewerUrl(null)}>
+        <Pressable style={styles.viewer} onPress={() => setViewerUrl(null)}>
+          {viewerUrl && <Image source={{ uri: viewerUrl }} style={styles.viewerImg} resizeMode="contain" />}
+        </Pressable>
+      </Modal>
     </ScrollView>
   );
 }
@@ -194,4 +218,8 @@ const makeStyles = (colors: Palette) =>
     editText: { color: colors.primary, fontSize: font.heading, fontWeight: '600' },
     actionRow: { flexDirection: 'row', alignItems: 'center', gap: spacing(4), paddingHorizontal: spacing(5), paddingVertical: spacing(3.5), backgroundColor: colors.surface, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
     actionRowText: { color: colors.text, fontSize: font.body },
+    mediaGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 4 },
+    mediaThumb: { width: 78, height: 78, borderRadius: radius.sm, backgroundColor: colors.surface },
+    viewer: { flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', alignItems: 'center', justifyContent: 'center' },
+    viewerImg: { width: '100%', height: '100%' },
   });
