@@ -1,4 +1,4 @@
-/* FUTUREHAT — call overlay styling. */
+/* FUTUREHAT — WhatsApp-style call overlay. UI/interaction only. */
 
 .call-overlay {
   position: fixed;
@@ -8,57 +8,205 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  background: radial-gradient(circle at 50% 30%, #1b2336, #0a0d16 70%);
+  background: #000;
   color: #fff;
+  overflow: hidden;
 }
-.call-overlay.video { background: #000; }
+.call-overlay.audio { background: radial-gradient(circle at 50% 26%, #103b34, #0b141a 72%); }
 
-.call-remote-video {
-  position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: #000;
-}
-.call-local-video {
-  position: absolute; bottom: 120px; right: 20px;
-  width: 130px; height: 180px; object-fit: cover;
-  border-radius: 14px; border: 2px solid rgba(255, 255, 255, 0.25);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); z-index: 2;
+/* Blurred backdrop — fills letterbox bars on wide/ultrawide screens and provides
+   the "blur while connecting" look. Mirrors whichever stream fills the screen. */
+.call-backdrop {
+  position: fixed; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; transform: scale(1.12);
+  filter: blur(30px) brightness(0.5) saturate(1.1);
+  z-index: 0; transition: opacity .4s ease;
 }
 
-.call-info {
-  position: relative; z-index: 2; text-align: center; margin-bottom: 48px;
+/* Full / floating-PiP videos. Swap is a class change only, so the <video>
+   elements never remount and their MediaStreams are preserved. */
+.call-vid {
+  position: fixed; background: #000;
+  transition: left .3s cubic-bezier(.4, 0, .2, 1), top .3s cubic-bezier(.4, 0, .2, 1),
+              width .3s cubic-bezier(.4, 0, .2, 1), height .3s cubic-bezier(.4, 0, .2, 1),
+              border-radius .3s ease, opacity .45s ease, box-shadow .3s ease;
 }
-.call-overlay.video .call-info {
-  position: absolute; top: 40px; left: 0; right: 0; margin: 0;
-  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.7);
+/* Contain keeps faces uncropped (WhatsApp desktop); transparent so the blurred
+   backdrop shows through the letterbox bars instead of black. */
+.call-vid.full { left: 0; top: 0; width: 100vw; height: 100vh; border-radius: 0; z-index: 1; object-fit: contain; background: transparent; }
+.call-vid.pip {
+  width: 116px; height: 168px; border-radius: 16px; z-index: 3; object-fit: cover;
+  border: 1.5px solid rgba(255, 255, 255, 0.32);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+  cursor: grab; touch-action: none; user-select: none;
 }
+.call-vid.pip:active { cursor: grabbing; }
+
+/* Crossfade: remote fades in when its frames start; local when its camera starts. */
+.call-vid.remote { opacity: 0; }
+.call-overlay.remote-on .call-vid.remote { opacity: 1; }
+.call-vid.local { opacity: 0; }
+.call-overlay.local-on .call-vid.local { opacity: 1; }
+
+/* Camera-loading placeholder over the local PiP. */
+.call-cam-loading {
+  position: fixed; width: 116px; height: 168px; border-radius: 16px; z-index: 4;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 9px;
+  background: #18241d; border: 1.5px solid rgba(255, 255, 255, 0.16);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6); pointer-events: none;
+}
+.call-cam-label { font-size: 10.5px; opacity: 0.7; }
+.call-spinner {
+  width: 26px; height: 26px; border-radius: 50%;
+  border: 2.5px solid rgba(255, 255, 255, 0.22); border-top-color: #fff;
+  animation: callSpin 0.8s linear infinite;
+}
+@keyframes callSpin { to { transform: rotate(360deg); } }
+
+/* Legibility scrims (fade with the chrome). */
+.call-scrim { position: fixed; left: 0; right: 0; z-index: 2; pointer-events: none; transition: opacity .3s ease; }
+.call-scrim.top { top: 0; height: 170px; background: linear-gradient(to bottom, rgba(0, 0, 0, 0.55), transparent); }
+.call-scrim.bottom { bottom: 0; height: 230px; background: linear-gradient(to top, rgba(0, 0, 0, 0.62), transparent); }
+
+/* ── top bar (video, connected) ──────────────────────────────────────────── */
+.call-topbar {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 6;
+  display: flex; align-items: center; gap: 10px;
+  padding: calc(14px + env(safe-area-inset-top)) 16px 10px;
+  transition: opacity .3s ease, transform .3s ease;
+}
+.call-icon-btn {
+  width: 42px; height: 42px; border: none; border-radius: 50%; cursor: pointer;
+  display: grid; place-items: center; color: #fff; background: transparent; transition: background .2s;
+}
+.call-icon-btn:hover { background: rgba(255, 255, 255, 0.14); }
+.call-topinfo { flex: 1; min-width: 0; }
+.call-name.sm { font-size: 17px; font-weight: 600; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.call-substatus { display: flex; align-items: center; gap: 5px; font-size: 12.5px; opacity: 0.82; margin-top: 2px; }
+
+/* ── centred avatar stage (audio + ringing/connecting video) ─────────────── */
+.call-info { position: relative; z-index: 4; text-align: center; padding: 0 24px; pointer-events: none; }
+.call-overlay.audio .call-info { margin-bottom: 52px; }
+.call-overlay.video .call-info { text-shadow: 0 2px 16px rgba(0, 0, 0, 0.65); }
 .call-avatar {
-  width: 110px; height: 110px; margin: 0 auto 18px;
+  position: relative; width: 128px; height: 128px; margin: 0 auto 22px;
   border-radius: 50%; display: grid; place-items: center;
-  font-size: 46px; font-weight: 800;
-  background: linear-gradient(135deg, #6a5cff, #9b7bff);
-  box-shadow: 0 12px 40px rgba(106, 92, 255, 0.5);
+  font-size: 52px; font-weight: 800; color: #fff;
+  background: linear-gradient(135deg, #00a884, #25d366);
+  box-shadow: 0 16px 48px rgba(0, 168, 132, 0.45);
 }
-.call-overlay.video .call-avatar { width: 64px; height: 64px; font-size: 26px; margin-bottom: 8px; }
-.call-name { font-size: 24px; font-weight: 700; }
-.call-status { font-size: 15px; opacity: 0.8; margin-top: 6px; }
+.call-avatar.ringing::before, .call-avatar.ringing::after {
+  content: ''; position: absolute; inset: -6px; border-radius: 50%;
+  border: 2px solid rgba(37, 211, 102, 0.55); animation: callPulse 2.1s ease-out infinite;
+}
+.call-avatar.ringing::after { animation-delay: 1.05s; }
+@keyframes callPulse { 0% { transform: scale(1); opacity: 0.7; } 100% { transform: scale(1.55); opacity: 0; } }
+.call-name { font-size: 26px; font-weight: 700; }
+.call-status { font-size: 15px; opacity: 0.85; margin-top: 8px; display: inline-flex; align-items: center; }
+.call-dots { display: inline-flex; gap: 3px; margin-left: 4px; }
+.call-dots i { width: 4px; height: 4px; border-radius: 50%; background: currentColor; opacity: 0.3; animation: callDot 1.25s infinite ease-in-out; }
+.call-dots i:nth-child(2) { animation-delay: 0.18s; }
+.call-dots i:nth-child(3) { animation-delay: 0.36s; }
+@keyframes callDot { 0%, 65%, 100% { opacity: 0.25; transform: translateY(0); } 32% { opacity: 1; transform: translateY(-3px); } }
+.call-encrypted { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; opacity: 0.62; margin-top: 16px; }
+.call-info .call-net { margin-top: 14px; }
 
+/* ── network indicator ───────────────────────────────────────────────────── */
+.call-net { display: inline-flex; align-items: flex-end; gap: 2.5px; height: 15px; }
+.call-net i { width: 3px; border-radius: 2px; background: rgba(255, 255, 255, 0.32); transition: background .3s, height .3s; }
+.call-net i:nth-child(1) { height: 5px; }
+.call-net i:nth-child(2) { height: 8px; }
+.call-net i:nth-child(3) { height: 11px; }
+.call-net i:nth-child(4) { height: 15px; }
+.call-net i.on { background: #fff; }
+.call-net.mid i.on { background: #ffcd29; }
+.call-net.bad i.on { background: #f4344e; }
+
+/* ── controls ────────────────────────────────────────────────────────────── */
 .call-controls {
-  position: relative; z-index: 2;
-  display: flex; gap: 22px; align-items: center;
+  position: relative; z-index: 6;
+  display: flex; gap: 18px; align-items: flex-start; flex-wrap: wrap; justify-content: center; max-width: 92vw;
 }
-.call-overlay.video .call-controls { position: absolute; bottom: 40px; }
+.call-overlay.video .call-controls {
+  position: fixed; bottom: calc(34px + env(safe-area-inset-bottom)); left: 0; right: 0; margin: 0 auto; width: fit-content;
+  padding: 12px 16px; border-radius: 40px;
+  background: rgba(11, 20, 26, 0.5); backdrop-filter: blur(16px);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+  transition: opacity .3s ease, transform .3s ease;
+}
+.call-btn-wrap { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.call-btn-label { font-size: 13px; opacity: 0.85; }
 .call-btn {
-  width: 64px; height: 64px; border-radius: 50%; border: none; cursor: pointer;
-  font-size: 24px; display: grid; place-items: center;
-  background: rgba(255, 255, 255, 0.16); color: #fff;
-  transition: transform .12s, background .2s;
+  width: 58px; height: 58px; border-radius: 50%; border: none; cursor: pointer;
+  display: grid; place-items: center; background: rgba(255, 255, 255, 0.16); color: #fff;
+  transition: transform .12s ease, background .2s ease;
 }
 .call-btn:hover { transform: scale(1.06); }
-.call-btn.on { background: rgba(255, 255, 255, 0.85); color: #111; }
-.call-btn.accept { background: #22c55e; }
-.call-btn.decline { background: #ef4444; }
+.call-btn:active { transform: scale(0.95); }
+.call-btn.active { background: #fff; color: #0b141a; }
+.call-btn.accept { background: #21c063; color: #fff; width: 66px; height: 66px; }
+.call-btn.end { background: #f4344e; color: #fff; width: 66px; height: 66px; }
 
+/* ── chrome auto-hide + desktop cursor hide (video) ──────────────────────── */
+.call-overlay.chrome-off .call-topbar { opacity: 0; transform: translateY(-8px); pointer-events: none; }
+.call-overlay.chrome-off .call-controls { opacity: 0; transform: translateY(14px); pointer-events: none; }
+.call-overlay.chrome-off .call-scrim { opacity: 0; }
+.call-overlay.video.chrome-off { cursor: none; }
+
+/* ── immersive (double-tap remote) ───────────────────────────────────────── */
+.call-overlay.immersive .call-topbar,
+.call-overlay.immersive .call-controls,
+.call-overlay.immersive .call-scrim,
+.call-overlay.immersive .call-vid.pip,
+.call-overlay.immersive .call-cam-loading { opacity: 0; pointer-events: none; }
+
+/* ── minimized to a floating bubble (call stays live) ────────────────────── */
+.call-overlay.minimized { background: transparent; pointer-events: none; }
+.call-overlay.minimized .call-backdrop, .call-overlay.minimized .call-scrim { display: none; }
+.call-overlay.minimized .call-vid.full {
+  left: auto; top: auto; right: 16px; bottom: 92px;
+  width: 130px; height: 186px; border-radius: 16px; object-fit: cover;
+  border: 1.5px solid rgba(255, 255, 255, 0.22);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.55);
+  pointer-events: auto; cursor: pointer; z-index: 4;
+}
+.call-overlay.minimized .call-vid.pip, .call-overlay.minimized .call-cam-loading { display: none; }
+.call-restore {
+  position: fixed; right: 16px; bottom: 56px; z-index: 6; pointer-events: auto;
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 7px 14px; border: none; border-radius: 22px; cursor: pointer;
+  background: #1f2c34; color: #fff; font-size: 13px; font-weight: 600;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45);
+}
+.call-restore-dot { width: 8px; height: 8px; border-radius: 50%; background: #25d366; animation: callBlink 1.6s infinite; }
+@keyframes callBlink { 50% { opacity: 0.35; } }
+
+/* ── responsive: phones ──────────────────────────────────────────────────── */
 @media (max-width: 600px) {
-  .call-local-video { width: 100px; height: 140px; bottom: 110px; right: 14px; }
-  .call-btn { width: 58px; height: 58px; font-size: 22px; }
-  .call-controls { gap: 16px; }
+  .call-btn { width: 54px; height: 54px; }
+  .call-btn.accept, .call-btn.end { width: 62px; height: 62px; }
+  .call-controls { gap: 14px; }
+  .call-vid.pip, .call-cam-loading { width: 104px; height: 150px; }
+  .call-avatar { width: 110px; height: 110px; font-size: 44px; }
+}
+
+/* ── responsive: tablets ─────────────────────────────────────────────────── */
+@media (min-width: 768px) and (max-width: 1279px) {
+  .call-vid.pip, .call-cam-loading { width: 150px; height: 206px; }
+  .call-btn { width: 62px; height: 62px; }
+  .call-btn.accept, .call-btn.end { width: 70px; height: 70px; }
+  .call-controls { gap: 22px; }
+  .call-avatar { width: 148px; height: 148px; font-size: 60px; }
+}
+
+/* ── responsive: large / ultrawide desktop ───────────────────────────────── */
+@media (min-width: 1280px) {
+  .call-vid.pip, .call-cam-loading { width: 184px; height: 256px; }
+  .call-overlay.video .call-controls { bottom: 40px; gap: 22px; padding: 14px 20px; }
+  .call-btn { width: 60px; height: 60px; }
+}
+@media (min-width: 1920px) {
+  /* object-fit:contain already centres the video; the blurred backdrop fills the
+     wide letterbox bars, so the face never stretches or over-crops. */
+  .call-vid.pip, .call-cam-loading { width: 210px; height: 290px; }
 }
