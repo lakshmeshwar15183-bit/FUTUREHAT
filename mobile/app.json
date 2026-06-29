@@ -7,7 +7,10 @@
     "scheme": "futurehat",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": false,
+    "icon": "./assets/icon.png",
     "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
       "backgroundColor": "#0B141A"
     },
     "assetBundlePatterns": [
@@ -19,15 +22,74 @@
     },
     "android": {
       "package": "dev.lakshmeshwar.futurehat",
+      "versionCode": 1,
       "adaptiveIcon": {
-        "backgroundColor": "#0B141A"
-      }
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#00A884"
+      },
+      "permissions": [
+        "CAMERA",
+        "RECORD_AUDIO",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "USE_BIOMETRIC",
+        "USE_FINGERPRINT",
+        "VIBRATE"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
     },
     "extra": {
       "developer": "LAKSHMESHWAR PANDEY"
     },
     "plugins": [
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "FUTUREHAT uses your photos so you can share images and set a profile picture.",
+          "cameraPermission": "FUTUREHAT uses your camera so you can take and send photos."
+        }
+      ],
+      [
+        "expo-av",
+        {
+          "microphonePermission": "FUTUREHAT uses your microphone to record voice messages."
+        }
+      ],
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "FUTUREHAT uses Face ID to unlock the app when App Lock is on."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#00A884"
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#0B141A"
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "enableProguardInReleaseBuilds": true,
+            "enableShrinkResourcesInReleaseBuilds": true
+          }
+        }
+      ],
+      "./plugins/withReleaseSigning"
     ]
   }
 }
