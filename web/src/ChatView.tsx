@@ -15,7 +15,10 @@ import {
   createTypingChannel, editMessage, deleteMessage, forwardMessage, getMyConversations,
 } from '@shared/api';
 import { scheduleMessage, getScheduledMessages, dispatchDueMessages } from '@shared/premiumApi';
+import { createPoll, getPolls } from '@shared/communitiesApi';
+import type { Poll } from '@shared/communitiesApi';
 import { aiRewrite, aiTranslate, aiSummarize, aiSmartReply } from '@shared/aiClient';
+import { PollCard } from './communities/PollCard';
 import { FREE_LIMITS, PREMIUM_LIMITS } from '@shared/premium/features';
 import type { ConversationSummary, Message, MessageReceipt, MessageReaction } from '@shared/types';
 import { formatDistanceToNow } from 'date-fns';
@@ -72,6 +75,14 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
   const [scheduledCount, setScheduledCount] = useState(0);
   const [toast, setToast] = useState<string | null>(null);
 
+  // polls
+  const [polls, setPolls] = useState<Poll[]>([]);
+  const [showPolls, setShowPolls] = useState(true);
+  const [pollComposerOpen, setPollComposerOpen] = useState(false);
+  const [pollQuestion, setPollQuestion] = useState('');
+  const [pollOptions, setPollOptions] = useState<string[]>(['', '']);
+  const [pollMultiple, setPollMultiple] = useState(false);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -92,6 +103,7 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
     let active = true;
     setMessages([]); setReceipts([]); setReactions([]); setTypingUsers({});
     setSuggestions([]); setSummary(null); setReplyTo(null); setEditing(null);
+    setPolls([]); setPollComposerOpen(false);
 
     (async () => {
       const msgs = await getMessages(supabase, convId);
@@ -104,6 +116,7 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
     })().catch(() => {});
 
     getScheduledMessages(supabase, convId).then((s) => setScheduledCount(s.length)).catch(() => {});
+    getPolls(supabase, convId).then((p) => { if (active) setPolls(p); }).catch(() => {});
 
     const msgChannel = subscribeToMessages(
       supabase, convId,
@@ -305,6 +318,23 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
     setToast(`Scheduled for ${when.toLocaleString()}`);
   }
 
+  // ── Polls ──────────────────────────────────────────────────────────────────────
+  function setPollOption(i: number, val: string) {
+    setPollOptions((opts) => opts.map((o, idx) => (idx === i ? val : o)));
+  }
+  async function handleCreatePoll() {
+    const question = pollQuestion.trim();
+    const options = pollOptions.map((o) => o.trim()).filter(Boolean);
+    if (!question) { setToast('Add a poll question'); return; }
+    if (options.length < 2) { setToast('Add at least two options'); return; }
+    const { poll, error } = await createPoll(supabase, convId, question, options, pollMultiple);
+    if (error || !poll) { setToast(error?.message || 'Could not create poll'); return; }
+    setPolls((p) => [poll, ...p]);
+    setPollQuestion(''); setPollOptions(['', '']); setPollMultiple(false); setPollComposerOpen(false);
+    setShowPolls(true);
+    setToast('Poll created');
+  }
+
   // ── Header subtitle (presence) ─────────────────────────────────────────────────
   const typingNames = Object.values(typingUsers);
   const otherOnline = otherUser ? onlineIds.has(otherUser.id) : false;
@@ -344,6 +374,21 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
           <motion.div className="ai-summary" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}>
             <div className="ai-summary-head"><span>📋 Summary</span><button onClick={() => setSummary(null)}>✕</button></div>
             <div className="ai-summary-body">{summary}</div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {polls.length > 0 && (
+          <motion.div className="poll-panel" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}>
+            <div className="poll-panel-head">
+              <button onClick={() => setShowPolls((v) => !v)}>📊 Polls ({polls.length}) {showPolls ? '▾' : '▸'}</button>
+            </div>
+            {showPolls && (
+              <div className="poll-panel-body">
+                {polls.map((p) => <PollCard key={p.id} poll={p} myId={profile?.id} />)}
+              </div>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
@@ -466,6 +511,29 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
         )}
       </AnimatePresence>
 
+      {/* Poll composer */}
+      <AnimatePresence>
+        {pollComposerOpen && (
+          <motion.div className="poll-pop glass" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+            <div className="poll-pop-title">📊 Create poll</div>
+            <input className="poll-pop-input" placeholder="Question" value={pollQuestion} onChange={(e) => setPollQuestion(e.target.value)} maxLength={140} />
+            {pollOptions.map((opt, i) => (
+              <input key={i} className="poll-pop-input" placeholder={`Option ${i + 1}`} value={opt}
+                onChange={(e) => setPollOption(i, e.target.value)} maxLength={80} />
+            ))}
+            <div className="poll-pop-row">
+              {pollOptions.length < 6 && (
+                <button type="button" className="poll-pop-add" onClick={() => setPollOptions((o) => [...o, ''])}>+ Option</button>
+              )}
+              <label className="poll-pop-multi">
+                <input type="checkbox" checked={pollMultiple} onChange={(e) => setPollMultiple(e.target.checked)} /> Multiple
+              </label>
+            </div>
+            <button type="button" className="poll-pop-submit" onClick={handleCreatePoll}>Create poll</button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Schedule popover */}
       <AnimatePresence>
         {scheduleOpen && (
@@ -502,6 +570,8 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
             )}
           </AnimatePresence>
         </div>
+
+        <button type="button" className="tool-btn" title="Create poll" onClick={() => { setPollComposerOpen((v) => !v); setScheduleOpen(false); setStickersOpen(false); setAiOpen(false); }}>📊</button>
 
         <button type="button" className={`tool-btn ${isPremium ? '' : 'locked'}`} title="Schedule" onClick={() => (isPremium ? setScheduleOpen((v) => !v) : openUpgrade())}>
           ⏰{scheduledCount > 0 && <span className="sched-badge">{scheduledCount}</span>}

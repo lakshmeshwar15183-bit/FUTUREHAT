@@ -1,0 +1,38 @@
+/* FUTUREHAT — inline poll card styling, theme-aware via --fh-* vars. */
+
+.poll-card {
+  border: 1px solid var(--fh-border);
+  border-radius: 14px;
+  padding: 14px;
+  background: var(--fh-elevated);
+  margin-bottom: 8px;
+}
+.poll-q { font-weight: 700; font-size: 14.5px; margin-bottom: 10px; }
+.poll-options { display: flex; flex-direction: column; gap: 6px; }
+.poll-option {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--fh-border);
+  border-radius: 10px;
+  background: var(--fh-bg);
+  color: var(--fh-text);
+  font-size: 13.5px;
+  cursor: pointer;
+  overflow: hidden;
+}
+.poll-option:disabled { cursor: default; }
+.poll-option.mine { border-color: var(--fh-accent); }
+.poll-bar {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  background: color-mix(in srgb, var(--fh-accent) 22%, transparent);
+  transition: width .4s ease;
+  z-index: 0;
+}
+.poll-opt-label { position: relative; z-index: 1; font-weight: 600; }
+.poll-opt-count { position: relative; z-index: 1; font-size: 12px; color: var(--fh-muted); flex: none; }
+.poll-foot { margin-top: 10px; font-size: 12px; color: var(--fh-muted); }

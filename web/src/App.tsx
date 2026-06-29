@@ -29,6 +29,7 @@ const GroupModal = lazy(() => import('./GroupModal').then((m) => ({ default: m.G
 const StatusView = lazy(() => import('./StatusView').then((m) => ({ default: m.StatusView })));
 const SettingsModal = lazy(() => import('./premium/SettingsModal').then((m) => ({ default: m.SettingsModal })));
 const HelpSupportModal = lazy(() => import('./support/HelpSupportModal').then((m) => ({ default: m.HelpSupportModal })));
+const CommunitiesModal = lazy(() => import('./communities/CommunitiesModal').then((m) => ({ default: m.CommunitiesModal })));
 
 function AppInner() {
   const { profile } = useAuth();
@@ -47,6 +48,7 @@ function AppInner() {
   const [showStatus, setShowStatus] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  const [showCommunities, setShowCommunities] = useState(false);
 
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
@@ -193,6 +195,7 @@ function AppInner() {
               <button onClick={openUpgrade} className="icon-btn upgrade-pill" title="Upgrade to FUTUREHAT+">✦</button>
             )}
             <button onClick={() => setShowStatus(true)} className="icon-btn" title="Status">📸</button>
+            <button onClick={() => setShowCommunities(true)} className="icon-btn" title="Communities">🌐</button>
             <button onClick={() => setShowGroup(true)} className="icon-btn" title="New group">👥</button>
             <button onClick={() => setShowSearch(!showSearch)} className="icon-btn" title="New chat">➕</button>
             <button onClick={() => setShowSettings(true)} className="icon-btn" title="Settings">⚙️</button>
@@ -321,6 +324,12 @@ function AppInner() {
           {showProfile && <ProfileModal onClose={() => setShowProfile(false)} />}
           {showSettings && <SettingsModal onClose={() => setShowSettings(false)} onEditProfile={() => setShowProfile(true)} onHelp={() => setShowHelp(true)} />}
           {showHelp && <HelpSupportModal onClose={() => setShowHelp(false)} />}
+          {showCommunities && (
+            <CommunitiesModal
+              onClose={() => setShowCommunities(false)}
+              onOpenChannel={async (cid) => { await loadConversations(); setSelectedConvId(cid); }}
+            />
+          )}
         </AnimatePresence>
         {showGroup && <GroupModal onClose={() => setShowGroup(false)} onCreated={() => { loadConversations(); setShowGroup(false); }} />}
         {showStatus && <StatusView onClose={() => setShowStatus(false)} />}
