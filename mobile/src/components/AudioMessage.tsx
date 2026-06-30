@@ -23,11 +23,14 @@ export default function AudioMessage({ uri, tint }: Props) {
   const [posMs, setPosMs] = useState(0);
   const [durMs, setDurMs] = useState(0);
 
+  // Unload on unmount AND whenever the source uri changes (FlatList recycles
+  // bubbles, so a stale Sound would otherwise leak when the row is reused).
   useEffect(() => {
     return () => {
       soundRef.current?.unloadAsync();
+      soundRef.current = null;
     };
-  }, []);
+  }, [uri]);
 
   const onStatus = (st: AVPlaybackStatus) => {
     if (!st.isLoaded) return;

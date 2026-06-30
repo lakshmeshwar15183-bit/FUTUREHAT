@@ -101,6 +101,9 @@ export default function ConversationsScreen() {
     return body;
   };
 
+  // Stable separator so the list doesn't rebuild every separator each render.
+  const Separator = useCallback(() => <View style={styles.sep} />, [styles]);
+
   const renderItem = ({ item }: { item: ConversationSummary }) => (
     <Pressable
       style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
@@ -144,7 +147,10 @@ export default function ConversationsScreen() {
         keyExtractor={(c) => c.conversation.id}
         renderItem={renderItem}
         keyboardShouldPersistTaps="handled"
-        ItemSeparatorComponent={() => <View style={styles.sep} />}
+        initialNumToRender={14}
+        maxToRenderPerBatch={12}
+        windowSize={11}
+        ItemSeparatorComponent={Separator}
         ListHeaderComponent={
           <View>
             <View style={styles.searchBar}>

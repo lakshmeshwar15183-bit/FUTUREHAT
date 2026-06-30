@@ -18,7 +18,13 @@ export default function PollCard({ poll, votes, myUserId, onVote }: Props) {
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
   const total = votes.length;
-  const countFor = (i: number) => votes.filter((v) => v.option_index === i).length;
+  // Tally once per votes/options change instead of filtering the whole vote
+  // array for every option on every render.
+  const counts = useMemo(() => {
+    const c = new Array(poll.options.length).fill(0);
+    for (const v of votes) if (v.option_index >= 0 && v.option_index < c.length) c[v.option_index] += 1;
+    return c;
+  }, [votes, poll.options.length]);
   const mine = useMemo(
     () => new Set(votes.filter((v) => v.user_id === myUserId).map((v) => v.option_index)),
     [votes, myUserId],
@@ -33,7 +39,7 @@ export default function PollCard({ poll, votes, myUserId, onVote }: Props) {
       <Text style={styles.question}>{poll.question}</Text>
 
       {poll.options.map((opt, i) => {
-        const c = countFor(i);
+        const c = counts[i];
         const pct = total ? Math.round((c / total) * 100) : 0;
         const chosen = mine.has(i);
         return (

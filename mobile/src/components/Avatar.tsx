@@ -1,6 +1,9 @@
 // FUTUREHAT mobile — circular avatar with graceful initials fallback.
 import React from 'react';
-import { Image, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
+// expo-image gives memory+disk caching so avatars in long lists aren't re-fetched
+// on every scroll (a major scroll-jank source with react-native's <Image>).
+import { Image } from 'expo-image';
 
 interface Props {
   uri?: string | null;
@@ -23,10 +26,19 @@ function colorFor(name?: string | null): string {
   return PALETTE[h];
 }
 
-export default function Avatar({ uri, name, size = 48 }: Props) {
+function Avatar({ uri, name, size = 48 }: Props) {
   const dim = { width: size, height: size, borderRadius: size / 2 };
   if (uri) {
-    return <Image source={{ uri }} style={[styles.img, dim]} />;
+    return (
+      <Image
+        source={uri}
+        style={[styles.img, dim]}
+        cachePolicy="memory-disk"
+        contentFit="cover"
+        transition={120}
+        recyclingKey={uri}
+      />
+    );
   }
   return (
     <View style={[styles.fallback, dim, { backgroundColor: colorFor(name) }]}>
@@ -34,6 +46,10 @@ export default function Avatar({ uri, name, size = 48 }: Props) {
     </View>
   );
 }
+
+// Memoized: avatars are rendered in every list row; without this they re-render
+// whenever the parent row does.
+export default React.memo(Avatar);
 
 const styles = StyleSheet.create({
   img: { backgroundColor: '#1F2C33' },

@@ -73,11 +73,15 @@ export default function CommunityDetailScreen() {
     setOwnerId((comm.data as any)?.owner_id ?? null);
   }, [communityId]);
 
-  const filteredMembers = members.filter((m) => {
+  const filteredMembers = useMemo(() => {
     const q = memberQuery.trim().toLowerCase();
-    if (!q) return true;
-    return (m.profile?.display_name || '').toLowerCase().includes(q) || (m.profile?.username || '').toLowerCase().includes(q);
-  });
+    if (!q) return members;
+    return members.filter(
+      (m) =>
+        (m.profile?.display_name || '').toLowerCase().includes(q) ||
+        (m.profile?.username || '').toLowerCase().includes(q),
+    );
+  }, [members, memberQuery]);
   const roleOf = (m: CommunityMember) => (m.user_id === ownerId ? 'Owner' : m.role === 'admin' ? 'Admin' : null);
 
   useFocusEffect(useCallback(() => { navigation.setOptions({ title: name }); load(); }, [load, name, navigation]));

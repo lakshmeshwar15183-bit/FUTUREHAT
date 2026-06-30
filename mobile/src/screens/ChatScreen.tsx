@@ -639,6 +639,7 @@ export default function ChatScreen() {
           reactions={reactionsByMsg.get(msg.id)}
           tick={mine ? receipts.get(msg.id) ?? 'sent' : undefined}
           selected={selectionMode && selectedIds.has(msg.id)}
+          selectionMode={selectionMode}
           onLongPress={() => {
             Haptics.selectionAsync().catch(() => {});
             if (selectionMode) toggleSelect(msg);
@@ -748,6 +749,10 @@ export default function ChatScreen() {
         keyExtractor={(it) => it.id}
         renderItem={renderItem}
         contentContainerStyle={styles.listContent}
+        initialNumToRender={18}
+        maxToRenderPerBatch={12}
+        windowSize={11}
+        updateCellsBatchingPeriod={40}
         onScrollToIndexFailed={(info) => {
           setTimeout(() => {
             try { listRef.current?.scrollToIndex({ index: info.index, animated: true, viewPosition: 0.5 }); } catch { /* give up */ }

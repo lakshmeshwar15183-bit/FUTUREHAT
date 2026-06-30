@@ -37,6 +37,8 @@ interface Props {
   highlight?: string;
   /** This bubble is the active search match (gets a ring). */
   activeMatch?: boolean;
+  /** Whether the chat is in multi-select mode (affects tap behaviour). */
+  selectionMode?: boolean;
 }
 
 /** Split text into <Text> runs, wrapping case-insensitive matches of `term`. */
@@ -69,7 +71,7 @@ function groupReactions(
   return [...map.entries()].map(([emoji, v]) => ({ emoji, count: v.count, mine: v.mine }));
 }
 
-export default function MessageBubble({
+function MessageBubble({
   message,
   mine,
   myId,
@@ -196,6 +198,46 @@ export default function MessageBubble({
     </Pressable>
   );
 }
+
+// Re-render only when something that affects the rendered output changes — NOT
+// when the parent re-renders for unrelated reasons (e.g. every keystroke in the
+// composer). Callback identity is ignored on purpose: their behaviour is fully
+// determined by `selectionMode` (compared below) + stable state setters + the
+// row's own message, so a stale closure can never misbehave.
+function sameReactions(a: MessageReaction[] = [], b: MessageReaction[] = []): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].emoji !== b[i].emoji || a[i].user_id !== b[i].user_id) return false;
+  }
+  return true;
+}
+
+function areEqual(a: Props, b: Props): boolean {
+  if (
+    a.mine !== b.mine ||
+    a.myId !== b.myId ||
+    a.grouped !== b.grouped ||
+    a.selected !== b.selected ||
+    a.selectionMode !== b.selectionMode ||
+    a.tick !== b.tick ||
+    a.activeMatch !== b.activeMatch ||
+    a.highlight !== b.highlight ||
+    a.senderName !== b.senderName
+  ) return false;
+  const m = a.message, n = b.message;
+  if (
+    m.id !== n.id || m.content !== n.content || m.type !== n.type ||
+    m.media_url !== n.media_url || m.is_deleted !== n.is_deleted || m.edited_at !== n.edited_at
+  ) return false;
+  if (
+    (a.replyTo?.id ?? null) !== (b.replyTo?.id ?? null) ||
+    (a.replyTo?.content ?? null) !== (b.replyTo?.content ?? null) ||
+    (a.replyTo?.is_deleted ?? null) !== (b.replyTo?.is_deleted ?? null)
+  ) return false;
+  return sameReactions(a.reactions, b.reactions);
+}
+
+export default React.memo(MessageBubble, areEqual);
 
 const makeStyles = (colors: Palette) =>
   StyleSheet.create({
