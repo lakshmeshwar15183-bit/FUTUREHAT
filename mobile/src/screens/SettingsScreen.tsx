@@ -7,7 +7,7 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { supabase } from '../lib/supabase';
-import { getCurrentUser, getMyProfile, signOut, getSubscription, isSubscriptionActive } from '../lib/shared';
+import { getCurrentUser, getMyProfile, signOut, getSubscription, isSubscriptionActive, getServerAdmin } from '../lib/shared';
 import type { Profile } from '../lib/shared';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import { APP_NAME, APP_VERSION, CREDIT } from '../branding';
@@ -24,6 +24,7 @@ export default function SettingsScreen() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [uid, setUid] = useState<string | null>(null);
   const [premium, setPremium] = useState(false);
+  const [admin, setAdmin] = useState(false);
 
   useFocusEffect(
     React.useCallback(() => {
@@ -32,6 +33,7 @@ export default function SettingsScreen() {
         setUid(user?.id ?? null);
         setProfile(await getMyProfile(supabase));
         setPremium(isSubscriptionActive(await getSubscription(supabase)));
+        setAdmin(await getServerAdmin(supabase).catch(() => false));
       })();
     }, []),
   );
@@ -55,9 +57,18 @@ export default function SettingsScreen() {
       >
         <Avatar uri={profile?.avatar_url} name={profile?.display_name} size={64} />
         <View style={styles.profileBody}>
-          <Text style={styles.profileName}>{profile?.display_name ?? 'Your name'}</Text>
+          <View style={styles.nameRow}>
+            <Text style={styles.profileName} numberOfLines={1}>{profile?.display_name ?? 'Your name'}</Text>
+            {(premium || admin) && <Text style={styles.plusBadge}>+</Text>}
+            {admin && <Text style={styles.devBadge}>DEV</Text>}
+          </View>
+          {profile?.username ? <Text style={styles.handle} numberOfLines={1}>@{profile.username}</Text> : null}
           <Text style={styles.profileAbout} numberOfLines={1}>
-            {profile?.about || 'Hey there! I am using FUTUREHAT.'}
+            {admin
+              ? `${APP_NAME}+ · Lifetime membership`
+              : premium
+              ? `${APP_NAME}+ member`
+              : profile?.about || 'Hey there! I am using FUTUREHAT.'}
           </Text>
         </View>
         <Ionicons name="chevron-forward" size={22} color={colors.textFaint} />
@@ -66,9 +77,16 @@ export default function SettingsScreen() {
       <Pressable style={styles.premiumCard} onPress={() => navigation.navigate('Premium')}>
         <Ionicons name="diamond" size={26} color={colors.accentPlus} />
         <View style={{ flex: 1, marginLeft: spacing(3) }}>
-          <Text style={styles.premiumTitle}>{APP_NAME}+ {premium ? '· Active' : ''}</Text>
+          <View style={styles.premiumTitleRow}>
+            <Text style={styles.premiumTitle}>{APP_NAME}+{admin ? ' · Lifetime' : premium ? ' · Active' : ''}</Text>
+            {!premium && !admin && <Text style={styles.soonTag}>Available soon</Text>}
+          </View>
           <Text style={styles.premiumSub}>
-            {premium ? 'Thanks for supporting FUTUREHAT' : 'Themes, AI, scheduling & more'}
+            {admin
+              ? 'Developer · lifetime FUTUREHAT+ + Admin'
+              : premium
+              ? 'Thanks for supporting FUTUREHAT'
+              : 'Themes, AI, scheduling & more'}
           </Text>
         </View>
         <Ionicons name="chevron-forward" size={20} color={colors.textFaint} />
@@ -151,8 +169,47 @@ const makeStyles = (colors: Palette) =>
       padding: spacing(4),
     },
     profileBody: { flex: 1, marginLeft: spacing(4) },
-    profileName: { color: colors.text, fontSize: font.title, fontWeight: '600' },
+    nameRow: { flexDirection: 'row', alignItems: 'center' },
+    profileName: { color: colors.text, fontSize: font.title, fontWeight: '600', flexShrink: 1 },
+    handle: { color: colors.textMuted, fontSize: font.small, marginTop: 1 },
     profileAbout: { color: colors.textMuted, fontSize: font.small, marginTop: 2 },
+    plusBadge: {
+      marginLeft: spacing(2),
+      color: '#0b141a',
+      backgroundColor: colors.accentPlus,
+      fontSize: font.tiny,
+      fontWeight: '800',
+      paddingHorizontal: 6,
+      paddingVertical: 1,
+      borderRadius: 5,
+      overflow: 'hidden',
+    },
+    devBadge: {
+      marginLeft: spacing(2),
+      color: '#0b141a',
+      backgroundColor: '#f5b62a',
+      fontSize: font.tiny,
+      fontWeight: '800',
+      letterSpacing: 0.5,
+      paddingHorizontal: 6,
+      paddingVertical: 1,
+      borderRadius: 5,
+      overflow: 'hidden',
+    },
+    premiumTitleRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' },
+    soonTag: {
+      marginLeft: spacing(2),
+      color: '#cfe9ff',
+      backgroundColor: 'rgba(91,110,245,0.18)',
+      borderColor: 'rgba(120,150,255,0.4)',
+      borderWidth: 1,
+      fontSize: font.tiny,
+      fontWeight: '700',
+      paddingHorizontal: 8,
+      paddingVertical: 1,
+      borderRadius: 999,
+      overflow: 'hidden',
+    },
     premiumCard: {
       flexDirection: 'row',
       alignItems: 'center',
