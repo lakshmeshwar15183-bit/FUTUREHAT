@@ -122,7 +122,13 @@ export function subscribeToCallStatus(
 
 // ── WebRTC signaling over a broadcast channel ────────────────────────────────
 
-export type SignalKind = 'offer' | 'answer' | 'candidate' | 'bye';
+// 'ready' is the handshake heartbeat: the callee broadcasts it once its signaling
+// subscription is truly live, so the caller knows a peer is actually listening
+// before it sends the SDP offer. Supabase broadcast does NOT replay messages to
+// late subscribers, so without this the offer (sent on a blind timer) was lost
+// whenever the callee hadn't subscribed yet — which, for a human-accepted ring,
+// is always. See createSignalingChannel's onReady hook.
+export type SignalKind = 'ready' | 'offer' | 'answer' | 'candidate' | 'bye';
 export interface SignalMessage {
   kind: SignalKind;
   from: UUID;
@@ -139,12 +145,17 @@ export interface SignalingChannel {
 /**
  * Open the signaling channel for a call. Both peers join `call:<id>` and
  * broadcast offer/answer/candidate/bye messages to each other.
+ *
+ * `onReady` fires once THIS peer's subscription is actually live ('SUBSCRIBED').
+ * Only after that is it safe to broadcast — anything sent before then is dropped
+ * by the realtime server. The callee uses this to start its `ready` heartbeat.
  */
 export function createSignalingChannel(
   client: SupabaseClient,
   callId: UUID,
   selfId: UUID,
   onSignal: (msg: SignalMessage) => void,
+  onReady?: () => void,
 ): SignalingChannel {
   const channel = client.channel(`call:${callId}`, {
     config: { broadcast: { self: false } },
@@ -154,7 +165,9 @@ export function createSignalingChannel(
       const msg = payload as SignalMessage;
       if (msg.from !== selfId) onSignal(msg);
     })
-    .subscribe();
+    .subscribe((status) => {
+      if (status === 'SUBSCRIBED') onReady?.();
+    });
 
   return {
     channel,

@@ -39,6 +39,10 @@ async function main() {
   const inChan = cb.channel('calls:incoming').on('postgres_changes',
     { event: 'INSERT', schema: 'public', table: 'calls' }, (p) => { incoming = p.new; });
   await new Promise((res) => inChan.subscribe((s) => s === 'SUBSCRIBED' && res()));
+  // postgres_changes needs the WAL replication stream to warm up after SUBSCRIBED;
+  // in the real app the incoming-call channel is long-lived (opened at startup),
+  // so by call time it's always warm. Give it a moment here to match that.
+  await sleep(2500);
 
   // A creates the call (this is the exact insert behind the call button).
   const call = await ca.from('calls').insert({ conversation_id: convId, caller_id: aId, type: 'video', status: 'ringing' }).select().single();
@@ -77,6 +81,37 @@ async function main() {
   await ca.from('calls').update({ status: 'accepted', answered_at: new Date().toISOString() }).eq('id', callId);
   for (let i = 0; i < 30 && !statusSeen; i++) await sleep(150);
   ok('status UPDATE delivered (accept)', statusSeen?.status === 'accepted', statusSeen ? '' : 'not delivered');
+
+  // ── Regression: the `ready` handshake under REAL timing ─────────────────────
+  // Reproduces the bug we fixed: the callee subscribes to the signaling channel
+  // LATE (a human takes seconds to accept the ring). A blind offer fired on a
+  // timer would be lost. With the handshake, the late callee broadcasts `ready`
+  // once live and the caller (re)sends the offer in response, so it still lands.
+  const rOk = await (async () => {
+    const cid = `${callId}:ready`;
+    const caller = ca.channel(`call:${cid}`, { config: { broadcast: { self: false } } });
+    let callerOffered = false, calleeGotOffer = false;
+    // Caller is subscribed early and only offers when it sees `ready`.
+    caller.on('broadcast', { event: 'signal' }, ({ payload }) => {
+      if (payload.from === aId) return;
+      if (payload.kind === 'ready' && !callerOffered) {
+        callerOffered = true;
+        caller.send({ type: 'broadcast', event: 'signal', payload: { kind: 'offer', from: aId, data: { sdp: 'FAKE' } } });
+      }
+    });
+    await new Promise((r) => caller.subscribe((s) => s === 'SUBSCRIBED' && r()));
+    // Simulate the human-accept delay: blind 800ms offer would already be gone.
+    await sleep(1500);
+    const callee = cb.channel(`call:${cid}`, { config: { broadcast: { self: false } } });
+    callee.on('broadcast', { event: 'signal' }, ({ payload }) => {
+      if (payload.from !== bId && payload.kind === 'offer') calleeGotOffer = true;
+    });
+    await new Promise((r) => callee.subscribe((s) => s === 'SUBSCRIBED' && r()));
+    callee.send({ type: 'broadcast', event: 'signal', payload: { kind: 'ready', from: bId } }); // announce
+    for (let i = 0; i < 30 && !calleeGotOffer; i++) await sleep(150);
+    return calleeGotOffer;
+  })();
+  ok('late callee still gets offer via `ready` handshake', rOk, rOk ? '' : 'offer never reached late subscriber');
 
   done();
 }

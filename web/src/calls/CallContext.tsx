@@ -106,11 +106,27 @@ export function CallProvider({ children }: { children: ReactNode }) {
   const remoteAudio = useRef<HTMLAudioElement | null>(null);
   const durationTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const accepting = useRef(false); // guards against a double-tap on Accept
+  // ── Handshake state (mirrors the mobile engine for parity & reliability) ──
+  // Caller caches its offer and re-sends on every `ready`; callee caches its
+  // answer and re-sends on a duplicate offer; both buffer ICE candidates that
+  // arrive before the remote description is set (else addIceCandidate throws and
+  // the candidate is lost). This removes the broadcast-timing races entirely.
+  const cachedOffer = useRef<RTCSessionDescriptionInit | null>(null);
+  const cachedAnswer = useRef<RTCSessionDescriptionInit | null>(null);
+  const answered = useRef(false);
+  const offerHandled = useRef(false);
+  const pendingCandidates = useRef<RTCIceCandidateInit[]>([]);
+  const readyTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const readyTicks = useRef(0);
 
   // ── teardown ──────────────────────────────────────────────────────────────
   const cleanup = useCallback(() => {
     if (durationTimer.current) { clearInterval(durationTimer.current); durationTimer.current = null; }
     if (hideTimer.current) { clearTimeout(hideTimer.current); hideTimer.current = null; }
+    if (readyTimer.current) { clearInterval(readyTimer.current); readyTimer.current = null; }
+    cachedOffer.current = null; cachedAnswer.current = null;
+    answered.current = false; offerHandled.current = false;
+    pendingCandidates.current = []; readyTicks.current = 0;
     try { signaling.current?.send({ kind: 'bye', from: myId! }); } catch {}
     signaling.current?.close(); signaling.current = null;
     if (statusChannel.current) { supabase.removeChannel(statusChannel.current); statusChannel.current = null; }
@@ -160,10 +176,23 @@ export function CallProvider({ children }: { children: ReactNode }) {
       if (backdropVideo.current && !localExpanded) backdropVideo.current.srcObject = remote;
     };
     let closed = false; // scoped to this connection — fire endCall at most once
+    let graceTimer: ReturnType<typeof setTimeout> | null = null;
     conn.onconnectionstatechange = () => {
-      if (conn.connectionState === 'connected') startActive();
-      if ((conn.connectionState === 'failed' || conn.connectionState === 'disconnected') && !closed) {
+      const st = conn.connectionState;
+      if (st === 'connected') {
+        if (graceTimer) { clearTimeout(graceTimer); graceTimer = null; } // recovered
+        startActive();
+      } else if (st === 'disconnected') {
+        // Transient blip — give ICE ~12s to recover before tearing down.
+        if (!graceTimer && !closed) {
+          graceTimer = setTimeout(() => {
+            graceTimer = null;
+            if (conn.connectionState !== 'connected' && !closed) { closed = true; endCall(false); }
+          }, 12000);
+        }
+      } else if ((st === 'failed' || st === 'closed') && !closed) {
         closed = true;
+        if (graceTimer) { clearTimeout(graceTimer); graceTimer = null; }
         endCall(false);
       }
     };
@@ -178,24 +207,84 @@ export function CallProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  // Drain ICE candidates that arrived before the remote description was set.
+  async function flushCandidates() {
+    const conn = pc.current;
+    if (!conn) return;
+    for (const c of pendingCandidates.current) {
+      try { await conn.addIceCandidate(new RTCIceCandidate(c)); } catch { /* noop */ }
+    }
+    pendingCandidates.current = [];
+  }
+
+  // Caller: build the offer once, cache it, and (re)send on each `ready`.
+  async function makeOffer() {
+    const conn = pc.current;
+    if (!conn || answered.current) return;
+    if (!cachedOffer.current) {
+      if (conn.signalingState !== 'stable') return; // mid-negotiation; offer already out
+      const offer = await conn.createOffer();
+      await conn.setLocalDescription(offer);
+      cachedOffer.current = offer;
+    }
+    signaling.current?.send({ kind: 'offer', from: myId!, data: cachedOffer.current });
+  }
+
+  function startReadyHeartbeat() {
+    if (readyTimer.current) return;
+    const ping = () => {
+      if (offerHandled.current || readyTicks.current > 12) {
+        if (readyTimer.current) { clearInterval(readyTimer.current); readyTimer.current = null; }
+        return;
+      }
+      readyTicks.current += 1;
+      signaling.current?.send({ kind: 'ready', from: myId! });
+    };
+    ping();
+    readyTimer.current = setInterval(ping, 700);
+  }
+
   function openSignaling(callId: string, type: CallType) {
-    signaling.current = createSignalingChannel(supabase, callId, myId!, async (msg) => {
-      const conn = pc.current;
-      try {
-        if (msg.kind === 'offer' && conn) {
-          await conn.setRemoteDescription(new RTCSessionDescription(msg.data as RTCSessionDescriptionInit));
-          const answer = await conn.createAnswer();
-          await conn.setLocalDescription(answer);
-          signaling.current?.send({ kind: 'answer', from: myId!, data: answer });
-        } else if (msg.kind === 'answer' && conn) {
-          await conn.setRemoteDescription(new RTCSessionDescription(msg.data as RTCSessionDescriptionInit));
-        } else if (msg.kind === 'candidate' && conn) {
-          await conn.addIceCandidate(new RTCIceCandidate(msg.data as RTCIceCandidateInit));
-        } else if (msg.kind === 'bye') {
-          endCall(false);
-        }
-      } catch { /* ignore malformed/late signaling */ }
-    });
+    signaling.current = createSignalingChannel(
+      supabase, callId, myId!,
+      async (msg) => {
+        const conn = pc.current;
+        try {
+          if (msg.kind === 'ready') {
+            if (isCaller.current) await makeOffer();
+          } else if (msg.kind === 'offer' && conn) {
+            // Callee. Re-send cached answer on a duplicate offer; otherwise answer.
+            if (offerHandled.current) {
+              if (cachedAnswer.current) signaling.current?.send({ kind: 'answer', from: myId!, data: cachedAnswer.current });
+              return;
+            }
+            offerHandled.current = true;
+            if (readyTimer.current) { clearInterval(readyTimer.current); readyTimer.current = null; }
+            await conn.setRemoteDescription(new RTCSessionDescription(msg.data as RTCSessionDescriptionInit));
+            await flushCandidates();
+            const answer = await conn.createAnswer();
+            await conn.setLocalDescription(answer);
+            cachedAnswer.current = answer;
+            signaling.current?.send({ kind: 'answer', from: myId!, data: answer });
+          } else if (msg.kind === 'answer' && conn) {
+            // Caller. Accept only the first answer (must be have-local-offer).
+            if (answered.current || conn.signalingState !== 'have-local-offer') return;
+            answered.current = true;
+            await conn.setRemoteDescription(new RTCSessionDescription(msg.data as RTCSessionDescriptionInit));
+            await flushCandidates();
+          } else if (msg.kind === 'candidate' && conn) {
+            // Buffer until the remote description exists, else addIceCandidate throws.
+            if (conn.remoteDescription) await conn.addIceCandidate(new RTCIceCandidate(msg.data as RTCIceCandidateInit));
+            else pendingCandidates.current.push(msg.data as RTCIceCandidateInit);
+          } else if (msg.kind === 'bye') {
+            endCall(false);
+          }
+        } catch { /* ignore malformed/late signaling */ }
+      },
+      // Once OUR channel is live: the callee starts pinging `ready` so the caller
+      // knows to (re)send the offer. The caller waits passively for `ready`.
+      () => { if (!isCaller.current) startReadyHeartbeat(); },
+    );
     void type;
   }
 
@@ -211,13 +300,12 @@ export function CallProvider({ children }: { children: ReactNode }) {
       const stream = await getMedia(type);
       buildPc(stream);
       openSignaling(created.id, type);
-      // Wait for the callee to accept, then send the offer.
+      // The callee announces `ready` once it has accepted and its signaling
+      // subscription is live; makeOffer() (driven by that `ready`) sends the SDP
+      // offer then. We just reflect the accepted state in the UI here.
       statusChannel.current = subscribeToCallStatus(supabase, created.id, async (c) => {
-        if (c.status === 'accepted' && pc.current && pc.current.signalingState === 'stable') {
-          setPhase('connecting');
-          const offer = await pc.current.createOffer();
-          await pc.current.setLocalDescription(offer);
-          signaling.current?.send({ kind: 'offer', from: myId, data: offer });
+        if (c.status === 'accepted') {
+          setPhase((p) => (p === 'outgoing' ? 'connecting' : p));
         } else if (c.status === 'declined' || c.status === 'ended' || c.status === 'missed') {
           endCall(false);
         }

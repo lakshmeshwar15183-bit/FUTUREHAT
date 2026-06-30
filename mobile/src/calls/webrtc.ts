@@ -47,6 +47,20 @@ export class CallSession {
   private pendingCandidates: RTCIceCandidate[] = [];
   private remoteDescSet = false;
   private ended = false;
+  // Handshake state. The caller caches its offer and re-sends it on every `ready`
+  // heartbeat until it receives an answer; the callee caches its answer and
+  // re-sends it if a duplicate offer arrives (covers a lost answer). The callee
+  // pings `ready` until it sees the offer. This makes the SDP exchange resilient
+  // to the broadcast channel dropping messages sent before a peer subscribed.
+  private cachedOffer: unknown = null;
+  private cachedAnswer: unknown = null;
+  private answered = false;
+  private offerHandled = false;
+  private readyTimer: ReturnType<typeof setInterval> | null = null;
+  private readyTicks = 0;
+  // Reconnect grace: a transient 'disconnected' (network blip, handoff) usually
+  // recovers to 'connected' on its own — don't tear the call down instantly.
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   muted = false;
   videoEnabled: boolean;
@@ -98,40 +112,107 @@ export class CallSession {
     };
     (this.pc as any).onconnectionstatechange = () => {
       const st = (this.pc as any)?.connectionState;
-      if (st === 'connected') this.cb.onConnected();
-      if (st === 'failed' || st === 'closed' || st === 'disconnected') this.end(false);
+      if (st === 'connected') {
+        // Recovered (or first connect) — cancel any pending reconnect teardown.
+        if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
+        this.cb.onConnected();
+      } else if (st === 'disconnected') {
+        // Give ICE ~12s to recover on its own before ending the call.
+        if (!this.reconnectTimer && !this.ended) {
+          this.reconnectTimer = setTimeout(() => {
+            this.reconnectTimer = null;
+            const cur = (this.pc as any)?.connectionState;
+            if (cur !== 'connected') this.end(false);
+          }, 12000);
+        }
+      } else if (st === 'failed' || st === 'closed') {
+        this.end(false);
+      }
     };
 
-    // 4) Signaling.
-    this.signaling = createSignalingChannel(supabase, this.callId, this.selfId, (msg) =>
-      this.onSignal(msg),
+    // 4) Signaling. onChannelReady fires once OUR subscription is live, so we
+    //    never broadcast into the void.
+    this.signaling = createSignalingChannel(
+      supabase,
+      this.callId,
+      this.selfId,
+      (msg) => this.onSignal(msg),
+      () => this.onChannelReady(),
     );
+    // The caller's offer is now driven by the callee's `ready` heartbeat (see
+    // onSignal), not a blind timer — that timer was the root cause of calls
+    // never connecting (offer sent before the callee had subscribed).
+  }
 
-    // 5) Caller kicks off the offer. Callee waits for it.
-    if (this.isCaller) {
-      // small delay so the callee has time to subscribe to the channel
-      setTimeout(() => this.makeOffer(), 800);
+  // Called when our own signaling subscription goes live.
+  private onChannelReady() {
+    if (this.ended) return;
+    // The callee announces itself and keeps announcing until the offer lands, so
+    // a `ready` lost before the caller subscribed doesn't wedge the call.
+    if (!this.isCaller) this.startReadyHeartbeat();
+  }
+
+  private startReadyHeartbeat() {
+    if (this.readyTimer) return;
+    const ping = () => {
+      if (this.ended || this.offerHandled || this.readyTicks > 12) {
+        this.stopReadyHeartbeat();
+        return;
+      }
+      this.readyTicks += 1;
+      this.signaling?.send({ kind: 'ready', from: this.selfId });
+    };
+    ping();
+    this.readyTimer = setInterval(ping, 700);
+  }
+
+  private stopReadyHeartbeat() {
+    if (this.readyTimer) {
+      clearInterval(this.readyTimer);
+      this.readyTimer = null;
     }
   }
 
+  // Caller: build the offer once, cache it, and (re)broadcast it. Re-sending the
+  // SAME cached SDP on each `ready` is safe and covers a dropped first offer.
   private async makeOffer() {
-    if (!this.pc) return;
-    const offer = await this.pc.createOffer({});
-    await this.pc.setLocalDescription(offer);
-    this.signaling?.send({ kind: 'offer', from: this.selfId, data: offer });
+    if (!this.pc || this.answered) return;
+    if (!this.cachedOffer) {
+      const offer = await this.pc.createOffer({});
+      await this.pc.setLocalDescription(offer);
+      this.cachedOffer = offer;
+    }
+    this.signaling?.send({ kind: 'offer', from: this.selfId, data: this.cachedOffer });
   }
 
   private async onSignal(msg: SignalMessage) {
-    if (!this.pc) return;
+    if (!this.pc || this.ended) return;
     try {
-      if (msg.kind === 'offer') {
+      if (msg.kind === 'ready') {
+        // A peer is listening — send (or re-send) our offer.
+        if (this.isCaller) await this.makeOffer();
+      } else if (msg.kind === 'offer') {
+        // Callee. Ignore duplicate offers once we've answered, but DO re-send our
+        // cached answer in case the first answer was lost.
+        if (this.offerHandled) {
+          if (this.cachedAnswer) {
+            this.signaling?.send({ kind: 'answer', from: this.selfId, data: this.cachedAnswer });
+          }
+          return;
+        }
+        this.offerHandled = true;
+        this.stopReadyHeartbeat();
         await this.pc.setRemoteDescription(new RTCSessionDescription(msg.data as any));
         this.remoteDescSet = true;
         await this.flushCandidates();
         const answer = await this.pc.createAnswer();
         await this.pc.setLocalDescription(answer);
+        this.cachedAnswer = answer;
         this.signaling?.send({ kind: 'answer', from: this.selfId, data: answer });
       } else if (msg.kind === 'answer') {
+        // Caller. Only accept the first answer (state must be have-local-offer).
+        if (this.answered || (this.pc as any).signalingState !== 'have-local-offer') return;
+        this.answered = true;
         await this.pc.setRemoteDescription(new RTCSessionDescription(msg.data as any));
         this.remoteDescSet = true;
         await this.flushCandidates();
@@ -183,6 +264,8 @@ export class CallSession {
   end(sendBye = true) {
     if (this.ended) return;
     this.ended = true;
+    this.stopReadyHeartbeat();
+    if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
     if (sendBye) this.signaling?.send({ kind: 'bye', from: this.selfId });
     try {
       this.localStream?.getTracks().forEach((t) => t.stop());
