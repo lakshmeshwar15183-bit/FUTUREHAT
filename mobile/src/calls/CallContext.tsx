@@ -186,7 +186,9 @@ function ActiveCallView({
       onEnded: () => onHangup(),
     });
     sessionRef.current = session;
-    session.start();
+    // If start() rejects (e.g. mic/camera permission denied) tear the call down
+    // cleanly instead of leaving the call view stuck on "connecting".
+    session.start().catch(() => session.end(false));
 
     // Watch for the far end declining / ending.
     const statusCh = subscribeToCallStatus(supabase, call.callId, (c) => {

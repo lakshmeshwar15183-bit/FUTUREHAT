@@ -93,6 +93,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
   const remoteVideo = useRef<HTMLVideoElement | null>(null);
   const remoteAudio = useRef<HTMLAudioElement | null>(null);
   const durationTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const accepting = useRef(false); // guards against a double-tap on Accept
 
   // ── teardown ──────────────────────────────────────────────────────────────
   const cleanup = useCallback(() => {
@@ -105,7 +106,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
     pc.current?.close(); pc.current = null;
     localStream.current?.getTracks().forEach((t) => t.stop()); localStream.current = null;
     remoteStream.current = null;
-    call.current = null; isCaller.current = false;
+    call.current = null; isCaller.current = false; accepting.current = false;
     setMuted(false); setCamOff(false); setSpeakerOn(true); setDuration(0);
     setLocalExpanded(false); setPip(null);
     setControlsVisible(true); setMinimized(false);
@@ -146,9 +147,13 @@ export function CallProvider({ children }: { children: ReactNode }) {
       if (remoteAudio.current) remoteAudio.current.srcObject = remote;
       if (backdropVideo.current && !localExpanded) backdropVideo.current.srcObject = remote;
     };
+    let closed = false; // scoped to this connection — fire endCall at most once
     conn.onconnectionstatechange = () => {
       if (conn.connectionState === 'connected') startActive();
-      if (conn.connectionState === 'failed' || conn.connectionState === 'disconnected') endCall(false);
+      if ((conn.connectionState === 'failed' || conn.connectionState === 'disconnected') && !closed) {
+        closed = true;
+        endCall(false);
+      }
     };
     pc.current = conn;
     return conn;
@@ -230,7 +235,8 @@ export function CallProvider({ children }: { children: ReactNode }) {
 
   async function accept() {
     const incoming = call.current;
-    if (!incoming || !myId) return;
+    if (!incoming || !myId || accepting.current) return;
+    accepting.current = true;
     setPhase('connecting');
     try {
       const stream = await getMedia(incoming.type);
