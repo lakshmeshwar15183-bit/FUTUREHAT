@@ -22,6 +22,8 @@ interface Props {
   myId?: string | null;
   senderName?: string | null;
   replyTo?: Message | null;
+  /** Tapping the reply preview jumps to the original message. */
+  onReplyPress?: () => void;
   reactions?: MessageReaction[];
   tick?: TickStatus;
   onLongPress?: () => void;
@@ -73,6 +75,7 @@ export default function MessageBubble({
   myId,
   senderName,
   replyTo,
+  onReplyPress,
   reactions = [],
   tick,
   onLongPress,
@@ -118,14 +121,17 @@ export default function MessageBubble({
         {!mine && senderName && !groupedRun && <Text style={styles.sender}>{senderName}</Text>}
 
         {replyTo && (
-          <View style={[styles.reply, { borderLeftColor: colors.primary }]}>
+          <Pressable
+            onPress={onReplyPress}
+            style={[styles.reply, { borderLeftColor: colors.primary }]}
+          >
             <Text style={styles.replyName} numberOfLines={1}>
               {replyTo.is_deleted ? 'Message' : 'Replying to'}
             </Text>
             <Text style={[styles.replyText, { color: mine ? '#cfd9d6' : colors.textMuted }]} numberOfLines={1}>
               {replyTo.type === 'text' ? replyTo.content : `📎 ${replyTo.type}`}
             </Text>
-          </View>
+          </Pressable>
         )}
 
         {message.type === 'image' && message.media_url && (

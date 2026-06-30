@@ -54,6 +54,7 @@ import { uploadMediaFromUri } from '../lib/media';
 import { formatLastSeen, formatDaySeparator } from '../lib/time';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import MessageBubble, { type TickStatus, isVideoUrl } from '../components/MessageBubble';
+import SwipeToReply from '../components/SwipeToReply';
 import MediaViewer, { type ViewerItem } from '../components/MediaViewer';
 import PollCard from '../components/PollCard';
 import { useCalls } from '../calls/CallContext';
@@ -622,26 +623,33 @@ export default function ChatScreen() {
     const replyTo = msg.reply_to ? messages.find((m) => m.id === msg.reply_to) ?? null : null;
     const senderName = isGroup ? peers.find((p) => p.id === msg.sender_id)?.display_name : null;
     return (
-      <MessageBubble
-        message={msg}
-        mine={mine}
-        myId={uid}
-        grouped={item.grouped}
-        senderName={senderName}
-        replyTo={replyTo}
-        reactions={reactionsByMsg.get(msg.id)}
-        tick={mine ? receipts.get(msg.id) ?? 'sent' : undefined}
-        selected={selectionMode && selectedIds.has(msg.id)}
-        onLongPress={() => {
-          Haptics.selectionAsync().catch(() => {});
-          if (selectionMode) toggleSelect(msg);
-          else setSelected(msg);
-        }}
-        onPress={selectionMode ? () => toggleSelect(msg) : undefined}
-        onOpenImage={(url) => (selectionMode ? toggleSelect(msg) : setViewerUrl(url))}
-        highlight={searchActive ? search : ''}
-        activeMatch={msg.id === activeMatchId}
-      />
+      <SwipeToReply
+        enabled={!selectionMode && !msg.is_deleted}
+        tint={colors.primary}
+        onReply={() => { setEditing(null); setReply(msg); }}
+      >
+        <MessageBubble
+          message={msg}
+          mine={mine}
+          myId={uid}
+          grouped={item.grouped}
+          senderName={senderName}
+          replyTo={replyTo}
+          onReplyPress={replyTo ? () => scrollToMessage(replyTo.id) : undefined}
+          reactions={reactionsByMsg.get(msg.id)}
+          tick={mine ? receipts.get(msg.id) ?? 'sent' : undefined}
+          selected={selectionMode && selectedIds.has(msg.id)}
+          onLongPress={() => {
+            Haptics.selectionAsync().catch(() => {});
+            if (selectionMode) toggleSelect(msg);
+            else setSelected(msg);
+          }}
+          onPress={selectionMode ? () => toggleSelect(msg) : undefined}
+          onOpenImage={(url) => (selectionMode ? toggleSelect(msg) : setViewerUrl(url))}
+          highlight={searchActive ? search : ''}
+          activeMatch={msg.id === activeMatchId}
+        />
+      </SwipeToReply>
     );
   };
 
