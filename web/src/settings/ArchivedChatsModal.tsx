@@ -39,7 +39,7 @@ export function ArchivedChatsModal({ onClose, onOpen }: { onClose: () => void; o
   return (
     <motion.div className="modal-backdrop" variants={modalBackdrop} initial="initial" animate="animate" exit="exit" onClick={onClose}>
       <motion.div className="sp-modal" variants={modalPanel} onClick={(e) => e.stopPropagation()}>
-        <button className="modal-close" onClick={onClose}>✕</button>
+        <button className="modal-close" onClick={onClose} aria-label="Close">✕</button>
         <h2 className="sp-title">🗄️ Archived chats</h2>
         <p className="sp-sub">Conversations you’ve tucked away. They stay archived until you unarchive them.</p>
 

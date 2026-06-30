@@ -13,9 +13,11 @@ import { getMyTickets, getBlockedIds, getMutedIds } from '@shared/supportApi';
 import { getMyCommunities } from '@shared/communitiesApi';
 import { modalBackdrop, modalPanel } from '../motion';
 import { APP_VERSION, OWNER } from '../branding';
+import { useEscapeToClose } from '../useEscapeToClose';
 import './DataExportModal.css';
 
 export function DataExportModal({ onClose }: { onClose: () => void }) {
+  useEscapeToClose(onClose);
   const [busy, setBusy] = useState(false);
   const [includeMessages, setIncludeMessages] = useState(true);
   const [status, setStatus] = useState<string | null>(null);
@@ -84,7 +86,7 @@ export function DataExportModal({ onClose }: { onClose: () => void }) {
   return (
     <motion.div className="modal-backdrop" variants={modalBackdrop} initial="initial" animate="animate" exit="exit" onClick={onClose}>
       <motion.div className="export-modal" variants={modalPanel} onClick={(e) => e.stopPropagation()}>
-        <button className="modal-close" onClick={onClose}>✕</button>
+        <button className="modal-close" onClick={onClose} aria-label="Close">✕</button>
         <h2 className="export-title">📦 Export my data</h2>
         <p className="export-desc">
           Download a copy of your FUTUREHAT data — your profile, preferences, subscription,

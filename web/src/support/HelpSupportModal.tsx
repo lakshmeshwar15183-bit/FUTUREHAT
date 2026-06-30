@@ -78,7 +78,7 @@ export function HelpSupportModal({ onClose }: { onClose: () => void }) {
   return (
     <motion.div className="modal-backdrop" variants={modalBackdrop} initial="initial" animate="animate" exit="exit" onClick={onClose}>
       <motion.div className="help-modal glass" variants={modalPanel} onClick={(e) => e.stopPropagation()}>
-        <button className="modal-close" onClick={onClose}>✕</button>
+        <button className="modal-close" onClick={onClose} aria-label="Close">✕</button>
         <h2 className="help-title">🛟 Help &amp; Support</h2>
 
         <div className="help-tabs">

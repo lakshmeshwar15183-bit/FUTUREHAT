@@ -58,7 +58,7 @@ export function StorageSettingsModal({ onClose }: { onClose: () => void }) {
   return (
     <motion.div className="modal-backdrop" variants={modalBackdrop} initial="initial" animate="animate" exit="exit" onClick={onClose}>
       <motion.div className="sp-modal" variants={modalPanel} onClick={(e) => e.stopPropagation()}>
-        <button className="modal-close" onClick={onClose}>✕</button>
+        <button className="modal-close" onClick={onClose} aria-label="Close">✕</button>
         <h2 className="sp-title">💾 Storage &amp; data</h2>
         <p className="sp-sub">Manage local storage and data usage.</p>
 

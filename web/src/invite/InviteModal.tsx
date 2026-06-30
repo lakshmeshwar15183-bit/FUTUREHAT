@@ -8,9 +8,11 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { modalBackdrop, modalPanel } from '../motion';
+import { useEscapeToClose } from '../useEscapeToClose';
 import './InviteModal.css';
 
 export function InviteModal({ onClose, username }: { onClose: () => void; username?: string }) {
+  useEscapeToClose(onClose);
   const [copied, setCopied] = useState(false);
   const origin = typeof window !== 'undefined' ? window.location.origin : 'https://futurehat-app.netlify.app';
   const link = username ? `${origin}/?ref=${encodeURIComponent(username)}` : origin;
@@ -30,7 +32,7 @@ export function InviteModal({ onClose, username }: { onClose: () => void; userna
   return (
     <motion.div className="modal-backdrop" variants={modalBackdrop} initial="initial" animate="animate" exit="exit" onClick={onClose}>
       <motion.div className="invite-modal" variants={modalPanel} onClick={(e) => e.stopPropagation()}>
-        <button className="modal-close" onClick={onClose}>✕</button>
+        <button className="modal-close" onClick={onClose} aria-label="Close">✕</button>
         <h2 className="invite-title">🎉 Invite friends</h2>
         <p className="invite-desc">Share FUTUREHAT with the people you want to chat with.</p>
 

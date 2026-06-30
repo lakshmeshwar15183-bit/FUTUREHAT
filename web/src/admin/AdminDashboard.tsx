@@ -78,7 +78,7 @@ export function AdminDashboard({ onClose }: { onClose: () => void }) {
   return (
     <motion.div className="modal-backdrop" variants={modalBackdrop} initial="initial" animate="animate" exit="exit" onClick={onClose}>
       <motion.div className="admin-modal" variants={modalPanel} onClick={(e) => e.stopPropagation()}>
-        <button className="modal-close" onClick={onClose}>✕</button>
+        <button className="modal-close" onClick={onClose} aria-label="Close">✕</button>
         <h2 className="admin-title">🛡️ Admin dashboard</h2>
 
         {allowed === null ? (

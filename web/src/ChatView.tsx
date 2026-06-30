@@ -603,7 +603,7 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
       <AnimatePresence>
         {summary && (
           <motion.div className="ai-summary" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}>
-            <div className="ai-summary-head"><span>📋 Summary</span><button onClick={() => setSummary(null)}>✕</button></div>
+            <div className="ai-summary-head"><span>📋 Summary</span><button onClick={() => setSummary(null)} aria-label="Close summary">✕</button></div>
             <div className="ai-summary-body">{summary}</div>
           </motion.div>
         )}
@@ -752,7 +752,7 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
         {suggestions.length > 0 && (
           <motion.div className="suggestion-bar" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
             {suggestions.map((s, i) => (<button key={i} className="suggestion-chip" onClick={() => { setInput(s); setSuggestions([]); }}>{s}</button>))}
-            <button className="suggestion-dismiss" onClick={() => setSuggestions([])}>✕</button>
+            <button className="suggestion-dismiss" onClick={() => setSuggestions([])} aria-label="Dismiss suggestions">✕</button>
           </motion.div>
         )}
       </AnimatePresence>
@@ -765,7 +765,7 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
               <div className="compose-banner-title">{editing ? '✎ Editing message' : `↩︎ Replying to ${replyTo && replyTo.sender_id === profile?.id ? 'yourself' : (conversation.participants.find((p) => p.id === replyTo?.sender_id)?.display_name || '')}`}</div>
               <div className="compose-banner-text">{(editing ?? replyTo)?.content || '[media]'}</div>
             </div>
-            <button onClick={() => { setReplyTo(null); setEditing(null); if (editing) setInput(''); }}>✕</button>
+            <button onClick={() => { setReplyTo(null); setEditing(null); if (editing) setInput(''); }} aria-label={editing ? 'Cancel editing' : 'Cancel reply'}>✕</button>
           </motion.div>
         )}
       </AnimatePresence>

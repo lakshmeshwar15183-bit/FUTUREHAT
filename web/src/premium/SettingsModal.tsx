@@ -1,7 +1,7 @@
 // FUTUREHAT — Settings: appearance, privacy, subscription, and app info.
 // Premium-only options are gated inline; selecting one while free opens upgrade.
 
-import { useState, lazy, Suspense } from 'react';
+import { useState, useCallback, lazy, Suspense } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../AuthContext';
 import { usePremium } from '../PremiumContext';
@@ -10,6 +10,7 @@ import { PremiumBadge } from './PremiumBadge';
 import { THEMES, FONTS, BUBBLES, WALLPAPERS, APP_ICONS } from '../theme/themes';
 import { modalBackdrop, modalPanel } from '../motion';
 import { APP_VERSION, OWNER } from '../branding';
+import { useEscapeToClose } from '../useEscapeToClose';
 import './SettingsModal.css';
 
 // Settings sub-panels are lazy-loaded and rendered from within Settings itself.
@@ -36,6 +37,8 @@ export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin }: {
   const { isPremium, isAdmin, preferences, setPreference } = usePremium();
   const { open: openUpgrade } = useUpgrade();
   const [sub, setSub] = useState<SubPanel | null>(null);
+  // Escape closes the open sub-panel first, then the Settings modal itself.
+  useEscapeToClose(useCallback(() => (sub ? setSub(null) : onClose()), [sub, onClose]));
 
   function choose(field: keyof typeof preferences, id: string, premium: boolean) {
     if (premium && !isPremium) return openUpgrade();
@@ -54,7 +57,7 @@ export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin }: {
     <>
     <motion.div className="modal-backdrop" variants={modalBackdrop} initial="initial" animate="animate" exit="exit" onClick={onClose}>
       <motion.div className="settings-modal glass" variants={modalPanel} onClick={(e) => e.stopPropagation()}>
-        <button className="modal-close" onClick={onClose}>✕</button>
+        <button className="modal-close" onClick={onClose} aria-label="Close">✕</button>
         <h2 className="settings-title">⚙️ Settings</h2>
 
         {/* Profile header */}

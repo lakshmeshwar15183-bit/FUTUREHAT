@@ -17,6 +17,7 @@ import {
   sendMessage,
 } from '@shared/api';
 import type { Status, StatusViewer } from '@shared/types';
+import { useEscapeToClose } from './useEscapeToClose';
 import './StatusView.css';
 
 interface Props {
@@ -66,6 +67,10 @@ export function StatusView({ onClose }: Props) {
 
   // Player state
   const [player, setPlayer] = useState<Group | null>(null);
+
+  // Escape closes the tray — but only when no story player is open (the player
+  // has its own Escape handler that returns to the tray first).
+  useEscapeToClose(useCallback(() => { if (!player) onClose(); }, [player, onClose]));
 
   const load = useCallback(async () => {
     const [all, viewed] = await Promise.all([

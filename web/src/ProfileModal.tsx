@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, type FormEvent } from 'react';
 import { useAuth } from './AuthContext';
 import { supabase } from './supabase';
 import { updateMyProfile, uploadAvatar } from '@shared/api';
+import { useEscapeToClose } from './useEscapeToClose';
 import './ProfileModal.css';
 
 interface Props {
@@ -11,6 +12,7 @@ interface Props {
 }
 
 export function ProfileModal({ onClose }: Props) {
+  useEscapeToClose(onClose);
   const { profile, refreshProfile } = useAuth();
   const [displayName, setDisplayName] = useState(profile?.display_name || '');
   const [username, setUsername] = useState(profile?.username || '');
@@ -69,7 +71,7 @@ export function ProfileModal({ onClose }: Props) {
       <div className="modal-card" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <h2>Profile Settings</h2>
-          <button onClick={onClose} className="close-btn">✕</button>
+          <button onClick={onClose} className="close-btn" aria-label="Close">✕</button>
         </div>
 
         <form onSubmit={handleSave} className="profile-form">

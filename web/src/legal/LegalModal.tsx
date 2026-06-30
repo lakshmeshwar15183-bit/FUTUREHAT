@@ -22,7 +22,7 @@ export function LegalModal({ onClose, initial = 'terms' }: { onClose: () => void
   return (
     <motion.div className="modal-backdrop" variants={modalBackdrop} initial="initial" animate="animate" exit="exit" onClick={onClose}>
       <motion.div className="legal-modal" variants={modalPanel} onClick={(e) => e.stopPropagation()}>
-        <button className="modal-close" onClick={onClose}>✕</button>
+        <button className="modal-close" onClick={onClose} aria-label="Close">✕</button>
         <h2 className="legal-title">📄 Legal & policies</h2>
         <div className="legal-tabs">
           <button className={tab === 'terms' ? 'active' : ''} onClick={() => setTab('terms')}>Terms</button>

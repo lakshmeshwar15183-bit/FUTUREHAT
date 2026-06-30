@@ -4,6 +4,7 @@ import { useState, useEffect, type FormEvent } from 'react';
 import { supabase } from './supabase';
 import { searchProfiles, createGroupConversation } from '@shared/api';
 import type { Profile } from '@shared/types';
+import { useEscapeToClose } from './useEscapeToClose';
 import './GroupModal.css';
 
 interface Props {
@@ -12,6 +13,7 @@ interface Props {
 }
 
 export function GroupModal({ onClose, onCreated }: Props) {
+  useEscapeToClose(onClose);
   const [groupName, setGroupName] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Profile[]>([]);
@@ -68,7 +70,7 @@ export function GroupModal({ onClose, onCreated }: Props) {
       <div className="modal-card" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <h2>Create Group Chat</h2>
-          <button onClick={onClose} className="close-btn">✕</button>
+          <button onClick={onClose} className="close-btn" aria-label="Close">✕</button>
         </div>
 
         <form onSubmit={handleCreate} className="group-form">
@@ -98,7 +100,7 @@ export function GroupModal({ onClose, onCreated }: Props) {
               {selectedUsers.map((u) => (
                 <div key={u.id} className="selected-user">
                   {u.display_name || 'Unknown'}
-                  <button type="button" onClick={() => toggleUser(u)}>✕</button>
+                  <button type="button" onClick={() => toggleUser(u)} aria-label={`Remove ${u.display_name || 'user'}`}>✕</button>
                 </div>
               ))}
             </div>
