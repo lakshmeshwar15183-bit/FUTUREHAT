@@ -370,3 +370,32 @@
 .msg-hit-info { min-width: 0; flex: 1; }
 .msg-hit-title { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .msg-hit-snippet { font-size: 13px; color: var(--fh-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ── Sidebar toolbar: robust layout + WhatsApp-style ⋮ overflow menu ─────────
+   The header packs the brand title plus action icons into a fixed 360px sidebar.
+   Allow the title to shrink and the actions to wrap so icons can never be
+   clipped off-screen (which previously hid Settings + Sign out). */
+.sidebar-header h2 {
+  min-width: 0;
+  flex-shrink: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sidebar-actions {
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  row-gap: 4px;
+}
+.header-menu-wrap { position: relative; display: inline-flex; }
+.header-menu {
+  right: 0;
+  left: auto;
+  top: calc(100% + 6px);
+  min-width: 172px;
+  z-index: 40;
+}
+.header-menu button { width: 100%; cursor: pointer; }
+.header-menu button:hover { background: rgba(255, 255, 255, 0.06); }
+.header-menu button.danger { color: #ff6b6b; }

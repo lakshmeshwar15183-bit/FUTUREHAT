@@ -90,13 +90,14 @@ export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin }: {
               <div className="membership-label">
                 Membership {isPremium && <PremiumBadge compact />}
                 {isAdmin && <span className="dev-badge">DEV</span>}
+                {!isPremium && !isAdmin && <span className="soon-tag">FUTUREHAT+ · Available soon</span>}
               </div>
               <div className="membership-sub">
-                {isAdmin ? 'Developer · lifetime FUTUREHAT+ + Admin' : isPremium ? 'FUTUREHAT+ active' : 'Free plan'}
+                {isAdmin ? 'Developer · lifetime FUTUREHAT+ + Admin' : isPremium ? 'FUTUREHAT+ active' : 'Free plan · premium launching soon'}
               </div>
             </div>
             <button className="settings-cta" onClick={openUpgrade}>
-              {isPremium ? 'Manage' : 'Upgrade to +'}
+              {isPremium ? 'Manage' : 'Preview +'}
             </button>
           </div>
           <button className="settings-link" onClick={() => { onClose(); onEditProfile(); }}>

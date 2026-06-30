@@ -20,7 +20,7 @@ import {
 import { FREE_LIMITS } from '@shared/premium/features';
 import type { ConversationSummary, Profile } from '@shared/types';
 import { ChatView } from './ChatView';
-import { StatusIcon, CommunitiesIcon, NewGroupIcon, NewChatIcon, SettingsIcon, SignOutIcon, SearchIcon } from './Icons';
+import { StatusIcon, CommunitiesIcon, NewGroupIcon, NewChatIcon, SettingsIcon, SignOutIcon, SearchIcon, MoreIcon } from './Icons';
 import { format, isToday, isYesterday } from 'date-fns';
 import { listItem, spring } from './motion';
 import './App.css';
@@ -58,6 +58,7 @@ function AppInner() {
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
   const [showHidden, setShowHidden] = useState(false);
   const [menuFor, setMenuFor] = useState<string | null>(null);
+  const [showMenu, setShowMenu] = useState(false); // sidebar "⋮ More" overflow menu
   const [mutedIds, setMutedIds] = useState<Set<string>>(new Set());
   const [blockedIds, setBlockedIds] = useState<Set<string>>(new Set());
 
@@ -236,7 +237,7 @@ function AppInner() {
   }
 
   return (
-    <div className={`app ${selectedConvId ? 'chat-open' : ''}`} onClick={() => setMenuFor(null)}>
+    <div className={`app ${selectedConvId ? 'chat-open' : ''}`} onClick={() => { setMenuFor(null); setShowMenu(false); }}>
       <div className="sidebar">
         <div className="sidebar-header">
           <h2>🎩 FUTUREHAT{isPremium && <PremiumBadge compact />}</h2>
@@ -246,10 +247,34 @@ function AppInner() {
             )}
             <button onClick={() => setShowStatus(true)} className="icon-btn" title="Status" aria-label="Status"><StatusIcon /></button>
             <button onClick={() => setShowCommunities(true)} className="icon-btn" title="Communities" aria-label="Communities"><CommunitiesIcon /></button>
-            <button onClick={() => setShowGroup(true)} className="icon-btn" title="New group" aria-label="New group"><NewGroupIcon /></button>
             <button onClick={() => setShowSearch(!showSearch)} className="icon-btn" title="New chat" aria-label="New chat"><NewChatIcon /></button>
             <button onClick={() => setShowSettings(true)} className="icon-btn" title="Settings" aria-label="Settings"><SettingsIcon /></button>
-            <button onClick={() => signOut(supabase)} className="icon-btn" title="Sign out" aria-label="Sign out"><SignOutIcon /></button>
+            <div className="header-menu-wrap">
+              <button
+                className="icon-btn"
+                onClick={(e) => { e.stopPropagation(); setShowMenu((v) => !v); }}
+                title="Menu"
+                aria-label="More options"
+                aria-haspopup="menu"
+                aria-expanded={showMenu}
+              ><MoreIcon /></button>
+              <AnimatePresence>
+                {showMenu && (
+                  <motion.div
+                    className="conv-menu header-menu glass"
+                    role="menu"
+                    initial={{ opacity: 0, scale: 0.92, y: -4 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.92, y: -4 }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <button role="menuitem" onClick={() => { setShowMenu(false); setShowGroup(true); }}>New group</button>
+                    <button role="menuitem" onClick={() => { setShowMenu(false); setShowSettings(true); }}>Settings</button>
+                    <button role="menuitem" className="danger" onClick={() => { setShowMenu(false); signOut(supabase); }}>Sign out</button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
           </div>
         </div>
 
