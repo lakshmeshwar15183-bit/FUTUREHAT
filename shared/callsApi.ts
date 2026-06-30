@@ -11,11 +11,42 @@
 import type { SupabaseClient, RealtimeChannel } from '@supabase/supabase-js';
 import type { Call, CallType, CallStatus, UUID } from './types.js';
 
-/** Default ICE servers. Public STUN only — add TURN for production. */
-export const DEFAULT_ICE_SERVERS = [
+export interface IceServer {
+  urls: string | string[];
+  username?: string;
+  credential?: string;
+}
+
+/**
+ * Default ICE servers: public STUN + a free shared TURN (OpenRelay).
+ *
+ * TURN is REQUIRED for calls between peers on different networks/NATs — STUN
+ * alone only works when both peers can reach each other directly (same LAN or
+ * permissive NAT), which is why cross-network mobile calls failed before. The
+ * OpenRelay credentials below are a free, best-effort fallback so calls work
+ * out of the box; for production reliability set your OWN TURN via env
+ * (VITE_TURN_URL/USERNAME/CREDENTIAL on web, EXPO_PUBLIC_TURN_* on mobile) and
+ * pass it through buildIceServers().
+ */
+export const DEFAULT_ICE_SERVERS: IceServer[] = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
+  { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+  { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+  { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
 ];
+
+/**
+ * Build the ICE server list, putting an app-configured TURN (from env) ahead of
+ * the free defaults. Pass `{ urls, username, credential }` read from each
+ * platform's env; falsy/empty urls are ignored.
+ */
+export function buildIceServers(custom?: IceServer | null): IceServer[] {
+  if (custom && custom.urls && (Array.isArray(custom.urls) ? custom.urls.length : true)) {
+    return [custom, ...DEFAULT_ICE_SERVERS];
+  }
+  return DEFAULT_ICE_SERVERS;
+}
 
 export async function createCall(
   client: SupabaseClient,

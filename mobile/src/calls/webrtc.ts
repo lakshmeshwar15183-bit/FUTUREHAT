@@ -14,12 +14,24 @@ import InCallManager from 'react-native-incall-manager';
 import { supabase } from '../lib/supabase';
 import {
   createSignalingChannel,
-  DEFAULT_ICE_SERVERS,
+  buildIceServers,
   type SignalingChannel,
   type SignalMessage,
   type CallType,
   type UUID,
 } from '../lib/shared';
+
+// Optional production TURN from app env (EXPO_PUBLIC_TURN_*). Falls back to the
+// free shared TURN baked into buildIceServers() when unset.
+const ICE_SERVERS = buildIceServers(
+  process.env.EXPO_PUBLIC_TURN_URL
+    ? {
+        urls: process.env.EXPO_PUBLIC_TURN_URL,
+        username: process.env.EXPO_PUBLIC_TURN_USERNAME,
+        credential: process.env.EXPO_PUBLIC_TURN_CREDENTIAL,
+      }
+    : null,
+);
 
 export interface CallCallbacks {
   onLocalStream: (stream: MediaStream) => void;
@@ -73,7 +85,7 @@ export class CallSession {
     InCallManager.setForceSpeakerphoneOn(this.speakerOn);
 
     // 3) Peer connection.
-    this.pc = new RTCPeerConnection({ iceServers: DEFAULT_ICE_SERVERS });
+    this.pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
     this.localStream.getTracks().forEach((t) => this.pc!.addTrack(t, this.localStream!));
 
     (this.pc as any).ontrack = (e: any) => {

@@ -13,10 +13,22 @@ import { useAuth } from '../AuthContext';
 import { supabase } from '../supabase';
 import {
   createCall, updateCallStatus, subscribeToIncomingCalls, subscribeToCallStatus,
-  createSignalingChannel, DEFAULT_ICE_SERVERS, type SignalingChannel,
+  createSignalingChannel, buildIceServers, type SignalingChannel,
 } from '@shared/callsApi';
 import { getProfile } from '@shared/api';
 import type { Call, CallType } from '@shared/types';
+
+// Optional production TURN from build env (VITE_TURN_*). Falls back to the free
+// shared TURN baked into buildIceServers() when unset.
+const ICE_SERVERS = buildIceServers(
+  import.meta.env.VITE_TURN_URL
+    ? {
+        urls: import.meta.env.VITE_TURN_URL,
+        username: import.meta.env.VITE_TURN_USERNAME,
+        credential: import.meta.env.VITE_TURN_CREDENTIAL,
+      }
+    : null,
+);
 import {
   MicIcon, MicOffIcon, VideoIcon, VideoOffIcon, SpeakerIcon, SpeakerOffIcon,
   CameraFlipIcon, EndCallIcon, PhoneIcon, MinimizeIcon, LockIcon,
@@ -135,7 +147,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
   }
 
   function buildPc(stream: MediaStream) {
-    const conn = new RTCPeerConnection({ iceServers: DEFAULT_ICE_SERVERS });
+    const conn = new RTCPeerConnection({ iceServers: ICE_SERVERS });
     stream.getTracks().forEach((t) => conn.addTrack(t, stream));
     conn.onicecandidate = (e) => {
       if (e.candidate) signaling.current?.send({ kind: 'candidate', from: myId!, data: e.candidate.toJSON() });

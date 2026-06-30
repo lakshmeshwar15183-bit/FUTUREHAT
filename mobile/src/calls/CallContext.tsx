@@ -22,6 +22,7 @@ import {
   updateCallStatus,
   subscribeToIncomingCalls,
   subscribeToCallStatus,
+  onAuthChange,
   type Call,
   type CallType,
   type Profile,
@@ -51,8 +52,17 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   const [incoming, setIncoming] = useState<{ call: Call; peer: Profile | null } | null>(null);
   const [active, setActive] = useState<ActiveCall | null>(null);
 
+  // Keep our user id in sync with auth. Fetching once on mount is not enough:
+  // on a cold start the session is restored from storage *after* this provider
+  // mounts, so a one-shot read can latch null forever and silently break calls
+  // ("tap does nothing"). Subscribe to auth changes so uid is always correct.
   useEffect(() => {
-    getCurrentUser(supabase).then((u) => setUid(u?.id ?? null));
+    let alive = true;
+    getCurrentUser(supabase).then((u) => { if (alive) setUid(u?.id ?? null); });
+    const { unsubscribe } = onAuthChange(supabase, (_e, session) => {
+      if (alive) setUid(session?.user?.id ?? null);
+    });
+    return () => { alive = false; unsubscribe(); };
   }, []);
 
   // Listen for incoming calls addressed to my conversations.
@@ -72,9 +82,17 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
 
   const startCall = useCallback(
     async (conversationId: UUID, peer: Profile, type: CallType) => {
-      if (!uid || active) return;
-      const { call } = await createCall(supabase, conversationId, uid, type);
-      if (!call) return;
+      if (active) return;
+      // Resolve our id on demand if the auth subscription hasn't latched yet,
+      // so the very first call right after login still works.
+      const me = uid ?? (await getCurrentUser(supabase))?.id ?? null;
+      if (!me) return;
+      if (!uid) setUid(me); // unblock the in-call render gate ({active && uid})
+      const { call, error } = await createCall(supabase, conversationId, me, type);
+      if (!call) {
+        console.warn('[call] createCall failed:', error?.message);
+        return;
+      }
       setActive({ callId: call.id, conversationId, peer, type, isCaller: true });
     },
     [uid, active],
