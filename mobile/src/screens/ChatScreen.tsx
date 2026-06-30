@@ -53,7 +53,7 @@ import type { Message, MessageReaction, Profile, ConversationSummary, Poll, Poll
 import { uploadMediaFromUri } from '../lib/media';
 import { formatLastSeen, formatDaySeparator } from '../lib/time';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
-import MessageBubble, { type TickStatus, isVideoUrl } from '../components/MessageBubble';
+import MessageBubble, { type TickStatus, isVideoUrl, replySummary } from '../components/MessageBubble';
 import SwipeToReply from '../components/SwipeToReply';
 import MediaViewer, { type ViewerItem } from '../components/MediaViewer';
 import PollCard from '../components/PollCard';
@@ -64,6 +64,10 @@ type Nav = NativeStackNavigationProp<RootStackParamList, 'Chat'>;
 type Rt = RouteProp<RootStackParamList, 'Chat'>;
 
 const QUICK_EMOJI = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+
+// WhatsApp-style one-line summary for the reply/edit preview bar — delegates to
+// the shared helper so the composer bar and in-bubble quote read identically.
+const previewLabel = (m: Message | null | undefined): string => (m ? replySummary(m) : '');
 
 // The thread renders messages and polls interleaved by time.
 type TimelineItem =
@@ -600,6 +604,22 @@ export default function ChatScreen() {
     return out;
   }, [messages, polls]);
 
+  // Index messages + peers once per data change so each row is an O(1) lookup
+  // instead of an O(n) .find() that ran for every visible bubble on every render.
+  const messageById = useMemo(() => {
+    const m = new Map<string, Message>();
+    for (const msg of messages) m.set(msg.id, msg);
+    return m;
+  }, [messages]);
+  const peerNameById = useMemo(() => {
+    const m = new Map<string, string | null>();
+    for (const p of peers) m.set(p.id, p.display_name);
+    return m;
+  }, [peers]);
+
+  // Plain function (not useCallback): MessageBubble is React.memo'd with a
+  // data-aware comparator that ignores callback identity, so recreating this each
+  // render does NOT re-render the bubbles. The O(1) maps above are the real win.
   const renderItem = ({ item }: { item: TimelineItem }) => {
     if (item.kind === 'day') {
       return (
@@ -620,8 +640,8 @@ export default function ChatScreen() {
     }
     const msg = item.message;
     const mine = msg.sender_id === uid;
-    const replyTo = msg.reply_to ? messages.find((m) => m.id === msg.reply_to) ?? null : null;
-    const senderName = isGroup ? peers.find((p) => p.id === msg.sender_id)?.display_name : null;
+    const replyTo = msg.reply_to ? messageById.get(msg.reply_to) ?? null : null;
+    const senderName = isGroup ? peerNameById.get(msg.sender_id) ?? null : null;
     return (
       <SwipeToReply
         enabled={!selectionMode && !msg.is_deleted}
@@ -767,7 +787,7 @@ export default function ChatScreen() {
           <View style={{ flex: 1 }}>
             <Text style={styles.previewTitle}>{editing ? 'Edit message' : 'Reply'}</Text>
             <Text style={styles.previewText} numberOfLines={1}>
-              {(editing ?? reply)?.content ?? 'Attachment'}
+              {previewLabel(editing ?? reply)}
             </Text>
           </View>
           <Pressable

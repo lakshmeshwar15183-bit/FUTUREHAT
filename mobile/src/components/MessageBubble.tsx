@@ -15,6 +15,15 @@ export type TickStatus = 'sending' | 'sent' | 'delivered' | 'read';
 const VIDEO_RE = /\.(mp4|webm|mov|m4v|ogv|ogg)(\?|#|$)/i;
 export const isVideoUrl = (url?: string | null) => !!url && VIDEO_RE.test(url);
 
+// One-line, type-aware summary of a quoted message (matches the composer preview).
+export function replySummary(m: { type: string; content: string | null; media_url: string | null }): string {
+  if (m.content && m.content.trim()) return m.content;
+  if (m.type === 'image') return /\.gif(\?|#|$)/i.test(m.media_url ?? '') ? '🎞️ GIF' : '📷 Photo';
+  if (m.type === 'audio') return '🎤 Voice message';
+  if (m.type === 'file') return isVideoUrl(m.media_url) ? '🎬 Video' : '📄 Document';
+  return 'Attachment';
+}
+
 interface Props {
   message: Message;
   mine: boolean;
@@ -131,7 +140,7 @@ function MessageBubble({
               {replyTo.is_deleted ? 'Message' : 'Replying to'}
             </Text>
             <Text style={[styles.replyText, { color: mine ? '#cfd9d6' : colors.textMuted }]} numberOfLines={1}>
-              {replyTo.type === 'text' ? replyTo.content : `📎 ${replyTo.type}`}
+              {replyTo.is_deleted ? 'This message was deleted' : replySummary(replyTo)}
             </Text>
           </Pressable>
         )}

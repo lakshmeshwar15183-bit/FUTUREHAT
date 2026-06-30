@@ -32,6 +32,10 @@ export default function CommunitiesScreen() {
       <FlatList
         data={items}
         keyExtractor={(c) => c.id}
+        initialNumToRender={12}
+        maxToRenderPerBatch={10}
+        windowSize={10}
+        removeClippedSubviews
         ListHeaderComponent={
           <Pressable style={styles.newRow} onPress={() => navigation.navigate('CreateCommunity')}>
             <View style={styles.newIcon}>
