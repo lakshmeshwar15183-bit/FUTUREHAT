@@ -32,6 +32,7 @@ const StatusView = lazy(() => import('./StatusView').then((m) => ({ default: m.S
 const SettingsModal = lazy(() => import('./premium/SettingsModal').then((m) => ({ default: m.SettingsModal })));
 const HelpSupportModal = lazy(() => import('./support/HelpSupportModal').then((m) => ({ default: m.HelpSupportModal })));
 const CommunitiesModal = lazy(() => import('./communities/CommunitiesModal').then((m) => ({ default: m.CommunitiesModal })));
+const StarredMessagesModal = lazy(() => import('./StarredMessagesModal').then((m) => ({ default: m.StarredMessagesModal })));
 const AdminDashboard = lazy(() => import('./admin/AdminDashboard').then((m) => ({ default: m.AdminDashboard })));
 const AdminGate = lazy(() => import('./admin/AdminGate').then((m) => ({ default: m.AdminGate })));
 
@@ -53,6 +54,7 @@ function AppInner() {
   const [showSettings, setShowSettings] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [showCommunities, setShowCommunities] = useState(false);
+  const [showStarred, setShowStarred] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
 
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
@@ -270,6 +272,7 @@ function AppInner() {
                     onClick={(e) => e.stopPropagation()}
                   >
                     <button role="menuitem" onClick={() => { setShowMenu(false); setShowGroup(true); }}>New group</button>
+                    <button role="menuitem" onClick={() => { setShowMenu(false); setShowStarred(true); }}>Starred messages</button>
                     <button role="menuitem" onClick={() => { setShowMenu(false); setShowSettings(true); }}>Settings</button>
                     <button role="menuitem" className="danger" onClick={() => { setShowMenu(false); signOut(supabase); }}>Sign out</button>
                   </motion.div>
@@ -436,6 +439,7 @@ function AppInner() {
           {showSettings && <SettingsModal onClose={() => setShowSettings(false)} onEditProfile={() => setShowProfile(true)} onHelp={() => setShowHelp(true)} onAdmin={() => setShowAdmin(true)} />}
           {showHelp && <HelpSupportModal onClose={() => setShowHelp(false)} />}
           {showAdmin && <AdminDashboard onClose={() => setShowAdmin(false)} />}
+          {showStarred && <StarredMessagesModal onClose={() => setShowStarred(false)} onOpenChat={(cid) => setSelectedConvId(cid)} />}
           {showCommunities && (
             <CommunitiesModal
               onClose={() => setShowCommunities(false)}

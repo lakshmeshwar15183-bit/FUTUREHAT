@@ -67,6 +67,23 @@ export interface MessageReaction {
   created_at: string;
 }
 
+// One row from get_starred_messages() (0014): a starred message enriched with
+// sender + conversation context so it can be browsed outside its chat.
+export interface StarredMessage {
+  message_id: UUID;
+  conversation_id: UUID;
+  sender_id: UUID;
+  type: MessageType;
+  content: string | null;
+  media_url: string | null;
+  created_at: string;
+  starred_at: string;
+  sender_name: string | null;
+  sender_avatar: string | null;
+  conversation_type: ConversationType;
+  conversation_title: string | null;
+}
+
 // View-model: a conversation enriched with its other participant(s) + last message
 export interface ConversationSummary {
   conversation: Conversation;
