@@ -41,3 +41,6 @@ coverage/
 
 # Local Netlify folder
 .netlify
+
+# Local release artifacts (APK/AAB) — do not commit binaries
+release/
