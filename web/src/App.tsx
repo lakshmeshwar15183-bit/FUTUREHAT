@@ -33,6 +33,7 @@ const SettingsModal = lazy(() => import('./premium/SettingsModal').then((m) => (
 const HelpSupportModal = lazy(() => import('./support/HelpSupportModal').then((m) => ({ default: m.HelpSupportModal })));
 const CommunitiesModal = lazy(() => import('./communities/CommunitiesModal').then((m) => ({ default: m.CommunitiesModal })));
 const AdminDashboard = lazy(() => import('./admin/AdminDashboard').then((m) => ({ default: m.AdminDashboard })));
+const AdminGate = lazy(() => import('./admin/AdminGate').then((m) => ({ default: m.AdminGate })));
 
 function AppInner() {
   const { profile } = useAuth();
@@ -454,6 +455,7 @@ function AppInner() {
 export function App() {
   return (
     <UpgradeProvider>
+      <Suspense fallback={null}><AdminGate /></Suspense>
       <AppInner />
     </UpgradeProvider>
   );

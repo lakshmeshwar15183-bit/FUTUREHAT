@@ -10,16 +10,19 @@ import {
   getServerPremium,
   getServerAdmin,
   getPreferences,
+  // (getServerOwner imported from adminApi below)
   updatePreferences,
   getPremiumUserIds,
   DEFAULT_PREFERENCES,
 } from '@shared/premiumApi';
+import { getServerOwner } from '@shared/adminApi';
 import type { Subscription, UserPreferences } from '@shared/types';
 import { applyPreferences } from './theme/themes';
 
 interface PremiumContextValue {
   isPremium: boolean;
   isAdmin: boolean;
+  isOwner: boolean;
   subscription: Subscription | null;
   preferences: UserPreferences;
   premiumUserIds: Set<string>;
@@ -35,6 +38,7 @@ function defaultPrefs(userId = ''): UserPreferences {
 const PremiumContext = createContext<PremiumContextValue>({
   isPremium: false,
   isAdmin: false,
+  isOwner: false,
   subscription: null,
   preferences: defaultPrefs(),
   premiumUserIds: new Set(),
@@ -48,6 +52,7 @@ export function PremiumProvider({ children }: { children: ReactNode }) {
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [serverPremium, setServerPremium] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isOwner, setIsOwner] = useState(false);
   const [preferences, setPreferences] = useState<UserPreferences>(defaultPrefs());
   const [premiumUserIds, setPremiumUserIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
@@ -61,21 +66,24 @@ export function PremiumProvider({ children }: { children: ReactNode }) {
       setSubscription(null);
       setServerPremium(false);
       setIsAdmin(false);
+      setIsOwner(false);
       setPreferences(defaultPrefs());
       setPremiumUserIds(new Set());
       setLoading(false);
       return;
     }
-    const [sub, srvPremium, admin, prefs, premiumIds] = await Promise.all([
+    const [sub, srvPremium, admin, owner, prefs, premiumIds] = await Promise.all([
       getSubscription(supabase),
       getServerPremium(supabase),
       getServerAdmin(supabase),
+      getServerOwner(supabase),
       getPreferences(supabase),
       getPremiumUserIds(supabase),
     ]);
     setSubscription(sub);
     setServerPremium(srvPremium);
     setIsAdmin(admin);
+    setIsOwner(owner);
     setPreferences(prefs ?? defaultPrefs(user.id));
     setPremiumUserIds(new Set(premiumIds));
     setLoading(false);
@@ -102,7 +110,7 @@ export function PremiumProvider({ children }: { children: ReactNode }) {
 
   return (
     <PremiumContext.Provider
-      value={{ isPremium, isAdmin, subscription, preferences, premiumUserIds, loading, refresh, setPreference }}
+      value={{ isPremium, isAdmin, isOwner, subscription, preferences, premiumUserIds, loading, refresh, setPreference }}
     >
       {children}
     </PremiumContext.Provider>

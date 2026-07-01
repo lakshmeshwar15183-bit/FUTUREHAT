@@ -1,19 +1,30 @@
-// FUTUREHAT — Admin dashboard: moderation queue (reports + support tickets) and
-// at-a-glance analytics. Gated behind getServerAdmin; all data access is further
-// enforced server-side by the admin RLS policies + admin_stats() in 0009_admin.sql.
+// FUTUREHAT — Owner/Admin dashboard. A responsive tabbed console over the admin
+// RPCs in 0013_owner_admin.sql. Gated behind getServerAdmin; owner-only tabs are
+// additionally hidden unless isOwner AND re-checked server-side by each RPC. The
+// original Overview / Reports / Tickets behavior is preserved intact.
 
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { supabase } from '../supabase';
 import { getServerAdmin } from '@shared/premiumApi';
+import { getServerOwner } from '@shared/adminApi';
 import { modalBackdrop, modalPanel } from '../motion';
+import { AdminUsers } from './AdminUsers';
+import {
+  AdminCalls, AdminMessages, AdminFeatureFlags, AdminAppMgmt,
+  AdminHealth, AdminAudit, AdminSearch,
+} from './AdminOps';
 import './AdminDashboard.css';
 
-type Tab = 'overview' | 'reports' | 'tickets';
+type Tab =
+  | 'overview' | 'users' | 'reports' | 'tickets' | 'calls' | 'messages'
+  | 'search' | 'flags' | 'app' | 'health' | 'audit';
 
 interface Stats {
   users: number; messages: number; conversations: number; communities: number;
   statuses: number; premium_users: number; open_reports: number; open_tickets: number;
+  online_users?: number; dau?: number; mau?: number; new_today?: number;
+  banned_users?: number; total_calls?: number; failed_calls?: number; channels?: number;
 }
 interface ReportRow {
   id: string; reporter_id: string; target_type: string; target_id: string;
@@ -25,18 +36,27 @@ interface TicketRow {
 }
 
 const STAT_CARDS: { key: keyof Stats; label: string; icon: string }[] = [
-  { key: 'users', label: 'Users', icon: '👤' },
+  { key: 'users', label: 'Total users', icon: '👤' },
+  { key: 'online_users', label: 'Online now', icon: '🟢' },
+  { key: 'dau', label: 'DAU', icon: '📅' },
+  { key: 'mau', label: 'MAU', icon: '🗓️' },
+  { key: 'new_today', label: 'New today', icon: '✨' },
+  { key: 'premium_users', label: 'Premium', icon: '✦' },
+  { key: 'banned_users', label: 'Banned', icon: '⛔' },
   { key: 'messages', label: 'Messages', icon: '💬' },
   { key: 'conversations', label: 'Chats', icon: '🗨️' },
   { key: 'communities', label: 'Communities', icon: '🌐' },
+  { key: 'channels', label: 'Channels', icon: '📢' },
   { key: 'statuses', label: 'Live statuses', icon: '📸' },
-  { key: 'premium_users', label: 'Premium', icon: '✦' },
+  { key: 'total_calls', label: 'Total calls', icon: '📞' },
+  { key: 'failed_calls', label: 'Failed calls', icon: '📵' },
   { key: 'open_reports', label: 'Open reports', icon: '🚩' },
   { key: 'open_tickets', label: 'Open tickets', icon: '🎫' },
 ];
 
 export function AdminDashboard({ onClose }: { onClose: () => void }) {
   const [allowed, setAllowed] = useState<boolean | null>(null);
+  const [isOwner, setIsOwner] = useState(false);
   const [tab, setTab] = useState<Tab>('overview');
   const [stats, setStats] = useState<Stats | null>(null);
   const [reports, setReports] = useState<ReportRow[]>([]);
@@ -44,9 +64,9 @@ export function AdminDashboard({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    getServerAdmin(supabase).then((isAdmin) => {
-      setAllowed(isAdmin);
-      if (isAdmin) loadAll();
+    Promise.all([getServerAdmin(supabase), getServerOwner(supabase)]).then(([admin, owner]) => {
+      setAllowed(admin); setIsOwner(owner);
+      if (admin) loadAll();
     });
   }, []);
 
@@ -58,7 +78,7 @@ export function AdminDashboard({ onClose }: { onClose: () => void }) {
 
   async function loadAll() {
     const { data: statData, error: statErr } = await supabase.rpc('admin_stats');
-    if (statErr) setError('Admin backend not provisioned yet (apply migration 0009).');
+    if (statErr) setError('Admin backend not provisioned yet (apply migrations 0009 + 0013).');
     else setStats(statData as Stats);
     const { data: rep } = await supabase.from('reports').select('*').order('created_at', { ascending: false }).limit(100);
     setReports((rep as ReportRow[]) ?? []);
@@ -75,11 +95,25 @@ export function AdminDashboard({ onClose }: { onClose: () => void }) {
     await supabase.from('support_tickets').update({ status }).eq('id', id);
   }
 
+  const TABS: { id: Tab; label: string; ownerOnly?: boolean }[] = [
+    { id: 'overview', label: 'Analytics' },
+    { id: 'users', label: 'Users' },
+    { id: 'reports', label: `Reports${stats ? ` (${stats.open_reports})` : ''}` },
+    { id: 'tickets', label: `Tickets${stats ? ` (${stats.open_tickets})` : ''}` },
+    { id: 'calls', label: 'Calls' },
+    { id: 'messages', label: 'Messages' },
+    { id: 'search', label: 'Search' },
+    { id: 'health', label: 'Database' },
+    { id: 'flags', label: 'Feature Flags', ownerOnly: true },
+    { id: 'app', label: 'App', ownerOnly: true },
+    { id: 'audit', label: 'Audit Log', ownerOnly: true },
+  ];
+
   return (
     <motion.div className="modal-backdrop" variants={modalBackdrop} initial="initial" animate="animate" exit="exit" onClick={onClose}>
-      <motion.div className="admin-modal" variants={modalPanel} onClick={(e) => e.stopPropagation()}>
+      <motion.div className="admin-modal wide" variants={modalPanel} onClick={(e) => e.stopPropagation()}>
         <button className="modal-close" onClick={onClose} aria-label="Close">✕</button>
-        <h2 className="admin-title">🛡️ Admin dashboard</h2>
+        <h2 className="admin-title">🛡️ {isOwner ? 'Owner' : 'Admin'} dashboard</h2>
 
         {allowed === null ? (
           <div className="admin-empty">Checking access…</div>
@@ -88,68 +122,79 @@ export function AdminDashboard({ onClose }: { onClose: () => void }) {
         ) : (
           <>
             <div className="admin-tabs">
-              <button className={tab === 'overview' ? 'active' : ''} onClick={() => setTab('overview')}>Overview</button>
-              <button className={tab === 'reports' ? 'active' : ''} onClick={() => setTab('reports')}>Reports {stats ? `(${stats.open_reports})` : ''}</button>
-              <button className={tab === 'tickets' ? 'active' : ''} onClick={() => setTab('tickets')}>Tickets {stats ? `(${stats.open_tickets})` : ''}</button>
+              {TABS.filter((t) => !t.ownerOnly || isOwner).map((t) => (
+                <button key={t.id} className={tab === t.id ? 'active' : ''} onClick={() => setTab(t.id)}>{t.label}</button>
+              ))}
             </div>
 
             {error && <div className="admin-warn">{error}</div>}
 
-            {tab === 'overview' && (
-              <div className="admin-grid">
-                {STAT_CARDS.map((c) => (
-                  <div key={c.key} className="admin-stat">
-                    <div className="admin-stat-icon">{c.icon}</div>
-                    <div className="admin-stat-num">{stats ? stats[c.key] : '—'}</div>
-                    <div className="admin-stat-label">{c.label}</div>
-                  </div>
-                ))}
-              </div>
-            )}
+            <div className="admin-body">
+              {tab === 'overview' && (
+                <div className="admin-grid">
+                  {STAT_CARDS.map((c) => (
+                    <div key={String(c.key)} className="admin-stat">
+                      <div className="admin-stat-icon">{c.icon}</div>
+                      <div className="admin-stat-num">{stats && stats[c.key] != null ? stats[c.key] : '—'}</div>
+                      <div className="admin-stat-label">{c.label}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
 
-            {tab === 'reports' && (
-              <div className="admin-list">
-                {reports.length === 0 && <div className="admin-empty">No reports.</div>}
-                {reports.map((r) => (
-                  <div key={r.id} className="admin-row">
-                    <div className="admin-row-head">
-                      <span className="admin-tag">{r.target_type}</span>
-                      <span className={`admin-status ${r.status}`}>{r.status}</span>
-                    </div>
-                    <div className="admin-row-title">{r.reason}</div>
-                    {r.details && <div className="admin-row-body">{r.details}</div>}
-                    <div className="admin-row-meta">target {r.target_id.slice(0, 8)} · {new Date(r.created_at).toLocaleString()}</div>
-                    <div className="admin-actions">
-                      <button onClick={() => setReportStatus(r.id, 'reviewing')}>Reviewing</button>
-                      <button onClick={() => setReportStatus(r.id, 'resolved')}>Resolve</button>
-                      <button onClick={() => setReportStatus(r.id, 'dismissed')}>Dismiss</button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+              {tab === 'users' && <AdminUsers isOwner={isOwner} />}
+              {tab === 'calls' && <AdminCalls />}
+              {tab === 'messages' && <AdminMessages />}
+              {tab === 'search' && <AdminSearch />}
+              {tab === 'health' && <AdminHealth />}
+              {tab === 'flags' && isOwner && <AdminFeatureFlags />}
+              {tab === 'app' && isOwner && <AdminAppMgmt />}
+              {tab === 'audit' && isOwner && <AdminAudit />}
 
-            {tab === 'tickets' && (
-              <div className="admin-list">
-                {tickets.length === 0 && <div className="admin-empty">No tickets.</div>}
-                {tickets.map((t) => (
-                  <div key={t.id} className="admin-row">
-                    <div className="admin-row-head">
-                      <span className="admin-tag">{t.kind}</span>
-                      <span className={`admin-status ${t.status}`}>{t.status.replace('_', ' ')}</span>
+              {tab === 'reports' && (
+                <div className="admin-list">
+                  {reports.length === 0 && <div className="admin-empty">No reports.</div>}
+                  {reports.map((r) => (
+                    <div key={r.id} className="admin-row">
+                      <div className="admin-row-head">
+                        <span className="admin-tag">{r.target_type}</span>
+                        <span className={`admin-status ${r.status}`}>{r.status}</span>
+                      </div>
+                      <div className="admin-row-title">{r.reason}</div>
+                      {r.details && <div className="admin-row-body">{r.details}</div>}
+                      <div className="admin-row-meta">target {r.target_id.slice(0, 8)} · {new Date(r.created_at).toLocaleString()}</div>
+                      <div className="admin-actions">
+                        <button onClick={() => setReportStatus(r.id, 'reviewing')}>Reviewing</button>
+                        <button onClick={() => setReportStatus(r.id, 'resolved')}>Resolve</button>
+                        <button onClick={() => setReportStatus(r.id, 'dismissed')}>Dismiss</button>
+                      </div>
                     </div>
-                    <div className="admin-row-title">{t.subject}</div>
-                    <div className="admin-row-body">{t.body}</div>
-                    {t.device_info && <div className="admin-row-meta">📱 {t.device_info}</div>}
-                    <div className="admin-row-meta">{new Date(t.created_at).toLocaleString()}</div>
-                    <div className="admin-actions">
-                      <button onClick={() => setTicketStatus(t.id, 'in_progress')}>In progress</button>
-                      <button onClick={() => setTicketStatus(t.id, 'resolved')}>Resolve</button>
+                  ))}
+                </div>
+              )}
+
+              {tab === 'tickets' && (
+                <div className="admin-list">
+                  {tickets.length === 0 && <div className="admin-empty">No tickets.</div>}
+                  {tickets.map((t) => (
+                    <div key={t.id} className="admin-row">
+                      <div className="admin-row-head">
+                        <span className="admin-tag">{t.kind}</span>
+                        <span className={`admin-status ${t.status}`}>{t.status.replace('_', ' ')}</span>
+                      </div>
+                      <div className="admin-row-title">{t.subject}</div>
+                      <div className="admin-row-body">{t.body}</div>
+                      {t.device_info && <div className="admin-row-meta">📱 {t.device_info}</div>}
+                      <div className="admin-row-meta">{new Date(t.created_at).toLocaleString()}</div>
+                      <div className="admin-actions">
+                        <button onClick={() => setTicketStatus(t.id, 'in_progress')}>In progress</button>
+                        <button onClick={() => setTicketStatus(t.id, 'resolved')}>Resolve</button>
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
-            )}
+                  ))}
+                </div>
+              )}
+            </div>
           </>
         )}
       </motion.div>
