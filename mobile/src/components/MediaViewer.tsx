@@ -76,7 +76,7 @@ function ZoomableImage({ url, onZoomChange }: { url: string; onZoomChange: (zoom
     <GestureDetector gesture={composed}>
       <Animated.View style={styles.page}>
         <Animated.View style={style}>
-          <Image source={{ uri: url }} style={styles.media} contentFit="contain" />
+          <Image source={{ uri: url }} style={styles.media} contentFit="contain" cachePolicy="memory-disk" />
         </Animated.View>
       </Animated.View>
     </GestureDetector>

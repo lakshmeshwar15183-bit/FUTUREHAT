@@ -50,6 +50,18 @@ import {
   messageMatchesKind,
 } from '../lib/shared';
 import type { Message, MessageReaction, Profile, ConversationSummary, Poll, PollVote, SearchKind } from '../lib/shared';
+import {
+  getCachedMessages,
+  cacheMessages,
+  upsertCachedMessage,
+  getCachedConversations,
+  getPendingMessages,
+  enqueueOutbox,
+  getDraft,
+  setDraft,
+  uuidv4,
+} from '../lib/localCache';
+import { flushOutbox, onOutboxSent } from '../lib/sync';
 import { uploadMediaFromUri } from '../lib/media';
 import { formatLastSeen, formatDaySeparator } from '../lib/time';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
@@ -68,6 +80,16 @@ const QUICK_EMOJI = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 // WhatsApp-style one-line summary for the reply/edit preview bar — delegates to
 // the shared helper so the composer bar and in-bubble quote read identically.
 const previewLabel = (m: Message | null | undefined): string => (m ? replySummary(m) : '');
+
+// Merge two message arrays by id (server rows win over optimistic ones with the
+// same id), then sort chronologically for the (inverted) thread. Used to reconcile
+// cache + network + outbox without duplicates.
+function mergeById(primary: Message[], extra: Message[]): Message[] {
+  const map = new Map<string, Message>();
+  for (const m of primary) map.set(m.id, m);
+  for (const m of extra) if (!map.has(m.id)) map.set(m.id, m);
+  return [...map.values()].sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0));
+}
 
 // The thread renders messages and polls interleaved by time.
 type TimelineItem =
@@ -92,6 +114,8 @@ export default function ChatScreen() {
   const [loading, setLoading] = useState(true);
 
   const [peers, setPeers] = useState<Profile[]>([]);
+  const peersRef = useRef<Profile[]>([]);
+  useEffect(() => { peersRef.current = peers; }, [peers]);
   const [isGroup, setIsGroup] = useState(false);
   const [onlineIds, setOnlineIds] = useState<Set<string>>(new Set());
   const [typingName, setTypingName] = useState<string | null>(null);
@@ -172,37 +196,74 @@ export default function ChatScreen() {
   }
 
   // ── Bootstrap: who am I, conversation peers, history ──────────────────────
+  // Local-first: paint cached messages + queued (outbox) messages INSTANTLY with
+  // no network wait or spinner (WhatsApp-style), then reconcile with Supabase in
+  // the background. If we're offline the cached view simply stays.
   useEffect(() => {
     let active = true;
     (async () => {
-      const user = await getCurrentUser(supabase);
+      const user = await getCurrentUser(supabase); // local session read — instant
       if (!active) return;
-      setUid(user?.id ?? null);
+      const myId = user?.id ?? null;
+      setUid(myId);
 
-      const summaries = await getMyConversations(supabase);
-      const summary = summaries.find((s) => s.conversation.id === conversationId);
-      if (summary && active) {
-        setIsGroup(summary.conversation.type === 'group');
-        setPeers(summary.participants.filter((p) => p.id !== user?.id));
+      // 1) INSTANT: cached thread + anything still queued in the outbox.
+      const [cachedMsgs, pending] = await Promise.all([
+        getCachedMessages(conversationId),
+        getPendingMessages(conversationId),
+      ]);
+      if (active && (cachedMsgs.length || pending.length)) {
+        setMsgs(() => mergeById(cachedMsgs, pending));
+        setLoading(false); // never block on the network once we have something
       }
 
-      const msgs = await getMessages(supabase, conversationId, 100);
-      if (!active) return;
-      const ordered = [...msgs].reverse(); // newest last for inverted list
-      setMsgs(() => ordered);
-      setLoading(false);
+      // 2) INSTANT: header peers from the cached conversation list (no network).
+      if (myId) {
+        const cachedConvs = await getCachedConversations(myId);
+        const cs = cachedConvs.find((s) => s.conversation.id === conversationId);
+        if (cs && active) {
+          setIsGroup(cs.conversation.type === 'group');
+          setPeers(cs.participants.filter((p) => p.id !== myId));
+        }
+      }
 
-      const ids = msgs.map((m) => m.id);
-      const [rx, rc] = await Promise.all([getReactions(supabase, ids), getReceipts(supabase, ids)]);
-      if (!active) return;
-      setReactions(rx);
-      applyReceipts(rc);
-      loadPolls().catch(() => {});
+      // 3) BACKGROUND: fetch fresh history, merge with pending, refresh cache.
+      try {
+        const msgs = await getMessages(supabase, conversationId, 100);
+        if (!active) return;
+        const pend = await getPendingMessages(conversationId);
+        setMsgs(() => mergeById(msgs, pend));
+        setLoading(false);
+        cacheMessages(conversationId, msgs).catch(() => {});
 
-      // mark unread incoming as read
-      msgs
-        .filter((m) => m.sender_id !== user?.id)
-        .forEach((m) => markMessageAsRead(supabase, m.id).catch(() => {}));
+        const ids = msgs.map((m) => m.id);
+        const [rx, rc] = await Promise.all([getReactions(supabase, ids), getReceipts(supabase, ids)]);
+        if (!active) return;
+        setReactions(rx);
+        applyReceipts(rc);
+        loadPolls().catch(() => {});
+
+        // mark unread incoming as read
+        msgs
+          .filter((m) => m.sender_id !== myId)
+          .forEach((m) => markMessageAsRead(supabase, m.id).catch(() => {}));
+      } catch {
+        // Offline / transient error: keep the cached view already on screen.
+        if (active) setLoading(false);
+      }
+
+      // Fallback peer resolution if the conversation wasn't in the cache yet
+      // (e.g. opened via a deep link before the Chats tab was visited).
+      if (myId && peersRef.current.length === 0) {
+        try {
+          const summaries = await getMyConversations(supabase);
+          const summary = summaries.find((s) => s.conversation.id === conversationId);
+          if (summary && active) {
+            setIsGroup(summary.conversation.type === 'group');
+            setPeers(summary.participants.filter((p) => p.id !== myId));
+          }
+        } catch { /* offline */ }
+      }
     })();
     return () => {
       active = false;
@@ -230,7 +291,12 @@ export default function ChatScreen() {
       supabase,
       conversationId,
       (incoming) => {
-        setMsgs((prev) => (prev.some((m) => m.id === incoming.id) ? prev : [...prev, incoming]));
+        // Replace any optimistic row sharing this id (offline send confirmed), or
+        // append if new. Keep the local cache in sync so a reopen is instant.
+        setMsgs((prev) => (prev.some((m) => m.id === incoming.id)
+          ? prev.map((m) => (m.id === incoming.id ? incoming : m))
+          : [...prev, incoming]));
+        upsertCachedMessage(conversationId, incoming).catch(() => {});
         if (incoming.sender_id !== uid) {
           markMessageAsRead(supabase, incoming.id).catch(() => {});
         }
@@ -238,6 +304,7 @@ export default function ChatScreen() {
       },
       (updated) => {
         setMsgs((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
+        upsertCachedMessage(conversationId, updated).catch(() => {});
       },
     );
 
@@ -272,6 +339,29 @@ export default function ChatScreen() {
       supabase.removeChannel(tc.channel);
     };
   }, [uid, conversationId, setMsgs, applyReceipts]);
+
+  // Restore a persisted draft when the chat opens.
+  useEffect(() => {
+    getDraft(conversationId).then((d) => { if (d) setText(d); }).catch(() => {});
+  }, [conversationId]);
+
+  // When a queued (offline) message finally sends, swap its optimistic row for
+  // the confirmed server row and flip its tick from clock → sent.
+  useEffect(() => {
+    const off = onOutboxSent((item, sentId) => {
+      if (item.conversationId !== conversationId) return;
+      setReceipts((prev) => {
+        const next = new Map(prev);
+        next.delete(item.tempId);
+        next.set(sentId, 'sent');
+        return next;
+      });
+      // tempId === sentId (we reuse the id), so the row is already correct; just
+      // clear the pending flag so the clock disappears.
+      setMsgs((prev) => prev.map((m) => (m.id === sentId ? { ...m, pending: false } : m)));
+    });
+    return off;
+  }, [conversationId]);
 
   // ── Header (title + presence / typing subtitle) ───────────────────────────
   const peerOnline = peers.some((p) => onlineIds.has(p.id));
@@ -352,6 +442,7 @@ export default function ChatScreen() {
   // ── Compose / send ────────────────────────────────────────────────────────
   function onChangeText(t: string) {
     setText(t);
+    setDraft(conversationId, t).catch(() => {}); // persist draft so it survives close/offline
     typingChannel.current?.notify({ userId: uid ?? '', name: 'Someone', typing: t.length > 0 });
   }
 
@@ -359,6 +450,7 @@ export default function ChatScreen() {
     const body = text.trim();
     if (!body || sending) return;
     setText('');
+    setDraft(conversationId, '').catch(() => {}); // clear persisted draft
     typingChannel.current?.notify({ userId: uid ?? '', name: 'Someone', typing: false });
 
     if (editing) {
@@ -368,16 +460,46 @@ export default function ChatScreen() {
       return;
     }
 
-    setSending(true);
     const replyId = reply?.id;
     setReply(null);
-    const { message } = await sendMessage(supabase, conversationId, body, 'text', undefined, replyId);
-    if (message) {
-      setMsgs((prev) => (prev.some((m) => m.id === message.id) ? prev : [...prev, message]));
-      setReceipts((prev) => new Map(prev).set(message.id, 'sent'));
-    }
-    setSending(false);
+
+    // Optimistic: render the message immediately with a client-generated id and a
+    // "sending" (clock) tick. The SAME id is used for the server insert so the
+    // realtime echo dedupes cleanly.
+    const tempId = uuidv4();
+    const optimistic: Message = {
+      id: tempId,
+      conversation_id: conversationId,
+      sender_id: uid ?? '',
+      type: 'text',
+      content: body,
+      media_url: null,
+      reply_to: replyId ?? null,
+      is_deleted: false,
+      created_at: new Date().toISOString(),
+      edited_at: null,
+      pending: true,
+    };
+    setMsgs((prev) => [...prev, optimistic]);
+    setReceipts((prev) => new Map(prev).set(tempId, 'sending'));
+    upsertCachedMessage(conversationId, optimistic).catch(() => {});
     requestAnimationFrame(() => listRef.current?.scrollToOffset({ offset: 0, animated: true }));
+
+    // Queue durably first so the message survives an app kill, then try to send.
+    await enqueueOutbox({
+      tempId,
+      conversationId,
+      senderId: uid ?? '',
+      content: body,
+      type: 'text',
+      replyTo: replyId,
+      createdAt: optimistic.created_at,
+      attempts: 0,
+    });
+    // flushOutbox sends it (reusing tempId as the row id) and removes it from the
+    // queue on success; the onOutboxSent listener swaps the pending row for the
+    // confirmed one. If offline, it stays queued and auto-sends on reconnect.
+    flushOutbox().catch(() => {});
   }
 
   async function sendMedia(
@@ -397,6 +519,7 @@ export default function ChatScreen() {
       if (message) {
         setMsgs((prev) => (prev.some((m) => m.id === message.id) ? prev : [...prev, message]));
         setReceipts((prev) => new Map(prev).set(message.id, 'sent'));
+        upsertCachedMessage(conversationId, message).catch(() => {}); // keep offline cache warm
       }
     } finally {
       setSending(false);
@@ -657,7 +780,7 @@ export default function ChatScreen() {
           replyTo={replyTo}
           onReplyPress={replyTo ? () => scrollToMessage(replyTo.id) : undefined}
           reactions={reactionsByMsg.get(msg.id)}
-          tick={mine ? receipts.get(msg.id) ?? 'sent' : undefined}
+          tick={mine ? (msg.pending ? 'sending' : receipts.get(msg.id) ?? 'sent') : undefined}
           selected={selectionMode && selectedIds.has(msg.id)}
           selectionMode={selectionMode}
           onLongPress={() => {

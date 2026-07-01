@@ -12,6 +12,7 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { supabase } from './src/lib/supabase';
 import { getCurrentUser, onAuthChange } from './src/lib/shared';
+import { startSync } from './src/lib/sync';
 import { ThemeProvider, useTheme } from './src/theme';
 import { AppLockProvider, useAppLock } from './src/security/AppLock';
 import { CallProvider } from './src/calls/CallContext';
@@ -184,6 +185,8 @@ function RootNavigator() {
 }
 
 export default function App() {
+  // Start background sync + offline outbox flushing for the whole app lifetime.
+  useEffect(() => startSync(), []);
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>

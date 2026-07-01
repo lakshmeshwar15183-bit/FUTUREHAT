@@ -61,9 +61,16 @@ export function onAuthChange(
   return { unsubscribe: data.subscription.unsubscribe };
 }
 
+// Return the signed-in user. Reads the LOCAL session (persisted in
+// AsyncStorage/localStorage) instead of `auth.getUser()`, which makes a network
+// round-trip to /auth/v1/user to re-validate the JWT. Every read path
+// (getMyConversations, getMessages bootstrap, sendMessage, markMessageAsRead…)
+// calls this, so the network hop added 200–800 ms to *every* operation and was a
+// primary cause of the slow chat open. The token is still auto-refreshed by the
+// client, so the local session is current; we only need the user id here.
 export async function getCurrentUser(client: SupabaseClient): Promise<User | null> {
-  const { data } = await client.auth.getUser();
-  return data.user;
+  const { data } = await client.auth.getSession();
+  return data.session?.user ?? null;
 }
 
 // ── Profiles ────────────────────────────────────────────────────────────────
@@ -158,71 +165,91 @@ export async function getMyConversations(
 
   const convIds = myParts.map((p) => p.conversation_id);
 
-  // fetch conversations + participants + last message
-  const { data: convs } = await client.from('conversations').select('*').in('id', convIds);
-  if (!convs) return [];
-
-  const summaries: ConversationSummary[] = [];
-  for (const conv of convs) {
-    const { data: parts } = await client
+  // Batch the "shape" queries: conversations + ALL participant rows for ALL of my
+  // conversations in ONE round-trip each (was N separate participant queries in a
+  // sequential loop — the main reason the chat list took seconds to load).
+  const [convsRes, partsRes] = await Promise.all([
+    client.from('conversations').select('*').in('id', convIds),
+    client
       .from('conversation_participants')
-      .select('user_id')
-      .eq('conversation_id', conv.id);
-    const participantIds = (parts || []).map((p: any) => p.user_id);
-    const { data: profiles } = await client
-      .from('profiles')
-      .select('*')
-      .in('id', participantIds);
+      .select('conversation_id, user_id')
+      .in('conversation_id', convIds),
+  ]);
+  const convs = convsRes.data ?? [];
+  if (!convs.length) return [];
+  const allParts = (partsRes.data ?? []) as { conversation_id: UUID; user_id: UUID }[];
 
-    const { data: lastMsg } = await client
-      .from('messages')
-      .select('*')
-      .eq('conversation_id', conv.id)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    const otherProfiles = (profiles || []).filter((p) => p.id !== user.id);
-    const title =
-      conv.type === 'group'
-        ? conv.name || 'Group'
-        : otherProfiles[0]?.display_name || 'Unknown';
-    const avatarUrl = conv.type === 'group' ? conv.avatar_url : otherProfiles[0]?.avatar_url;
-
-    // Unread = messages from others in this conversation that I haven't read.
-    // Best-effort + clamped: any error or over-count falls back to 0 (never wrong-high).
-    let unreadCount = 0;
-    if (lastMsg && lastMsg.sender_id !== user.id) {
-      try {
-        const [fromOthers, readByMe] = await Promise.all([
-          client
-            .from('messages')
-            .select('id', { count: 'exact', head: true })
-            .eq('conversation_id', conv.id)
-            .neq('sender_id', user.id),
-          client
-            .from('message_receipts')
-            .select('message_id, messages!inner(conversation_id, sender_id)', { count: 'exact', head: true })
-            .eq('user_id', user.id)
-            .eq('status', 'read')
-            .eq('messages.conversation_id', conv.id)
-            .neq('messages.sender_id', user.id),
-        ]);
-        unreadCount = Math.max(0, (fromOthers.count || 0) - (readByMe.count || 0));
-      } catch {
-        unreadCount = 0;
-      }
-    }
-
-    summaries.push({
-      conversation: conv,
-      participants: profiles || [],
-      lastMessage: lastMsg || null,
-      unreadCount,
-      title,
-      avatarUrl,
-    });
+  // One query for every participant profile across all conversations (was N).
+  const userIds = [...new Set(allParts.map((p) => p.user_id))];
+  const { data: profs } = await client.from('profiles').select('*').in('id', userIds);
+  const profById = new Map<UUID, Profile>((profs ?? []).map((p): [UUID, Profile] => [p.id, p as Profile]));
+  const partIdsByConv = new Map<UUID, UUID[]>();
+  for (const p of allParts) {
+    const arr = partIdsByConv.get(p.conversation_id) ?? [];
+    arr.push(p.user_id);
+    partIdsByConv.set(p.conversation_id, arr);
   }
+
+  // Last-message + unread per conversation, now run in PARALLEL across all
+  // conversations instead of sequentially, so total wall-clock is ~1 round-trip
+  // rather than N. Per-conversation logic is unchanged.
+  const summaries = await Promise.all(
+    convs.map(async (conv): Promise<ConversationSummary> => {
+      const participantIds = partIdsByConv.get(conv.id) ?? [];
+      const profiles = participantIds
+        .map((id) => profById.get(id))
+        .filter((p): p is Profile => !!p);
+
+      const { data: lastMsg } = await client
+        .from('messages')
+        .select('*')
+        .eq('conversation_id', conv.id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      const otherProfiles = profiles.filter((p) => p.id !== user.id);
+      const title =
+        conv.type === 'group'
+          ? conv.name || 'Group'
+          : otherProfiles[0]?.display_name || 'Unknown';
+      const avatarUrl = conv.type === 'group' ? conv.avatar_url : otherProfiles[0]?.avatar_url;
+
+      // Unread = messages from others in this conversation that I haven't read.
+      // Best-effort + clamped: any error or over-count falls back to 0 (never wrong-high).
+      let unreadCount = 0;
+      if (lastMsg && lastMsg.sender_id !== user.id) {
+        try {
+          const [fromOthers, readByMe] = await Promise.all([
+            client
+              .from('messages')
+              .select('id', { count: 'exact', head: true })
+              .eq('conversation_id', conv.id)
+              .neq('sender_id', user.id),
+            client
+              .from('message_receipts')
+              .select('message_id, messages!inner(conversation_id, sender_id)', { count: 'exact', head: true })
+              .eq('user_id', user.id)
+              .eq('status', 'read')
+              .eq('messages.conversation_id', conv.id)
+              .neq('messages.sender_id', user.id),
+          ]);
+          unreadCount = Math.max(0, (fromOthers.count || 0) - (readByMe.count || 0));
+        } catch {
+          unreadCount = 0;
+        }
+      }
+
+      return {
+        conversation: conv,
+        participants: profiles,
+        lastMessage: lastMsg || null,
+        unreadCount,
+        title,
+        avatarUrl,
+      };
+    }),
+  );
 
   return summaries.sort((a, b) => {
     const aTime = a.lastMessage?.created_at || a.conversation.created_at;
@@ -325,13 +352,18 @@ export async function sendMessage(
   type: MessageType = 'text',
   mediaUrl?: string,
   replyTo?: UUID,
+  id?: UUID,
 ): Promise<{ message: Message | null; error: Error | null }> {
   const user = await getCurrentUser(client);
   if (!user) return { message: null, error: new Error('not authenticated') };
 
+  // An explicit client-generated `id` lets the app render the message
+  // optimistically and, when the realtime INSERT echoes back, dedupe by the SAME
+  // id — so an offline-queued message never appears twice once it finally sends.
   const { data, error } = await client
     .from('messages')
     .insert({
+      ...(id ? { id } : {}),
       conversation_id: conversationId,
       sender_id: user.id,
       type,

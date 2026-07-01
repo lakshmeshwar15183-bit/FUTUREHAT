@@ -1,7 +1,10 @@
 // FUTUREHAT mobile — a single chat bubble. Handles text/image/video/audio/file,
 // reply preview, reaction chips, edited marker, and delivery ticks.
 import React, { useMemo } from 'react';
-import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+// expo-image (not RN <Image>) so photos are disk-cached — a downloaded image then
+// opens instantly and, crucially, still opens OFFLINE (P3), same as avatars.
+import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 
 import type { Message, MessageReaction } from '../lib/shared';
@@ -147,7 +150,13 @@ function MessageBubble({
 
         {message.type === 'image' && message.media_url && (
           <Pressable onPress={() => onOpenImage?.(message.media_url!)}>
-            <Image source={{ uri: message.media_url }} style={styles.image} />
+            <Image
+              source={message.media_url}
+              style={styles.image}
+              cachePolicy="memory-disk"
+              contentFit="cover"
+              recyclingKey={message.media_url}
+            />
           </Pressable>
         )}
 
@@ -236,7 +245,8 @@ function areEqual(a: Props, b: Props): boolean {
   const m = a.message, n = b.message;
   if (
     m.id !== n.id || m.content !== n.content || m.type !== n.type ||
-    m.media_url !== n.media_url || m.is_deleted !== n.is_deleted || m.edited_at !== n.edited_at
+    m.media_url !== n.media_url || m.is_deleted !== n.is_deleted || m.edited_at !== n.edited_at ||
+    m.pending !== n.pending
   ) return false;
   if (
     (a.replyTo?.id ?? null) !== (b.replyTo?.id ?? null) ||

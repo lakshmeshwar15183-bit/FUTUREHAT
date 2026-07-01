@@ -48,6 +48,9 @@ export interface Message {
   /** Set when this message was forwarded from another chat (see 0011). Optional
    *  so the field is safe before the migration is applied. */
   is_forwarded?: boolean | null;
+  /** Client-only: this is an optimistic/queued message not yet confirmed by the
+   *  server (offline outbox). Never persisted server-side. */
+  pending?: boolean;
 }
 
 export interface MessageReceipt {

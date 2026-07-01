@@ -17,6 +17,8 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { supabase } from '../lib/supabase';
 import { getMyConversations, getCurrentUser, searchAllMessages } from '../lib/shared';
 import type { ConversationSummary, MessageSearchHit } from '../lib/shared';
+import { getCachedConversations, cacheConversations } from '../lib/localCache';
+import { onConnectivity } from '../lib/sync';
 import { formatListTimestamp } from '../lib/time';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import Avatar from '../components/Avatar';
@@ -58,20 +60,43 @@ export default function ConversationsScreen() {
     return () => { alive = false; clearTimeout(t); };
   }, [query, convById]);
 
+  const [offline, setOffline] = useState(false);
+  useEffect(() => onConnectivity((o) => setOffline(!o)), []);
+
+  // Resolve my id, then hydrate the list from the LOCAL cache immediately so the
+  // chat list appears with zero network wait (WhatsApp-style). The Supabase
+  // refresh below runs in the background and overwrites both state and cache.
   useFocusEffect(
     useCallback(() => {
       let alive = true;
-      getCurrentUser(supabase).then((u) => { if (alive) setUid(u?.id ?? null); }).catch(() => {});
+      getCurrentUser(supabase)
+        .then(async (u) => {
+          const id = u?.id ?? null;
+          if (!alive) return;
+          setUid(id);
+          if (id) {
+            const cached = await getCachedConversations(id);
+            if (alive && cached.length) {
+              setItems(cached);
+              setLoading(false); // we have something to show — never block on the network
+            }
+          }
+        })
+        .catch(() => {});
       return () => { alive = false; };
     }, []),
   );
 
+  // Background sync: refresh from Supabase, update the UI, and rewrite the cache.
+  // On failure (e.g. offline) we keep whatever the cache already gave us.
   const load = useCallback(async () => {
     try {
       const data = await getMyConversations(supabase);
       setItems(data);
+      const u = await getCurrentUser(supabase);
+      if (u?.id) cacheConversations(u.id, data).catch(() => {});
     } catch {
-      // keep last known list on transient errors
+      // keep last known (cached) list on transient errors / offline
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -142,6 +167,12 @@ export default function ConversationsScreen() {
 
   return (
     <View style={styles.container}>
+      {offline && (
+        <View style={styles.offlineBar}>
+          <Ionicons name="cloud-offline-outline" size={14} color="#fff" />
+          <Text style={styles.offlineText}>Offline — showing saved chats</Text>
+        </View>
+      )}
       <FlatList
         data={filteredItems}
         keyExtractor={(c) => c.conversation.id}
@@ -232,6 +263,11 @@ export default function ConversationsScreen() {
 const makeStyles = (colors: Palette) =>
   StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.bg },
+    offlineBar: {
+      flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+      backgroundColor: colors.textMuted, paddingVertical: 4,
+    },
+    offlineText: { color: '#fff', fontSize: font.tiny, fontWeight: '600' },
     searchBar: {
       flexDirection: 'row', alignItems: 'center', gap: 8,
       marginHorizontal: spacing(4), marginTop: spacing(2), marginBottom: spacing(2),
