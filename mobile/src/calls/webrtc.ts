@@ -28,6 +28,10 @@ import {
 // types were gathered (host/srflx/relay ⇒ is TURN working?), and where it stalls.
 const clog = (...args: unknown[]) => console.log('[call]', ...args);
 
+// Hard upper bound on reaching 'connected' the first time. ~45s matches a typical
+// ring-then-fail window; past this a call that hasn't connected never will.
+const CONNECT_TIMEOUT_MS = 45000;
+
 // Optional production TURN from app env (EXPO_PUBLIC_TURN_*). Falls back to the
 // free shared TURN baked into buildIceServers() when unset.
 const ICE_SERVERS = buildIceServers(
@@ -68,6 +72,13 @@ export class CallSession {
   // Reconnect grace: a transient 'disconnected' (network blip, handoff) usually
   // recovers to 'connected' on its own — don't tear the call down instantly.
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  // Connect watchdog: a hard upper bound on the *initial* connect. If we never
+  // reach 'connected' (a wedged handshake where the offer/answer is lost, or an
+  // ICE that stalls in 'checking' without ever transitioning to 'failed' — a
+  // known RN-WebRTC Android quirk), NOTHING else would ever fire, leaving the UI
+  // pinned on "Connecting…" forever. This timer guarantees the call instead ENDS
+  // (view unmounts) so the stuck state is impossible. Cleared on first connect.
+  private connectTimer: ReturnType<typeof setTimeout> | null = null;
   // Guard so we only log the first successful connect (onConnected itself is
   // idempotent on the UI side).
   private connectedOnce = false;
@@ -139,6 +150,7 @@ export class CallSession {
     // signal. Listening to both is what actually clears the stuck "Connecting…".
     const markConnected = () => {
       if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
+      if (this.connectTimer) { clearTimeout(this.connectTimer); this.connectTimer = null; }
       if (!this.connectedOnce) { this.connectedOnce = true; clog('✅ CONNECTED'); }
       this.cb.onConnected();
     };
@@ -181,6 +193,21 @@ export class CallSession {
     // The caller's offer is now driven by the callee's `ready` heartbeat (see
     // onSignal), not a blind timer — that timer was the root cause of calls
     // never connecting (offer sent before the callee had subscribed).
+
+    // 5) Connect watchdog — the failsafe that makes a permanently-stuck
+    //    "Connecting…" impossible: if we haven't connected by the deadline, end.
+    this.connectTimer = setTimeout(() => {
+      this.connectTimer = null;
+      if (this.connectedOnce || this.ended) return;
+      clog(
+        '⏱️ connect watchdog expired — never reached connected. states:',
+        'conn=', (this.pc as any)?.connectionState,
+        'ice=', (this.pc as any)?.iceConnectionState,
+        'sig=', (this.pc as any)?.signalingState,
+        '→ ending (no stuck Connecting…)',
+      );
+      this.end(false);
+    }, CONNECT_TIMEOUT_MS);
   }
 
   // A transient 'disconnected' on either state machine: give ICE ~12s to recover
@@ -326,6 +353,7 @@ export class CallSession {
     this.ended = true;
     this.stopReadyHeartbeat();
     if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
+    if (this.connectTimer) { clearTimeout(this.connectTimer); this.connectTimer = null; }
     if (sendBye) this.signaling?.send({ kind: 'bye', from: this.selfId });
     try {
       this.localStream?.getTracks().forEach((t) => t.stop());
