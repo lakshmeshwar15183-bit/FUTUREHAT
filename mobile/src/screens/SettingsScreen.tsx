@@ -75,7 +75,7 @@ export default function SettingsScreen() {
       </Pressable>
 
       <Pressable style={styles.premiumCard} onPress={() => navigation.navigate('Premium')}>
-        <Ionicons name="diamond" size={26} color={colors.accentPlus} />
+        <Ionicons name="diamond" size={26} color={colors.accentPlusText} />
         <View style={{ flex: 1, marginLeft: spacing(3) }}>
           <View style={styles.premiumTitleRow}>
             <Text style={styles.premiumTitle}>{APP_NAME}+{admin ? ' · Lifetime' : premium ? ' · Active' : ''}</Text>
@@ -199,9 +199,11 @@ const makeStyles = (colors: Palette) =>
     premiumTitleRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' },
     soonTag: {
       marginLeft: spacing(2),
-      color: '#cfe9ff',
-      backgroundColor: 'rgba(91,110,245,0.18)',
-      borderColor: 'rgba(120,150,255,0.4)',
+      // Theme-aware: light blue on dark, but a readable dark blue on light (the
+      // old light-blue text washed out on the near-white light-mode surface).
+      color: colors.isLight ? '#2952CC' : '#cfe9ff',
+      backgroundColor: colors.isLight ? 'rgba(91,110,245,0.10)' : 'rgba(91,110,245,0.18)',
+      borderColor: colors.isLight ? 'rgba(41,82,204,0.35)' : 'rgba(120,150,255,0.4)',
       borderWidth: 1,
       fontSize: font.tiny,
       fontWeight: '700',

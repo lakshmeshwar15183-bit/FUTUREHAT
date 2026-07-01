@@ -103,7 +103,7 @@ function MessageBubble({
 }: Props) {
   const colors = useColors();
   const styles = useMemo(() => makeStyles(colors), [colors]);
-  const tint = mine ? '#E9EDEF' : colors.text;
+  const tint = mine ? colors.bubbleOutText : colors.text;
   // Continuation bubbles stack tightly with no tail (WhatsApp grouping).
   const bubbleShape = groupedRun
     ? { borderTopRightRadius: radius.lg, borderTopLeftRadius: radius.lg }
@@ -114,7 +114,7 @@ function MessageBubble({
     return (
       <View style={[styles.wrap, wrapTight, mine ? styles.wrapMine : styles.wrapTheirs, selected && styles.wrapSelected]}>
         <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs, bubbleShape]}>
-          <Text style={[styles.deleted, { color: mine ? '#cfd9d6' : colors.textMuted }]}>
+          <Text style={[styles.deleted, { color: mine ? colors.bubbleOutMuted : colors.textMuted }]}>
             <Ionicons name="ban-outline" size={13} /> This message was deleted
           </Text>
         </View>
@@ -142,7 +142,7 @@ function MessageBubble({
             <Text style={styles.replyName} numberOfLines={1}>
               {replyTo.is_deleted ? 'Message' : 'Replying to'}
             </Text>
-            <Text style={[styles.replyText, { color: mine ? '#cfd9d6' : colors.textMuted }]} numberOfLines={1}>
+            <Text style={[styles.replyText, { color: mine ? colors.bubbleOutMuted : colors.textMuted }]} numberOfLines={1}>
               {replyTo.is_deleted ? 'This message was deleted' : replySummary(replyTo)}
             </Text>
           </Pressable>
@@ -161,7 +161,7 @@ function MessageBubble({
         )}
 
         {message.type === 'audio' && message.media_url && (
-          <AudioMessage uri={message.media_url} tint={mine ? '#E9EDEF' : colors.primary} />
+          <AudioMessage uri={message.media_url} tint={mine ? colors.bubbleOutText : colors.primary} />
         )}
 
         {message.type === 'file' && message.media_url && isVideoUrl(message.media_url) && (
@@ -185,15 +185,15 @@ function MessageBubble({
         )}
 
         <View style={styles.meta}>
-          {message.edited_at && <Text style={styles.edited}>edited</Text>}
-          <Text style={[styles.time, { color: mine ? '#a9c8bf' : colors.textFaint }]}>
+          {message.edited_at && <Text style={[styles.edited, { color: mine ? colors.bubbleOutMuted : colors.textFaint }]}>edited</Text>}
+          <Text style={[styles.time, { color: mine ? colors.bubbleOutMuted : colors.textFaint }]}>
             {formatTime(message.created_at)}
           </Text>
           {mine && tick && (
             <Ionicons
               name={tick === 'sending' ? 'time-outline' : tick === 'sent' ? 'checkmark' : 'checkmark-done'}
               size={15}
-              color={tick === 'read' ? '#53BDEB' : mine ? '#a9c8bf' : colors.textFaint}
+              color={tick === 'read' ? '#53BDEB' : colors.bubbleOutMuted}
               style={{ marginLeft: 3 }}
             />
           )}
@@ -296,7 +296,7 @@ const makeStyles = (colors: Palette) =>
     replyName: { color: colors.primary, fontSize: font.tiny, fontWeight: '700' },
     replyText: { fontSize: font.small },
     meta: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-end', marginTop: 2 },
-    edited: { color: '#a9c8bf', fontSize: 10, marginRight: 4 },
+    edited: { fontSize: 10, marginRight: 4 },
     time: { fontSize: 10 },
     reactions: {
       flexDirection: 'row',

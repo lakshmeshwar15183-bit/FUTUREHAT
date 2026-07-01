@@ -12,12 +12,21 @@ export interface Palette {
   primaryDark: string;
   bubbleOut: string;
   bubbleIn: string;
+  /** Text/muted colors that sit ON the outgoing bubble. These must track the
+   *  bubble fill, NOT the app text color: in light mode bubbleOut is light green,
+   *  so its text has to be DARK (near-white text there is invisible). */
+  bubbleOutText: string;
+  bubbleOutMuted: string;
   text: string;
   textMuted: string;
   textFaint: string;
   border: string;
   danger: string;
+  /** Gold brand accent as a fill/background (bright — dark text sits on it). */
   accentPlus: string;
+  /** Gold accent when used as TEXT/icon on an adaptive surface — dark enough to
+   *  stay readable on white in light mode (bright gold on white fails contrast). */
+  accentPlusText: string;
   /** True on light backgrounds — used to flip status-bar / icon tint. */
   isLight: boolean;
 }
@@ -32,12 +41,15 @@ export const palettes: Record<ThemeMode, Palette> = {
     primaryDark: '#008069',
     bubbleOut: '#005C4B',
     bubbleIn: '#1F2C33',
+    bubbleOutText: '#E9EDEF',
+    bubbleOutMuted: '#B4D2C8',
     text: '#E9EDEF',
     textMuted: '#8696A0',
-    textFaint: '#667781',
+    textFaint: '#8E9CA8',
     border: '#222E35',
     danger: '#F15C6D',
     accentPlus: '#F7C948',
+    accentPlusText: '#F7C948',
     isLight: false,
   },
   light: {
@@ -49,12 +61,20 @@ export const palettes: Record<ThemeMode, Palette> = {
     primaryDark: '#006B5B',
     bubbleOut: '#D9FDD3',
     bubbleIn: '#FFFFFF',
+    // Dark text on the light-green outgoing bubble (WCAG AA on #D9FDD3).
+    bubbleOutText: '#0B1B12',
+    bubbleOutMuted: '#4A6B5F',
     text: '#111B21',
-    textMuted: '#667781',
-    textFaint: '#8696A0',
-    border: '#E2E8ED',
+    // Darkened for WCAG AA: the old #667781/#8696A0 failed 4.5:1 on the #F0F2F5
+    // app background and #8696A0 failed even on white. These pass on both.
+    textMuted: '#55616B',
+    textFaint: '#5C6A73',
+    border: '#D1D9DF',
     danger: '#D11A2A',
-    accentPlus: '#B7791F',
+    // Bright gold on purpose: it is used as a BADGE BACKGROUND with dark text,
+    // so it must stay light enough for that dark text to pass contrast.
+    accentPlus: '#E5A400',
+    accentPlusText: '#8A6A0C',
     isLight: true,
   },
   amoled: {
@@ -66,12 +86,15 @@ export const palettes: Record<ThemeMode, Palette> = {
     primaryDark: '#008069',
     bubbleOut: '#04503F',
     bubbleIn: '#161616',
+    bubbleOutText: '#F5F5F5',
+    bubbleOutMuted: '#AAC0B7',
     text: '#F5F5F5',
     textMuted: '#9AA0A6',
-    textFaint: '#6B7176',
+    textFaint: '#8A9096',
     border: '#1A1A1A',
     danger: '#F15C6D',
     accentPlus: '#F7C948',
+    accentPlusText: '#F7C948',
     isLight: false,
   },
 };

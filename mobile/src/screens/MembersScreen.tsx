@@ -68,5 +68,5 @@ const makeStyles = (colors: Palette) =>
     badge: { backgroundColor: colors.surfaceAlt, borderRadius: radius.pill, paddingHorizontal: spacing(3), paddingVertical: spacing(1) },
     badgeOwner: { backgroundColor: colors.accentPlus + '33' },
     badgeText: { color: colors.textMuted, fontSize: font.tiny, fontWeight: '700' },
-    badgeTextOwner: { color: colors.accentPlus },
+    badgeTextOwner: { color: colors.accentPlusText },
   });

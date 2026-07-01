@@ -78,7 +78,7 @@ export default function PremiumScreen() {
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: spacing(10) }}>
       <View style={styles.hero}>
-        <Ionicons name="diamond" size={48} color={colors.accentPlus} />
+        <Ionicons name="diamond" size={48} color={colors.accentPlusText} />
         <Text style={styles.heroTitle}>{APP_NAME}+</Text>
         <Text style={styles.heroSub}>
           {active ? 'Your premium is active. Enjoy everything.' : 'Unlock the full FUTUREHAT experience.'}
@@ -181,7 +181,7 @@ const makeStyles = (colors: Palette) =>
       borderColor: colors.border,
     },
     planOn: { borderColor: colors.primary },
-    badge: { color: colors.accentPlus, fontSize: font.tiny, fontWeight: '700', textAlign: 'center', marginBottom: 4 },
+    badge: { color: colors.accentPlusText, fontSize: font.tiny, fontWeight: '700', textAlign: 'center', marginBottom: 4 },
     planLabel: { color: colors.textMuted, fontSize: font.body },
     planPrice: { color: colors.text, fontSize: 26, fontWeight: '800', marginTop: 4 },
     planPer: { color: colors.textMuted, fontSize: font.small },
@@ -203,7 +203,7 @@ const makeStyles = (colors: Palette) =>
     featureRow: { flexDirection: 'row', alignItems: 'flex-start', paddingVertical: spacing(2) },
     featureIcon: { fontSize: 20, marginRight: spacing(3), width: 26, textAlign: 'center' },
     featureTitle: { color: colors.text, fontSize: font.body, fontWeight: '600' },
-    soon: { color: colors.accentPlus, fontSize: font.tiny, fontWeight: '700' },
+    soon: { color: colors.accentPlusText, fontSize: font.tiny, fontWeight: '700' },
     featureDesc: { color: colors.textMuted, fontSize: font.small, marginTop: 1 },
     soonPill: { marginTop: 6, backgroundColor: 'rgba(0,0,0,0.18)', borderRadius: radius.pill, paddingHorizontal: spacing(3), paddingVertical: 2 },
     soonPillText: { color: '#000', fontSize: font.tiny, fontWeight: '700' },
