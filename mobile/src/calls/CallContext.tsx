@@ -204,9 +204,13 @@ function ActiveCallView({
       onEnded: () => onHangup(),
     });
     sessionRef.current = session;
-    // If start() rejects (e.g. mic/camera permission denied) tear the call down
-    // cleanly instead of leaving the call view stuck on "connecting".
-    session.start().catch(() => session.end(false));
+    // If start() rejects (e.g. mic/camera permission denied, or the native WebRTC
+    // module failing to init) tear the call down cleanly instead of leaving the
+    // call view stuck on "connecting". Log the reason so it's diagnosable.
+    session.start().catch((e) => {
+      console.log('[call] start() FAILED:', e?.message ?? String(e));
+      session.end(false);
+    });
 
     // Watch for the far end declining / ending.
     const statusCh = subscribeToCallStatus(supabase, call.callId, (c) => {

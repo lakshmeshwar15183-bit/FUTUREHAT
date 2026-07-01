@@ -21,6 +21,13 @@ import {
   type UUID,
 } from '../lib/shared';
 
+// Structured call logging. Every step of the signaling + ICE handshake is logged
+// so the EXACT failing step is visible in `adb logcat` (filter on "[call]"). This
+// is what turns "stuck on Connecting…" from a black box into an observable
+// pipeline: you can see whether the offer/answer crossed, which ICE candidate
+// types were gathered (host/srflx/relay ⇒ is TURN working?), and where it stalls.
+const clog = (...args: unknown[]) => console.log('[call]', ...args);
+
 // Optional production TURN from app env (EXPO_PUBLIC_TURN_*). Falls back to the
 // free shared TURN baked into buildIceServers() when unset.
 const ICE_SERVERS = buildIceServers(
@@ -61,6 +68,9 @@ export class CallSession {
   // Reconnect grace: a transient 'disconnected' (network blip, handoff) usually
   // recovers to 'connected' on its own — don't tear the call down instantly.
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  // Guard so we only log the first successful connect (onConnected itself is
+  // idempotent on the UI side).
+  private connectedOnce = false;
 
   muted = false;
   videoEnabled: boolean;
@@ -78,6 +88,7 @@ export class CallSession {
   }
 
   async start() {
+    clog(this.isCaller ? 'CALLER' : 'CALLEE', 'start()', this.type, 'call', this.callId);
     // 1) Local media with quality constraints.
     this.localStream = (await mediaDevices.getUserMedia({
       // echo-cancellation / noise-suppression aren't in the RN-WebRTC TS types
@@ -103,29 +114,57 @@ export class CallSession {
     this.localStream.getTracks().forEach((t) => this.pc!.addTrack(t, this.localStream!));
 
     (this.pc as any).ontrack = (e: any) => {
+      clog('ontrack', e.track?.kind, 'streams:', e.streams?.length ?? 0);
       if (e.streams && e.streams[0]) this.cb.onRemoteStream(e.streams[0]);
     };
     (this.pc as any).onicecandidate = (e: any) => {
       if (e.candidate) {
+        // Candidate "typ" tells us host/srflx/relay — if we NEVER see a relay
+        // candidate, TURN isn't working (the usual cause of cross-network fails).
+        const c: string = e.candidate.candidate || '';
+        const typ = /typ (\w+)/.exec(c)?.[1] ?? '?';
+        clog('local ICE candidate', typ);
         this.signaling?.send({ kind: 'candidate', from: this.selfId, data: e.candidate });
+      } else {
+        clog('local ICE gathering complete');
       }
+    };
+    (this.pc as any).onicegatheringstatechange = () => {
+      clog('iceGatheringState:', (this.pc as any)?.iceGatheringState);
+    };
+    // Fire "connected" on EITHER the aggregated connectionState OR the ICE
+    // connection state. react-native-webrtc's aggregated `connectionState` is
+    // unreliable on some Android builds (it can stay 'connecting' even after media
+    // flows) — `iceConnectionState` reaching connected/completed is the dependable
+    // signal. Listening to both is what actually clears the stuck "Connecting…".
+    const markConnected = () => {
+      if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
+      if (!this.connectedOnce) { this.connectedOnce = true; clog('✅ CONNECTED'); }
+      this.cb.onConnected();
     };
     (this.pc as any).onconnectionstatechange = () => {
       const st = (this.pc as any)?.connectionState;
+      clog('connectionState:', st);
       if (st === 'connected') {
-        // Recovered (or first connect) — cancel any pending reconnect teardown.
-        if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
-        this.cb.onConnected();
+        markConnected();
       } else if (st === 'disconnected') {
-        // Give ICE ~12s to recover on its own before ending the call.
-        if (!this.reconnectTimer && !this.ended) {
-          this.reconnectTimer = setTimeout(() => {
-            this.reconnectTimer = null;
-            const cur = (this.pc as any)?.connectionState;
-            if (cur !== 'connected') this.end(false);
-          }, 12000);
-        }
+        this.scheduleReconnectTeardown();
       } else if (st === 'failed' || st === 'closed') {
+        clog('connectionState terminal:', st, '→ ending');
+        this.end(false);
+      }
+    };
+    (this.pc as any).oniceconnectionstatechange = () => {
+      const st = (this.pc as any)?.iceConnectionState;
+      clog('iceConnectionState:', st);
+      if (st === 'connected' || st === 'completed') {
+        markConnected();
+      } else if (st === 'disconnected') {
+        this.scheduleReconnectTeardown();
+      } else if (st === 'failed') {
+        // ICE failed: no working candidate pair (commonly dead/blocked TURN on a
+        // symmetric NAT). Surface it instead of hanging on "Connecting…".
+        clog('❌ iceConnectionState failed — no reachable candidate pair (check TURN)');
         this.end(false);
       }
     };
@@ -144,8 +183,26 @@ export class CallSession {
     // never connecting (offer sent before the callee had subscribed).
   }
 
+  // A transient 'disconnected' on either state machine: give ICE ~12s to recover
+  // (network blip / wifi↔cellular handoff) before tearing the call down. Only
+  // ends if BOTH state machines are still not connected when the grace expires.
+  private scheduleReconnectTeardown() {
+    if (this.reconnectTimer || this.ended) return;
+    clog('disconnected — 12s grace before teardown');
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      const cs = (this.pc as any)?.connectionState;
+      const ice = (this.pc as any)?.iceConnectionState;
+      if (cs !== 'connected' && ice !== 'connected' && ice !== 'completed') {
+        clog('reconnect grace expired — ending');
+        this.end(false);
+      }
+    }, 12000);
+  }
+
   // Called when our own signaling subscription goes live.
   private onChannelReady() {
+    clog(this.isCaller ? 'CALLER' : 'CALLEE', 'signaling channel LIVE');
     if (this.ended) return;
     // The callee announces itself and keeps announcing until the offer lands, so
     // a `ready` lost before the caller subscribed doesn't wedge the call.
@@ -182,11 +239,13 @@ export class CallSession {
       await this.pc.setLocalDescription(offer);
       this.cachedOffer = offer;
     }
+    clog('CALLER → offer');
     this.signaling?.send({ kind: 'offer', from: this.selfId, data: this.cachedOffer });
   }
 
   private async onSignal(msg: SignalMessage) {
     if (!this.pc || this.ended) return;
+    clog('signal IN:', msg.kind);
     try {
       if (msg.kind === 'ready') {
         // A peer is listening — send (or re-send) our offer.
@@ -208,6 +267,7 @@ export class CallSession {
         const answer = await this.pc.createAnswer();
         await this.pc.setLocalDescription(answer);
         this.cachedAnswer = answer;
+        clog('CALLEE → answer');
         this.signaling?.send({ kind: 'answer', from: this.selfId, data: answer });
       } else if (msg.kind === 'answer') {
         // Caller. Only accept the first answer (state must be have-local-offer).
