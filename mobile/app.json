@@ -84,13 +84,17 @@
         "expo-build-properties",
         {
           "android": {
+            "compileSdkVersion": 35,
+            "targetSdkVersion": 35,
             "enableProguardInReleaseBuilds": true,
             "enableShrinkResourcesInReleaseBuilds": true
           }
         }
       ],
       "@config-plugins/react-native-webrtc",
-      "./plugins/withReleaseSigning"
+      "./plugins/withReleaseSigning",
+      "expo-asset",
+      "expo-font"
     ]
   }
 }
