@@ -19,7 +19,7 @@ import {
 import type { Channel, CommunityEvent, CommunityMember } from '../lib/shared';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import Avatar from '../components/Avatar';
-import InputModal, { type Field } from '../components/InputModal';
+import EventComposerModal, { type EventDraft } from '../components/EventComposerModal';
 import type { RootStackParamList } from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'CommunityDetail'>;
@@ -32,12 +32,6 @@ const CHANNEL_KINDS: { kind: Channel['kind']; label: string; icon: keyof typeof 
   { kind: 'announcement', label: 'Announcement', icon: 'megaphone' },
   { kind: 'broadcast', label: 'Broadcast', icon: 'radio' },
 ];
-const EVENT_FIELDS: Field[] = [
-  { key: 'title', placeholder: 'Event title' },
-  { key: 'location', placeholder: 'Location (optional)' },
-  { key: 'when', placeholder: 'When — YYYY-MM-DD HH:mm', initial: '' },
-];
-
 function formatWhen(iso: string): string {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return iso;
@@ -119,18 +113,13 @@ export default function CommunityDetailScreen() {
     load();
   }
 
-  async function addEvent(values: Record<string, string>) {
+  async function addEvent(draft: EventDraft) {
     setEventModal(false);
-    const title = values.title?.trim();
-    if (!title) return;
-    const whenRaw = values.when?.trim();
-    const parsed = whenRaw ? new Date(whenRaw.replace(' ', 'T')) : new Date();
-    const startsAt = isNaN(parsed.getTime()) ? new Date().toISOString() : parsed.toISOString();
     const { error } = await createEvent(supabase, {
       communityId,
-      title,
-      location: values.location?.trim() || undefined,
-      startsAt,
+      title: draft.title,
+      location: draft.location || undefined,
+      startsAt: draft.startsAt,
     });
     if (error) {
       Alert.alert('Could not create event', error.message);
@@ -314,11 +303,8 @@ export default function CommunityDetailScreen() {
           </Pressable>
         </Pressable>
       </Modal>
-      <InputModal
+      <EventComposerModal
         visible={eventModal}
-        title="New event"
-        fields={EVENT_FIELDS}
-        submitLabel="Create"
         onCancel={() => setEventModal(false)}
         onSubmit={addEvent}
       />
