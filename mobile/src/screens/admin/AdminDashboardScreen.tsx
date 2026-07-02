@@ -278,6 +278,11 @@ function CallsTab({ colors, styles }: { colors: Palette; styles: Styles }) {
         <View key={c.id} style={styles.compactRow}>
           <Text style={styles.tag}>{c.type}</Text>
           <Text style={styles.rowStatus}>{c.status}</Text>
+          <Text style={styles.rowMeta}>conn: {c.connection_state || '—'}</Text>
+          <Text style={styles.rowMeta}>ICE✗ {c.ice_failures ?? 0}</Text>
+          <Text style={styles.rowMeta}>↻ {c.reconnects ?? 0}</Text>
+          {c.turn_used ? <Text style={styles.rowMeta}>TURN</Text> : null}
+          {c.failure_reason ? <Text style={[styles.rowMeta, { color: colors.danger }]}>{c.failure_reason}</Text> : null}
           <Text style={styles.rowMeta}>{new Date(c.started_at).toLocaleString()}</Text>
         </View>
       ))}
@@ -345,7 +350,7 @@ function SearchTab({ colors, styles }: { colors: Palette; styles: Styles }) {
       {res && (
         <ScrollView contentContainerStyle={styles.listPad}>
           <Text style={styles.subhead}>Users ({res.users.length})</Text>
-          {res.users.map((u) => <View key={u.id} style={styles.compactRow}><Text style={styles.rowTitle}>{u.display_name || u.username}</Text><Text style={styles.rowMeta}>{u.email}</Text></View>)}
+          {res.users.map((u) => <View key={u.id} style={styles.compactRow}><Text style={styles.rowTitle}>{u.display_name || u.username}</Text><Text style={styles.rowMeta}>{u.email}</Text><Text style={styles.rowStatus}>{u.account_status}</Text></View>)}
           <Text style={styles.subhead}>Communities ({res.communities.length})</Text>
           {res.communities.map((c) => <View key={c.id} style={styles.compactRow}><Text style={styles.rowTitle}>{c.name}</Text><MiniBtn label="Delete" danger onPress={() => confirmDelComm(c.id, c.name)} colors={colors} /></View>)}
           <Text style={styles.subhead}>Channels ({res.channels.length})</Text>
@@ -371,6 +376,20 @@ function HealthTab({ colors, styles }: { colors: Palette; styles: Styles }) {
       const p: Record<string, string> = {};
       try { const { error } = await supabase.auth.getSession(); p.auth = error ? 'error' : 'ok'; } catch { p.auth = 'error'; }
       try { const { error } = await supabase.storage.listBuckets(); p.storage = error ? 'error' : 'ok'; } catch { p.storage = 'error'; }
+      // Live realtime probe (SQL can't see channel health) — mirrors web AdminOps.
+      try {
+        const ch = supabase.channel('health-probe-' + Math.random().toString(36).slice(2));
+        await new Promise<void>((res) => {
+          ch.subscribe((st: string) => {
+            if (st === 'SUBSCRIBED' || st === 'CHANNEL_ERROR' || st === 'TIMED_OUT') {
+              p.realtime = st === 'SUBSCRIBED' ? 'ok' : 'error';
+              res();
+            }
+          });
+          setTimeout(res, 4000);
+        });
+        supabase.removeChannel(ch);
+      } catch { p.realtime = 'error'; }
       setProbes(p);
     })();
   }, []);
@@ -380,6 +399,7 @@ function HealthTab({ colors, styles }: { colors: Palette; styles: Styles }) {
     ['DB latency', h ? `${h.latency_ms} ms` : '…'],
     ['Authentication', probes.auth || '…'],
     ['Storage', probes.storage || '…'],
+    ['Realtime', probes.realtime || '…'],
     ['Pending deletions', h ? String(h.pending_deletions) : '…'],
     ['Oldest queued scheduled', h?.oldest_pending_scheduled ? new Date(h.oldest_pending_scheduled).toLocaleString() : 'none'],
   ];
