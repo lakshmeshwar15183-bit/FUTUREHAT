@@ -176,6 +176,7 @@ export default function ChatScreen() {
   // the peer can't see that you've read or are typing. Read via a ref inside
   // realtime callbacks so toggling never needs a re-subscribe (mirrors web).
   const ghostRef = useRef(false);
+  const [ghost, setGhost] = useState(false); // header 👻 indicator mirror of ghostRef
   const typingTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const setMsgs = useCallback((updater: (prev: Message[]) => Message[]) => {
@@ -457,7 +458,7 @@ export default function ChatScreen() {
       headerTitle: () => (
         <Pressable onPress={() => peers[0] && navigation.navigate('Profile', { userId: peers[0].id, conversationId })}>
           <Text style={styles.headerTitle} numberOfLines={1}>
-            {params.title}
+            {ghost ? '👻 ' : ''}{params.title}
           </Text>
           {!!subtitle && <Text style={styles.headerSub}>{subtitle}</Text>}
         </Pressable>
@@ -482,7 +483,7 @@ export default function ChatScreen() {
         </View>
       ),
     });
-  }, [navigation, params.title, subtitle, peers, colors, styles, selectionMode, selectedIds, isGroup]);
+  }, [navigation, params.title, subtitle, peers, colors, styles, selectionMode, selectedIds, isGroup, ghost]);
 
   function placeCall(kind: 'audio' | 'video') {
     // Only reachable from direct chats (call buttons are hidden in groups).
@@ -500,7 +501,7 @@ export default function ChatScreen() {
   // Load ghost mode = premium AND ghost_mode pref (mirrors web `isPremium && prefs.ghost_mode`).
   useEffect(() => {
     Promise.all([getServerPremium(supabase).catch(() => false), getPreferences(supabase).catch(() => null)])
-      .then(([premium, prefs]) => { ghostRef.current = !!premium && !!prefs?.ghost_mode; })
+      .then(([premium, prefs]) => { const g = !!premium && !!prefs?.ghost_mode; ghostRef.current = g; setGhost(g); })
       .catch(() => {});
   }, []);
 
