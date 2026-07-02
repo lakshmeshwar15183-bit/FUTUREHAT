@@ -36,7 +36,9 @@ export default function NewGroupScreen() {
 
   useEffect(() => {
     const q = query.trim();
-    if (q.length < 2) {
+    // Web searches on any non-empty query (GroupModal.tsx:25); match it rather
+    // than requiring 2+ chars so single-character handle/name lookups work.
+    if (!q) {
       setResults([]);
       return;
     }
