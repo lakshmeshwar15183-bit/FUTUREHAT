@@ -1,7 +1,7 @@
 // FUTUREHAT mobile — view a user's profile. Shows avatar/name/username/about
 // and contextual actions (message / call, or edit when it's me).
 import React, { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Image, Linking, Modal, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, Linking, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -18,6 +18,8 @@ import { formatLastSeen } from '../lib/time';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import { useCalls } from '../calls/CallContext';
 import Avatar from '../components/Avatar';
+import MediaViewer, { type ViewerItem } from '../components/MediaViewer';
+import { isVideoUrl } from '../components/MessageBubble';
 import type { RootStackParamList } from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'Profile'>;
@@ -40,6 +42,19 @@ export default function ProfileScreen() {
   const [photos, setPhotos] = useState<Message[]>([]);
   const [docs, setDocs] = useState<Message[]>([]);
   const [viewerUrl, setViewerUrl] = useState<string | null>(null);
+
+  // Shared-media gallery — swipeable full-screen viewer with captions (web
+  // ContactProfileModal opens MediaLightbox the same way).
+  const viewerItems = useMemo<ViewerItem[]>(
+    () => photos.map((m) => ({
+      id: m.id,
+      url: m.media_url!,
+      kind: m.type === 'image' && !isVideoUrl(m.media_url) ? ('image' as const) : ('video' as const),
+      caption: m.content || null,
+    })),
+    [photos],
+  );
+  const viewerIndex = viewerUrl ? Math.max(0, viewerItems.findIndex((v) => v.url === viewerUrl)) : -1;
 
   useEffect(() => {
     (async () => {
@@ -246,11 +261,9 @@ export default function ProfileScreen() {
         </View>
       )}
 
-      <Modal visible={!!viewerUrl} transparent animationType="fade" onRequestClose={() => setViewerUrl(null)}>
-        <Pressable style={styles.viewer} onPress={() => setViewerUrl(null)}>
-          {viewerUrl && <Image source={{ uri: viewerUrl }} style={styles.viewerImg} resizeMode="contain" />}
-        </Pressable>
-      </Modal>
+      {viewerIndex >= 0 && (
+        <MediaViewer items={viewerItems} index={viewerIndex} onClose={() => setViewerUrl(null)} />
+      )}
     </ScrollView>
   );
 }
@@ -308,6 +321,4 @@ const makeStyles = (colors: Palette) =>
     docName: { flex: 1, color: colors.text, fontSize: font.body },
     mediaGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 4 },
     mediaThumb: { width: 78, height: 78, borderRadius: radius.sm, backgroundColor: colors.surface },
-    viewer: { flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', alignItems: 'center', justifyContent: 'center' },
-    viewerImg: { width: '100%', height: '100%' },
   });
