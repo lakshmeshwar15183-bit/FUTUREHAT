@@ -892,6 +892,12 @@ export default function ChatScreen() {
         keyExtractor={(it) => it.id}
         renderItem={renderItem}
         contentContainerStyle={styles.listContent}
+        ListFooterComponent={
+          <View style={styles.encNote}>
+            <Ionicons name="lock-closed" size={11} color={colors.textMuted} />
+            <Text style={styles.encNoteText}>Encrypted in transit</Text>
+          </View>
+        }
         initialNumToRender={18}
         maxToRenderPerBatch={12}
         windowSize={11}
@@ -1144,6 +1150,11 @@ const makeStyles = (colors: Palette) =>
     flex: { flex: 1, backgroundColor: colors.bg },
     center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg },
     listContent: { paddingVertical: 8 },
+    encNote: {
+      flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+      gap: 5, paddingHorizontal: 16, paddingTop: 10, paddingBottom: 4, opacity: 0.75,
+    },
+    encNoteText: { color: colors.textMuted, fontSize: font.tiny },
     daySep: { alignItems: 'center', marginVertical: 10 },
     daySepText: {
       color: colors.textMuted, fontSize: font.tiny, fontWeight: '600',

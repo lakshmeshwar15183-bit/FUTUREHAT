@@ -44,6 +44,21 @@
   color: var(--fh-muted);
 }
 
+/* Small, honest security note at the very top of every thread. Chats are
+   encrypted in transit (TLS) + at rest and gated by row-level security — this
+   is deliberately NOT an "end-to-end encrypted" claim, which would be false. */
+.chat-enc-note {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 2px auto 14px;
+  font-size: 12px;
+  color: var(--fh-text-muted, #8696a0);
+  opacity: 0.8;
+}
+.chat-enc-note svg { opacity: 0.85; }
+
 .messages-container {
   flex: 1;
   overflow-y: auto;

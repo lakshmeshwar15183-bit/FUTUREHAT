@@ -29,6 +29,7 @@ import { getStarredIds, starMessage, unstarMessage, getHiddenMessageIds, hideMes
 import {
   PhoneIcon, VideoIcon, SearchIcon, PaperclipIcon, PollIcon, ClockIcon, MicIcon, SendIcon,
   StarIcon, ReplyIcon, ForwardIcon, CopyIcon, EditIcon, TrashIcon, SmileIcon, MinimizeIcon,
+  LockIcon,
 } from './Icons';
 import { FREE_LIMITS, PREMIUM_LIMITS } from '@shared/premium/features';
 import type { ConversationSummary, Message, MessageReceipt, MessageReaction } from '@shared/types';
@@ -627,6 +628,9 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
       <div ref={messagesContainerRef} className="messages-container"
         onScroll={(e) => { const c = e.currentTarget; setShowJump(c.scrollHeight - c.scrollTop - c.clientHeight > 240); }}
         onClick={() => { setPickerFor(null); setActionFor(null); setAiOpen(false); setStickersOpen(false); }}>
+        <div className="chat-enc-note" role="note">
+          <LockIcon size={12} /> Encrypted in transit
+        </div>
         <AnimatePresence initial={false}>
           {displayMessages.map((msg, i) => {
             const isMine = msg.sender_id === profile?.id;
