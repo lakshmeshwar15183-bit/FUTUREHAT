@@ -18,6 +18,10 @@ export interface ViewerItem {
   id: string;
   url: string;
   kind: 'image' | 'video';
+  /** Optional metadata shown in the footer (web MediaLightbox parity). */
+  caption?: string | null;
+  sender?: string | null;
+  time?: string | null;
 }
 
 interface Props {
@@ -94,6 +98,12 @@ export default function MediaViewer({ items, index, onClose }: Props) {
     const i = Math.round(e.nativeEvent.contentOffset.x / SCREEN_W);
     if (i !== current) setCurrent(i);
   }, [current]);
+
+  // Jump to a media item from the thumbnail strip.
+  const jumpTo = useCallback((i: number) => {
+    setCurrent(i);
+    listRef.current?.scrollToIndex({ index: i, animated: true });
+  }, []);
 
   const [saving, setSaving] = useState(false);
 
@@ -174,6 +184,41 @@ export default function MediaViewer({ items, index, onClose }: Props) {
           onMomentumScrollEnd={onScroll}
           windowSize={3}
         />
+
+        {!zoomed && (
+          <View style={styles.footer}>
+            {(!!items[current]?.sender || !!items[current]?.time) && (
+              <Text style={styles.meta} numberOfLines={1}>
+                {items[current]?.sender ?? ''}
+                {items[current]?.sender && items[current]?.time ? '  ·  ' : ''}
+                {items[current]?.time ?? ''}
+              </Text>
+            )}
+            {!!items[current]?.caption && (
+              <Text style={styles.caption} numberOfLines={3}>{items[current]?.caption}</Text>
+            )}
+            {items.length > 1 && (
+              <FlatList
+                data={items}
+                keyExtractor={(it) => `t-${it.id}`}
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={styles.strip}
+                contentContainerStyle={styles.stripContent}
+                renderItem={({ item, index: i }) => (
+                  <Pressable onPress={() => jumpTo(i)} style={[styles.thumb, i === current && styles.thumbActive]}>
+                    <Image source={{ uri: item.url }} style={styles.thumbImg} contentFit="cover" cachePolicy="memory-disk" />
+                    {item.kind === 'video' && (
+                      <View style={styles.thumbPlay}>
+                        <Ionicons name="play" size={12} color="#fff" />
+                      </View>
+                    )}
+                  </Pressable>
+                )}
+              />
+            )}
+          </View>
+        )}
       </GestureHandlerRootView>
     </Modal>
   );
@@ -191,4 +236,17 @@ const styles = StyleSheet.create({
   counter: { color: '#fff', fontSize: 15, fontWeight: '600' },
   page: { width: SCREEN_W, height: SCREEN_H, alignItems: 'center', justifyContent: 'center' },
   media: { width: SCREEN_W, height: SCREEN_H * 0.86 },
+  footer: {
+    position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 10,
+    paddingTop: 10, paddingBottom: 30, paddingHorizontal: 14,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  meta: { color: '#e9edef', fontSize: 12, fontWeight: '600', marginBottom: 2 },
+  caption: { color: '#fff', fontSize: 14, marginBottom: 8 },
+  strip: { flexGrow: 0 },
+  stripContent: { gap: 6, paddingVertical: 4 },
+  thumb: { width: 46, height: 46, borderRadius: 6, overflow: 'hidden', borderWidth: 2, borderColor: 'transparent' },
+  thumbActive: { borderColor: '#fff' },
+  thumbImg: { width: '100%', height: '100%' },
+  thumbPlay: { position: 'absolute', inset: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.25)' },
 });

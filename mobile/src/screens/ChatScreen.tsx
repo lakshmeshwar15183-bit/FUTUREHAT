@@ -74,7 +74,7 @@ import {
 } from '../lib/localCache';
 import { flushOutbox, onOutboxSent } from '../lib/sync';
 import { uploadMediaFromUri } from '../lib/media';
-import { formatLastSeen, formatDaySeparator } from '../lib/time';
+import { formatLastSeen, formatDaySeparator, formatTime } from '../lib/time';
 import { useColors, useTheme, spacing, radius, font, type Palette } from '../theme';
 import MessageBubble, { type TickStatus, isVideoUrl, replySummary } from '../components/MessageBubble';
 import SwipeToReply from '../components/SwipeToReply';
@@ -863,13 +863,6 @@ export default function ChatScreen() {
     return map;
   }, [reactions]);
 
-  // Image/video messages — backs the swipeable full-screen viewer.
-  const viewerItems = useMemo<ViewerItem[]>(() => messages
-    .filter((m) => !m.is_deleted && m.media_url && (m.type === 'image' || (m.type === 'file' && isVideoUrl(m.media_url))))
-    .map((m) => ({ id: m.id, url: m.media_url!, kind: m.type === 'image' ? ('image' as const) : ('video' as const) })),
-    [messages]);
-  const viewerIndex = viewerUrl ? Math.max(0, viewerItems.findIndex((v) => v.url === viewerUrl)) : -1;
-
   // Merge messages and polls into one chronological timeline, then insert day
   // separators and flag consecutive same-sender messages (WhatsApp grouping).
   const timeline = useMemo<TimelineItem[]>(() => {
@@ -917,6 +910,20 @@ export default function ChatScreen() {
     for (const p of peers) m.set(p.id, p.display_name);
     return m;
   }, [peers]);
+
+  // Image/video messages — backs the swipeable full-screen viewer (web MediaLightbox parity).
+  const viewerItems = useMemo<ViewerItem[]>(() => messages
+    .filter((m) => !m.is_deleted && m.media_url && (m.type === 'image' || (m.type === 'file' && isVideoUrl(m.media_url))))
+    .map((m) => ({
+      id: m.id,
+      url: m.media_url!,
+      kind: m.type === 'image' ? ('image' as const) : ('video' as const),
+      caption: m.type === 'image' ? (m.content || null) : null,
+      sender: m.sender_id === uid ? 'You' : (peerNameById.get(m.sender_id) || null),
+      time: formatTime(m.created_at),
+    })),
+    [messages, uid, peerNameById]);
+  const viewerIndex = viewerUrl ? Math.max(0, viewerItems.findIndex((v) => v.url === viewerUrl)) : -1;
 
   // Plain function (not useCallback): MessageBubble is React.memo'd with a
   // data-aware comparator that ignores callback identity, so recreating this each
