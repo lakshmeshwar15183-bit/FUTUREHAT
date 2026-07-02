@@ -18,34 +18,61 @@ export interface IceServer {
 }
 
 /**
- * Default ICE servers: public STUN + a free shared TURN (OpenRelay).
+ * Default ICE servers: public STUN only.
  *
- * TURN is REQUIRED for calls between peers on different networks/NATs — STUN
- * alone only works when both peers can reach each other directly (same LAN or
- * permissive NAT), which is why cross-network mobile calls failed before. The
- * OpenRelay credentials below are a free, best-effort fallback so calls work
- * out of the box; for production reliability set your OWN TURN via env
- * (VITE_TURN_URL/USERNAME/CREDENTIAL on web, EXPO_PUBLIC_TURN_* on mobile) and
- * pass it through buildIceServers().
+ * IMPORTANT: STUN alone only connects peers that can reach each other directly
+ * (same LAN or permissive/full-cone NAT). Calls ACROSS different networks —
+ * mobile carrier ↔ home wifi, city ↔ city, most symmetric-NAT setups — REQUIRE a
+ * TURN relay. There is intentionally NO default TURN here anymore: the previously
+ * baked-in free relay (OpenRelay `openrelayproject`) is dead — its TLS/443 relay
+ * is unreachable and the shared credentials are deprecated — so shipping it gave
+ * a false sense of coverage while cross-network calls silently hung on
+ * "Connecting…". Provision your OWN TURN and set it via env:
+ *   web:    VITE_TURN_URL / VITE_TURN_USERNAME / VITE_TURN_CREDENTIAL
+ *   mobile: EXPO_PUBLIC_TURN_URL / EXPO_PUBLIC_TURN_USERNAME / EXPO_PUBLIC_TURN_CREDENTIAL
+ * The URL field accepts a COMMA-SEPARATED list so you can pass every transport a
+ * provider gives you (udp/tcp/tls on 80/443) under one credential — e.g.
+ *   "turn:turn.example.com:80,turn:turn.example.com:443?transport=tcp,turns:turn.example.com:443"
+ * See buildIceServers(). Use hasTurn() to detect at runtime whether a relay is
+ * configured, so the UI can warn instead of hanging.
  */
 export const DEFAULT_ICE_SERVERS: IceServer[] = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
-  { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-  { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
-  { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
+  { urls: 'stun:stun2.l.google.com:19302' },
 ];
 
 /**
  * Build the ICE server list, putting an app-configured TURN (from env) ahead of
- * the free defaults. Pass `{ urls, username, credential }` read from each
- * platform's env; falsy/empty urls are ignored.
+ * the STUN defaults. `custom.urls` may be a single URL, an array, or a
+ * COMMA-SEPARATED string (real TURN providers hand you several transport URLs
+ * under one credential) — all are normalized into one IceServer that carries the
+ * shared username/credential. Falsy/empty urls are ignored.
  */
 export function buildIceServers(custom?: IceServer | null): IceServer[] {
-  if (custom && custom.urls && (Array.isArray(custom.urls) ? custom.urls.length : true)) {
-    return [custom, ...DEFAULT_ICE_SERVERS];
+  const urls = normalizeUrls(custom?.urls);
+  if (urls.length) {
+    return [{ urls, username: custom!.username, credential: custom!.credential }, ...DEFAULT_ICE_SERVERS];
   }
   return DEFAULT_ICE_SERVERS;
+}
+
+/** Split a single/array/comma-separated urls value into a clean string array. */
+function normalizeUrls(urls?: string | string[]): string[] {
+  if (!urls) return [];
+  const list = Array.isArray(urls) ? urls : String(urls).split(',');
+  return list.map((u) => u.trim()).filter(Boolean);
+}
+
+/**
+ * True if the resolved ICE list contains at least one TURN/TURNS relay. Lets the
+ * call UI surface an explicit "no relay configured — cross-network calls may
+ * fail" state instead of leaving the user on an endless "Connecting…".
+ */
+export function hasTurn(servers: IceServer[]): boolean {
+  return servers.some((s) =>
+    normalizeUrls(s.urls).some((u) => /^turns?:/i.test(u)),
+  );
 }
 
 export async function createCall(

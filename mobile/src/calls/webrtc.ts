@@ -15,6 +15,7 @@ import { supabase } from '../lib/supabase';
 import {
   createSignalingChannel,
   buildIceServers,
+  hasTurn,
   type SignalingChannel,
   type SignalMessage,
   type CallType,
@@ -32,8 +33,10 @@ const clog = (...args: unknown[]) => console.log('[call]', ...args);
 // ring-then-fail window; past this a call that hasn't connected never will.
 const CONNECT_TIMEOUT_MS = 45000;
 
-// Optional production TURN from app env (EXPO_PUBLIC_TURN_*). Falls back to the
-// free shared TURN baked into buildIceServers() when unset.
+// Production TURN from app env (EXPO_PUBLIC_TURN_*). EXPO_PUBLIC_TURN_URL may be a
+// comma-separated list of transport URLs (udp/tcp/tls) under one credential. When
+// unset there is NO TURN relay — only STUN — so cross-network calls will fail;
+// buildIceServers() no longer bakes in a (dead) default relay.
 const ICE_SERVERS = buildIceServers(
   process.env.EXPO_PUBLIC_TURN_URL
     ? {
@@ -43,6 +46,9 @@ const ICE_SERVERS = buildIceServers(
       }
     : null,
 );
+// Whether a relay is actually configured. Logged at call start and used to warn
+// so a missing TURN shows up as a clear diagnostic rather than a silent hang.
+const HAS_TURN = hasTurn(ICE_SERVERS);
 
 export interface CallCallbacks {
   onLocalStream: (stream: MediaStream) => void;
@@ -120,8 +126,24 @@ export class CallSession {
     InCallManager.start({ media: this.type === 'video' ? 'video' : 'audio' });
     InCallManager.setForceSpeakerphoneOn(this.speakerOn);
 
-    // 3) Peer connection.
-    this.pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    // 3) Peer connection. iceCandidatePoolSize pre-gathers candidates so the
+    //    handshake has them ready the moment the remote description lands (faster
+    //    connect). bundlePolicy 'max-bundle' + rtcpMuxPolicy 'require' keep audio
+    //    and video on a single transport, which minimizes the number of candidate
+    //    pairs TURN has to relay.
+    if (!HAS_TURN) {
+      clog(
+        '⚠️ NO TURN relay configured (EXPO_PUBLIC_TURN_* unset) — STUN only.',
+        'Calls will connect on the same/permissive network but FAIL across',
+        'different networks/NATs. Provision TURN for production.',
+      );
+    }
+    this.pc = new RTCPeerConnection({
+      iceServers: ICE_SERVERS,
+      iceCandidatePoolSize: 10,
+      bundlePolicy: 'max-bundle',
+      rtcpMuxPolicy: 'require',
+    } as any);
     this.localStream.getTracks().forEach((t) => this.pc!.addTrack(t, this.localStream!));
 
     (this.pc as any).ontrack = (e: any) => {

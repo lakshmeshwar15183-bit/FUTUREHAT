@@ -13,13 +13,15 @@ import { useAuth } from '../AuthContext';
 import { supabase } from '../supabase';
 import {
   createCall, updateCallStatus, subscribeToIncomingCalls, subscribeToCallStatus,
-  createSignalingChannel, buildIceServers, type SignalingChannel,
+  createSignalingChannel, buildIceServers, hasTurn, type SignalingChannel,
 } from '@shared/callsApi';
 import { getProfile } from '@shared/api';
 import type { Call, CallType } from '@shared/types';
 
-// Optional production TURN from build env (VITE_TURN_*). Falls back to the free
-// shared TURN baked into buildIceServers() when unset.
+// Production TURN from build env (VITE_TURN_*). VITE_TURN_URL may be a comma-
+// separated list of transport URLs under one credential. When unset there is NO
+// relay — only STUN — so cross-network calls will fail (no baked-in default relay
+// anymore; the old free one is dead).
 const ICE_SERVERS = buildIceServers(
   import.meta.env.VITE_TURN_URL
     ? {
@@ -29,6 +31,13 @@ const ICE_SERVERS = buildIceServers(
       }
     : null,
 );
+if (!hasTurn(ICE_SERVERS)) {
+  // eslint-disable-next-line no-console
+  console.warn(
+    '[call] No TURN relay configured (VITE_TURN_* unset) — STUN only. Calls will ' +
+      'work same-network but fail across different networks/NATs. Set TURN for production.',
+  );
+}
 import {
   MicIcon, MicOffIcon, VideoIcon, VideoOffIcon, SpeakerIcon, SpeakerOffIcon,
   CameraFlipIcon, EndCallIcon, PhoneIcon, MinimizeIcon, LockIcon,
@@ -163,7 +172,16 @@ export function CallProvider({ children }: { children: ReactNode }) {
   }
 
   function buildPc(stream: MediaStream) {
-    const conn = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    // iceCandidatePoolSize pre-gathers so candidates are ready when the remote
+    // description arrives; max-bundle keeps audio+video on one relayed transport.
+    // Matches the mobile RTCPeerConnection config for consistent cross-platform
+    // (web ↔ Android) connectivity.
+    const conn = new RTCPeerConnection({
+      iceServers: ICE_SERVERS,
+      iceCandidatePoolSize: 10,
+      bundlePolicy: 'max-bundle',
+      rtcpMuxPolicy: 'require',
+    });
     stream.getTracks().forEach((t) => conn.addTrack(t, stream));
     conn.onicecandidate = (e) => {
       if (e.candidate) signaling.current?.send({ kind: 'candidate', from: myId!, data: e.candidate.toJSON() });
