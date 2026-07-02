@@ -135,6 +135,12 @@ export default function StatusScreen() {
     });
     if (res.canceled || !res.assets?.length || !uid) return;
     const asset = res.assets[0];
+    // Cap status media at 16 MB to match web (StatusView MAX_STATUS_BYTES).
+    const MAX_STATUS_BYTES = 16 * 1024 * 1024;
+    if (asset.fileSize != null && asset.fileSize > MAX_STATUS_BYTES) {
+      Alert.alert('File is too large', 'Please choose a status under 16 MB.');
+      return;
+    }
     const video = asset.type === 'video';
     const ext = video ? 'mp4' : 'jpg';
     const { url, error } = await uploadMediaFromUri(uid, asset.uri, `status_${Date.now()}.${ext}`);

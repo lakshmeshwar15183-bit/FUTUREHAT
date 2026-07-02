@@ -1,7 +1,7 @@
 // FUTUREHAT mobile — view a user's profile. Shows avatar/name/username/about
 // and contextual actions (message / call, or edit when it's me).
 import React, { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Image, Modal, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, Linking, Modal, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -201,12 +201,21 @@ export default function ProfileScreen() {
       {docs.length > 0 && (
         <Section title={`Files & docs · ${docs.length}`}>
           {docs.slice(0, 12).map((m) => (
-            <View key={m.id} style={styles.docRow}>
+            <Pressable
+              key={m.id}
+              style={styles.docRow}
+              onPress={() => {
+                const url = m.media_url;
+                if (!url || !/^https?:\/\//i.test(url)) return; // only open safe http(s) links
+                Linking.openURL(url).catch(() => Alert.alert('Could not open', 'This file could not be opened.'));
+              }}
+            >
               <Ionicons name="document-attach-outline" size={22} color={colors.primary} />
               <Text style={styles.docName} numberOfLines={1}>
                 {m.content || 'Attachment'}
               </Text>
-            </View>
+              <Ionicons name="open-outline" size={18} color={colors.textFaint} />
+            </Pressable>
           ))}
         </Section>
       )}

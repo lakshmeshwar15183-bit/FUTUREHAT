@@ -70,7 +70,12 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     if (!uid) return;
     const channel = subscribeToIncomingCalls(supabase, async (call) => {
       if (call.caller_id === uid || call.status !== 'ringing') return;
-      if (active || incoming) return; // already busy
+      if (active || incoming) {
+        // Busy — auto-decline so the second caller stops ringing instead of
+        // timing out (web parity: CallContext busy branch).
+        await updateCallStatus(supabase, call.id, 'declined').catch(() => {});
+        return;
+      }
       const peer = await getProfile(supabase, call.caller_id);
       setIncoming({ call, peer });
       (InCallManager as any).startRingtone('_DEFAULT_');
