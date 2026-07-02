@@ -2,6 +2,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Pressable,
   StyleSheet,
@@ -65,7 +66,12 @@ export default function NewGroupScreen() {
       selected.map((s) => s.id),
     );
     setCreating(false);
-    if (error || !conversationId) return;
+    // Web surfaces creation failures inline (GroupModal.tsx:61-62,129); mobile
+    // previously returned silently, leaving the user staring at an unchanged form.
+    if (error || !conversationId) {
+      Alert.alert('Could not create group', error?.message || 'Please try again.');
+      return;
+    }
     navigation.replace('Chat', { conversationId, title: name.trim() });
   }
 
