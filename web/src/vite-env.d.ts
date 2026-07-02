@@ -3,8 +3,9 @@
 interface ImportMetaEnv {
   readonly VITE_SUPABASE_URL: string;
   readonly VITE_SUPABASE_ANON_KEY: string;
-  // Optional production TURN (calls work cross-network via the free shared
-  // fallback, but a dedicated TURN is recommended for reliability).
+  // Production TURN relay — REQUIRED for cross-network calls (STUN alone only
+  // connects peers on the same/permissive network). VITE_TURN_URL may be a
+  // comma-separated list of transport URLs under one credential.
   readonly VITE_TURN_URL?: string;
   readonly VITE_TURN_USERNAME?: string;
   readonly VITE_TURN_CREDENTIAL?: string;
