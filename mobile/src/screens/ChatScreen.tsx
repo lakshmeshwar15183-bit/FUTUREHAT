@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Clipboard from 'expo-clipboard';
@@ -57,6 +58,7 @@ import {
   getChatSettings,
   getPreferences,
   getServerPremium,
+  scheduleMessage,
   FREE_LIMITS,
   PREMIUM_LIMITS,
 } from '../lib/shared';
@@ -80,6 +82,8 @@ import MessageBubble, { type TickStatus, isVideoUrl, replySummary } from '../com
 import SwipeToReply from '../components/SwipeToReply';
 import MediaViewer, { type ViewerItem } from '../components/MediaViewer';
 import PollCard from '../components/PollCard';
+import ScheduleMessageModal from '../components/ScheduleMessageModal';
+import { STICKERS } from '../lib/stickers';
 import { useCalls } from '../calls/CallContext';
 import type { RootStackParamList } from '../navigation/types';
 
@@ -151,6 +155,8 @@ export default function ChatScreen() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectionForward, setSelectionForward] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
+  const [stickersOpen, setStickersOpen] = useState(false);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
   const [viewerUrl, setViewerUrl] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -623,6 +629,31 @@ export default function ChatScreen() {
     } finally {
       setSending(false);
     }
+  }
+
+  // Premium stickers — sent as an image message carrying the SVG data URI
+  // (web parity: ChatView.sendSticker). No upload needed.
+  async function sendSticker(url: string) {
+    setStickersOpen(false);
+    const { message } = await sendMessage(supabase, conversationId, '', 'image', url);
+    if (message) {
+      setMsgs((prev) => (prev.some((m) => m.id === message.id) ? prev : [...prev, message]));
+      setReceipts((prev) => new Map(prev).set(message.id, 'sent'));
+      upsertCachedMessage(conversationId, message).catch(() => {});
+    }
+  }
+
+  // Scheduled messages (premium) — persist the current draft to send later
+  // (web parity: ChatView.handleSchedule). Future-time validation lives in the
+  // modal; on success we clear the composer.
+  async function doSchedule(when: Date) {
+    const body = text.trim();
+    if (!body) { setScheduleOpen(false); return; }
+    const { error } = await scheduleMessage(supabase, conversationId, body, when);
+    setScheduleOpen(false);
+    if (error) { Alert.alert('Could not schedule', error.message); return; }
+    setText('');
+    Alert.alert('Scheduled', `Your message will send ${when.toLocaleString()}.`);
   }
 
   async function pickImage(fromCamera: boolean) {
@@ -1201,9 +1232,67 @@ export default function ChatScreen() {
                 setPollBuilder(true);
               }}
             />
+            <AttachOption
+              icon="happy"
+              label={isPremium ? 'Stickers' : 'Stickers · FUTUREHAT+'}
+              color="#F45D9C"
+              onPress={() => {
+                setAttachOpen(false);
+                if (isPremium) setStickersOpen(true);
+                else
+                  Alert.alert('Stickers', 'Premium stickers are a FUTUREHAT+ feature.', [
+                    { text: 'Not now', style: 'cancel' },
+                    { text: 'See FUTUREHAT+', onPress: () => navigation.navigate('Premium') },
+                  ]);
+              }}
+            />
+            <AttachOption
+              icon="time"
+              label={isPremium ? 'Schedule message' : 'Schedule · FUTUREHAT+'}
+              color="#7A6FF0"
+              onPress={() => {
+                setAttachOpen(false);
+                if (!isPremium) {
+                  Alert.alert('Schedule message', 'Scheduled messages are a FUTUREHAT+ feature.', [
+                    { text: 'Not now', style: 'cancel' },
+                    { text: 'See FUTUREHAT+', onPress: () => navigation.navigate('Premium') },
+                  ]);
+                  return;
+                }
+                if (!text.trim()) {
+                  Alert.alert('Nothing to schedule', 'Type a message first, then schedule it.');
+                  return;
+                }
+                setScheduleOpen(true);
+              }}
+            />
           </View>
         </Pressable>
       </Modal>
+
+      {/* Sticker picker (premium) */}
+      <Modal visible={stickersOpen} transparent animationType="slide" onRequestClose={() => setStickersOpen(false)}>
+        <Pressable style={styles.backdrop} onPress={() => setStickersOpen(false)}>
+          <Pressable style={[styles.sheet, { paddingBottom: insets.bottom + 16 }]} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.sheetTitle}>Stickers</Text>
+            <View style={styles.stickerGrid}>
+              {STICKERS.map((s) => (
+                <Pressable key={s.id} onPress={() => sendSticker(s.url)} style={styles.stickerCell}>
+                  <Image source={{ uri: s.url }} style={styles.stickerImg} contentFit="contain" />
+                </Pressable>
+              ))}
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Schedule message (premium) */}
+      <ScheduleMessageModal
+        visible={scheduleOpen}
+        draft={text}
+        onCancel={() => setScheduleOpen(false)}
+        onConfirm={doSchedule}
+      />
 
       {/* Poll builder */}
       <Modal visible={pollBuilder} transparent animationType="slide" onRequestClose={() => setPollBuilder(false)}>
@@ -1532,6 +1621,9 @@ const makeStyles = (colors: Palette) =>
       paddingTop: 16,
     },
     sheetTitle: { color: colors.text, fontSize: font.heading, fontWeight: '700', marginBottom: 8 },
+    stickerGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', paddingTop: 4 },
+    stickerCell: { width: '23%', aspectRatio: 1, marginBottom: 10, alignItems: 'center', justifyContent: 'center' },
+    stickerImg: { width: '100%', height: '100%', borderRadius: 12 },
     forwardSheet: { maxHeight: '60%' },
     pollSheet: { maxHeight: '80%' },
     pollInput: {
