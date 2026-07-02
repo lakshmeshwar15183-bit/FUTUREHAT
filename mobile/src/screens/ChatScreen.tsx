@@ -57,6 +57,8 @@ import {
   getChatSettings,
   getPreferences,
   getServerPremium,
+  FREE_LIMITS,
+  PREMIUM_LIMITS,
 } from '../lib/shared';
 import type { Message, MessageReaction, Profile, ConversationSummary, Poll, PollVote, SearchKind, ChatSettings } from '../lib/shared';
 import {
@@ -118,7 +120,7 @@ export default function ChatScreen() {
   const { params } = useRoute<Rt>();
   const { conversationId } = params;
   const colors = useColors();
-  const { wallpaperColor } = useTheme();
+  const { wallpaperColor, isPremium } = useTheme();
   const insets = useSafeAreaInsets();
   const { startCall } = useCalls();
   const styles = useMemo(() => makeStyles(colors), [colors]);
@@ -581,6 +583,24 @@ export default function ChatScreen() {
     flushOutbox().catch(() => {});
   }
 
+  // Free tier caps uploads at 5 MB; premium lifts it to 100 MB (web parity via
+  // FREE_LIMITS/PREMIUM_LIMITS). Returns true if the file is within the limit.
+  function withinUploadLimit(bytes: number | undefined): boolean {
+    if (bytes == null) return true; // size unknown — let the server be the backstop
+    const limit = isPremium ? PREMIUM_LIMITS.uploadBytes : FREE_LIMITS.uploadBytes;
+    if (bytes <= limit) return true;
+    if (!isPremium) {
+      Alert.alert(
+        'File too large',
+        `Free accounts can send files up to ${Math.round(FREE_LIMITS.uploadBytes / (1024 * 1024))} MB. Upgrade to FUTUREHAT+ to send files up to ${Math.round(PREMIUM_LIMITS.uploadBytes / (1024 * 1024))} MB.`,
+        [{ text: 'Not now', style: 'cancel' }, { text: 'Upgrade', onPress: () => navigation.navigate('Premium') }],
+      );
+    } else {
+      Alert.alert('File too large', `This file exceeds the ${Math.round(PREMIUM_LIMITS.uploadBytes / (1024 * 1024))} MB limit.`);
+    }
+    return false;
+  }
+
   async function sendMedia(
     uri: string,
     fileName: string,
@@ -619,6 +639,7 @@ export default function ChatScreen() {
         });
     if (res.canceled || !res.assets?.length) return;
     const a = res.assets[0];
+    if (!withinUploadLimit(a.fileSize)) return;
     await sendMedia(a.uri, a.fileName ?? `photo_${Date.now()}.jpg`, 'image');
   }
 
@@ -627,6 +648,7 @@ export default function ChatScreen() {
     const res = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true });
     if (res.canceled || !res.assets?.length) return;
     const a = res.assets[0];
+    if (!withinUploadLimit(a.size ?? undefined)) return;
     await sendMedia(a.uri, a.name, 'file');
   }
 
@@ -1265,18 +1287,36 @@ export default function ChatScreen() {
       <Modal visible={emojiPickerOpen} transparent animationType="fade" onRequestClose={() => setEmojiPickerOpen(false)}>
         <Pressable style={styles.backdrop} onPress={() => setEmojiPickerOpen(false)}>
           <Pressable style={[styles.sheet, styles.emojiPickerSheet, { paddingBottom: insets.bottom + 16 }]} onPress={(e) => e.stopPropagation()}>
-            <Text style={styles.sheetTitle}>React</Text>
+            <Text style={styles.sheetTitle}>React{!isPremium ? '  ·  extras are FUTUREHAT+' : ''}</Text>
             <View style={styles.emojiGrid}>
-              {MORE_EMOJI.map((e) => (
-                <Pressable
-                  key={e}
-                  hitSlop={4}
-                  style={styles.emojiGridCell}
-                  onPress={() => { setEmojiPickerOpen(false); react(e); }}
-                >
-                  <Text style={styles.emojiGridText}>{e}</Text>
-                </Pressable>
-              ))}
+              {MORE_EMOJI.map((e) => {
+                // Free tier reacts with the 6 quick emojis; the rest are premium
+                // (mirrors web QUICK_EMOJIS vs PREMIUM_EMOJIS gating).
+                const locked = !isPremium && !QUICK_EMOJI.includes(e);
+                return (
+                  <Pressable
+                    key={e}
+                    hitSlop={4}
+                    style={styles.emojiGridCell}
+                    onPress={() => {
+                      if (locked) {
+                        setEmojiPickerOpen(false);
+                        Alert.alert(
+                          'Premium reaction',
+                          'Upgrade to FUTUREHAT+ to react with the full emoji set.',
+                          [{ text: 'Not now', style: 'cancel' }, { text: 'Upgrade', onPress: () => navigation.navigate('Premium') }],
+                        );
+                        return;
+                      }
+                      setEmojiPickerOpen(false);
+                      react(e);
+                    }}
+                  >
+                    <Text style={[styles.emojiGridText, locked && { opacity: 0.35 }]}>{e}</Text>
+                    {locked && <Text style={styles.emojiLock}>🔒</Text>}
+                  </Pressable>
+                );
+              })}
             </View>
           </Pressable>
         </Pressable>
@@ -1521,4 +1561,5 @@ const makeStyles = (colors: Palette) =>
     emojiGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
     emojiGridCell: { width: '16.66%', alignItems: 'center', paddingVertical: 10 },
     emojiGridText: { fontSize: 30 },
+    emojiLock: { position: 'absolute', bottom: 6, right: '28%', fontSize: 11 },
   });
