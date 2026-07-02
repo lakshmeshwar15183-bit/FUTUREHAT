@@ -23,6 +23,7 @@
     "android": {
       "package": "dev.lakshmeshwar.futurehat",
       "versionCode": 8,
+      "allowBackup": false,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#00A884"
