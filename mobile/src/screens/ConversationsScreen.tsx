@@ -29,9 +29,15 @@ import {
   muteConversation,
   unmuteConversation,
   hideConversation,
+  getHiddenIds,
+  unhideConversation,
   archiveConversation,
   blockUser,
   submitReport,
+  joinPresence,
+  getPremiumUserIds,
+  getServerPremium,
+  FREE_LIMITS,
 } from '../lib/shared';
 import type { ConversationSummary, MessageSearchHit } from '../lib/shared';
 import { getCachedConversations, cacheConversations } from '../lib/localCache';
@@ -57,6 +63,10 @@ export default function ConversationsScreen() {
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
   const [mutedIds, setMutedIds] = useState<Set<string>>(new Set());
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
+  const [showHidden, setShowHidden] = useState(false);
+  const [onlineIds, setOnlineIds] = useState<Set<string>>(new Set());
+  const [premiumIds, setPremiumIds] = useState<Set<string>>(new Set());
+  const [isPremium, setIsPremium] = useState(false);
   const [menuFor, setMenuFor] = useState<ConversationSummary | null>(null);
 
   const q = query.trim().toLowerCase();
@@ -66,7 +76,8 @@ export default function ConversationsScreen() {
     return m;
   }, [items]);
   const filteredItems = useMemo(() => {
-    const base = items.filter((c) => !hiddenIds.has(c.conversation.id)); // hidden chats never listed
+    // Hidden chats are excluded unless the user reveals them (web parity).
+    const base = showHidden ? items : items.filter((c) => !hiddenIds.has(c.conversation.id));
     const searched = q ? base.filter((c) => c.title.toLowerCase().includes(q)) : base;
     // Pinned conversations float to the top (WhatsApp-style), otherwise the
     // getMyConversations order (most-recent first) is preserved.
@@ -75,7 +86,14 @@ export default function ConversationsScreen() {
       const pb = pinnedIds.has(b.conversation.id) ? 1 : 0;
       return pb - pa;
     });
-  }, [items, q, hiddenIds, pinnedIds]);
+  }, [items, q, hiddenIds, pinnedIds, showHidden]);
+
+  // Per-conversation peer helpers for direct chats (presence dot + premium badge).
+  const peerOf = useCallback(
+    (c: ConversationSummary) =>
+      c.conversation.type === 'direct' ? c.participants.find((p) => p.id !== uid) ?? null : null,
+    [uid],
+  );
 
   useEffect(() => {
     const term = query.trim();
@@ -90,6 +108,22 @@ export default function ConversationsScreen() {
 
   const [offline, setOffline] = useState(false);
   useEffect(() => onConnectivity((o) => setOffline(!o)), []);
+
+  // Global presence — mark direct-chat peers online with a green dot (web parity).
+  useEffect(() => {
+    let channel: ReturnType<typeof joinPresence> | null = null;
+    let alive = true;
+    getCurrentUser(supabase)
+      .then((me) => {
+        if (!alive || !me?.id) return;
+        channel = joinPresence(supabase, me.id, (ids) => { if (alive) setOnlineIds(ids); });
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+      if (channel) supabase.removeChannel(channel);
+    };
+  }, []);
 
   // Resolve my id, then hydrate the list from the LOCAL cache immediately so the
   // chat list appears with zero network wait (WhatsApp-style). The Supabase
@@ -123,13 +157,17 @@ export default function ConversationsScreen() {
       setItems(data);
       const u = await getCurrentUser(supabase);
       if (u?.id) cacheConversations(u.id, data).catch(() => {});
-      // Per-user conversation flags (pin/mute). Degrade to empty on any error.
-      Promise.all([getPinnedIds(supabase), getMutedIds(supabase)])
-        .then(([pinned, muted]) => {
+      // Per-user conversation flags (pin/mute/hidden) + premium wiring. Hidden
+      // must be loaded here so hidden chats stay hidden across reloads (web parity).
+      Promise.all([getPinnedIds(supabase), getMutedIds(supabase), getHiddenIds(supabase)])
+        .then(([pinned, muted, hidden]) => {
           setPinnedIds(new Set(pinned));
           setMutedIds(new Set(muted));
+          setHiddenIds(new Set(hidden));
         })
         .catch(() => {});
+      getPremiumUserIds(supabase).then((ids) => setPremiumIds(new Set(ids))).catch(() => {});
+      getServerPremium(supabase).then(setIsPremium).catch(() => {});
     } catch {
       // keep last known (cached) list on transient errors / offline
     } finally {
@@ -164,14 +202,25 @@ export default function ConversationsScreen() {
   // ── Conversation row actions (long-press menu) ──────────────────────────────
   const isPinned = menuFor ? pinnedIds.has(menuFor.conversation.id) : false;
   const isMuted = menuFor ? mutedIds.has(menuFor.conversation.id) : false;
+  const isHidden = menuFor ? hiddenIds.has(menuFor.conversation.id) : false;
   const menuIsDirect = menuFor?.conversation.type === 'direct';
   const menuPeer = menuFor?.participants.find((p) => p.id !== uid) ?? null;
 
   async function togglePin() {
     if (!menuFor) return;
     const id = menuFor.conversation.id;
-    setMenuFor(null);
     const pinned = pinnedIds.has(id);
+    // Free tier caps the number of pinned chats (web parity via FREE_LIMITS).
+    if (!pinned && !isPremium && pinnedIds.size >= FREE_LIMITS.pinnedChats) {
+      setMenuFor(null);
+      Alert.alert(
+        'Pin limit reached',
+        `Free accounts can pin up to ${FREE_LIMITS.pinnedChats} chats. Upgrade to FUTUREHAT+ for unlimited pins.`,
+        [{ text: 'Not now', style: 'cancel' }, { text: 'Upgrade', onPress: () => navigation.navigate('Premium') }],
+      );
+      return;
+    }
+    setMenuFor(null);
     setPinnedIds((prev) => { const n = new Set(prev); pinned ? n.delete(id) : n.add(id); return n; });
     const { error } = pinned ? await unpinConversation(supabase, id) : await pinConversation(supabase, id);
     if (error) setPinnedIds((prev) => { const n = new Set(prev); pinned ? n.add(id) : n.delete(id); return n; });
@@ -194,6 +243,15 @@ export default function ConversationsScreen() {
     setHiddenIds((prev) => new Set(prev).add(id));
     const { error } = await hideConversation(supabase, id);
     if (error) { setHiddenIds((prev) => { const n = new Set(prev); n.delete(id); return n; }); Alert.alert('Could not hide', error.message); }
+  }
+
+  async function doUnhide() {
+    if (!menuFor) return;
+    const id = menuFor.conversation.id;
+    setMenuFor(null);
+    setHiddenIds((prev) => { const n = new Set(prev); n.delete(id); return n; });
+    const { error } = await unhideConversation(supabase, id);
+    if (error) { setHiddenIds((prev) => new Set(prev).add(id)); Alert.alert('Could not unhide', error.message); }
   }
 
   async function doArchive() {
@@ -243,7 +301,12 @@ export default function ConversationsScreen() {
   // Stable separator so the list doesn't rebuild every separator each render.
   const Separator = useCallback(() => <View style={styles.sep} />, [styles]);
 
-  const renderItem = ({ item }: { item: ConversationSummary }) => (
+  const renderItem = ({ item }: { item: ConversationSummary }) => {
+    const peer = peerOf(item);
+    const peerOnline = !!peer && onlineIds.has(peer.id);
+    const peerPremium = !!peer && premiumIds.has(peer.id);
+    const isGroup = item.conversation.type === 'group';
+    return (
     <Pressable
       style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
       onPress={() =>
@@ -255,12 +318,23 @@ export default function ConversationsScreen() {
       onLongPress={() => { Haptics.selectionAsync().catch(() => {}); setMenuFor(item); }}
       delayLongPress={280}
     >
-      <Avatar uri={item.avatarUrl} name={item.title} size={52} />
+      <View>
+        <Avatar uri={item.avatarUrl} name={item.title} size={52} />
+        {peerOnline && <View style={styles.onlineDot} />}
+      </View>
       <View style={styles.rowBody}>
         <View style={styles.rowTop}>
-          <Text style={styles.title} numberOfLines={1}>
-            {item.title}
-          </Text>
+          <View style={styles.titleWrap}>
+            {isGroup && (
+              <Ionicons name="people" size={14} color={colors.textMuted} style={{ marginRight: 4 }} />
+            )}
+            <Text style={styles.title} numberOfLines={1}>
+              {item.title}
+            </Text>
+            {peerPremium && (
+              <Ionicons name="star" size={13} color="#f5b800" style={{ marginLeft: 4 }} />
+            )}
+          </View>
           <Text style={[styles.time, item.unreadCount > 0 && styles.timeUnread]}>
             {formatListTimestamp(item.lastMessage?.created_at)}
           </Text>
@@ -287,7 +361,8 @@ export default function ConversationsScreen() {
         </View>
       </View>
     </Pressable>
-  );
+    );
+  };
 
   return (
     <View style={styles.container}>
@@ -324,6 +399,14 @@ export default function ConversationsScreen() {
                 </Pressable>
               )}
             </View>
+            {hiddenIds.size > 0 && (
+              <Pressable style={styles.hiddenToggle} onPress={() => setShowHidden((v) => !v)}>
+                <Ionicons name={showHidden ? 'eye-off' : 'eye'} size={15} color={colors.primary} />
+                <Text style={styles.hiddenToggleText}>
+                  {showHidden ? 'Hide private chats' : `Show hidden chats (${hiddenIds.size})`}
+                </Text>
+              </Pressable>
+            )}
             {msgHits.length > 0 && (
               <View style={styles.hits}>
                 <Text style={styles.hitsHead}>MESSAGES</Text>
@@ -388,7 +471,11 @@ export default function ConversationsScreen() {
             <Text style={styles.sheetTitle} numberOfLines={1}>{menuFor?.title}</Text>
             <ConvAction icon={isPinned ? 'pin' : 'pin-outline'} label={isPinned ? 'Unpin' : 'Pin'} onPress={togglePin} />
             <ConvAction icon={isMuted ? 'notifications' : 'notifications-off-outline'} label={isMuted ? 'Unmute' : 'Mute'} onPress={toggleMute} />
-            <ConvAction icon="eye-off-outline" label="Hide" onPress={doHide} />
+            <ConvAction
+              icon={isHidden ? 'eye-outline' : 'eye-off-outline'}
+              label={isHidden ? 'Unhide' : 'Hide'}
+              onPress={isHidden ? doUnhide : doHide}
+            />
             <ConvAction icon="archive-outline" label="Archive" onPress={doArchive} />
             {menuIsDirect && (
               <>
@@ -464,7 +551,19 @@ const makeStyles = (colors: Palette) =>
       justifyContent: 'space-between',
       marginTop: spacing(1),
     },
-    title: { color: colors.text, fontSize: font.heading, fontWeight: '600', flex: 1 },
+    titleWrap: { flexDirection: 'row', alignItems: 'center', flex: 1 },
+    title: { color: colors.text, fontSize: font.heading, fontWeight: '600', flexShrink: 1 },
+    onlineDot: {
+      position: 'absolute', right: 0, bottom: 0,
+      width: 14, height: 14, borderRadius: 7,
+      backgroundColor: '#25D366', borderWidth: 2, borderColor: colors.bg,
+    },
+    hiddenToggle: {
+      flexDirection: 'row', alignItems: 'center', gap: 6,
+      marginHorizontal: spacing(4), marginBottom: spacing(2),
+      paddingVertical: spacing(1),
+    },
+    hiddenToggleText: { color: colors.primary, fontSize: font.small, fontWeight: '600' },
     time: { color: colors.textFaint, fontSize: font.tiny, marginLeft: spacing(2) },
     timeUnread: { color: colors.primary },
     preview: { color: colors.textMuted, fontSize: font.small, flex: 1 },
