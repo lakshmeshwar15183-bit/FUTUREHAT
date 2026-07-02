@@ -19,6 +19,7 @@ function fmt(ms: number): string {
 export default function AudioMessage({ uri, tint }: Props) {
   const colors = useColors();
   const soundRef = useRef<Audio.Sound | null>(null);
+  const barWidth = useRef(0);
   const [playing, setPlaying] = useState(false);
   const [posMs, setPosMs] = useState(0);
   const [durMs, setDurMs] = useState(0);
@@ -68,6 +69,30 @@ export default function AudioMessage({ uri, tint }: Props) {
     }
   }
 
+  // Tap anywhere on the bar to scrub to that position (web VoiceMessage parity).
+  // Loads the sound first if the user seeks before pressing play.
+  async function seekTo(locationX: number) {
+    const w = barWidth.current;
+    if (w <= 0) return;
+    const frac = Math.max(0, Math.min(1, locationX / w));
+    try {
+      if (!soundRef.current) {
+        await Audio.setAudioModeAsync({ playsInSilentModeIOS: true });
+        const { sound } = await Audio.Sound.createAsync({ uri }, { shouldPlay: false }, onStatus);
+        soundRef.current = sound;
+      }
+      const st = await soundRef.current.getStatusAsync();
+      const total = st.isLoaded && st.durationMillis ? st.durationMillis : durMs;
+      if (total > 0) {
+        const target = frac * total;
+        await soundRef.current.setPositionAsync(target);
+        setPosMs(target);
+      }
+    } catch {
+      // ignore seek errors
+    }
+  }
+
   const progress = durMs > 0 ? posMs / durMs : 0;
 
   return (
@@ -76,11 +101,17 @@ export default function AudioMessage({ uri, tint }: Props) {
         <Ionicons name={playing ? 'pause' : 'play'} size={26} color={tint} />
       </Pressable>
       <View style={styles.barWrap}>
-        <View style={[styles.barBg, { backgroundColor: colors.border }]}>
-          <View
-            style={[styles.barFill, { backgroundColor: tint, width: `${progress * 100}%` }]}
-          />
-        </View>
+        <Pressable
+          hitSlop={{ top: 12, bottom: 12 }}
+          onLayout={(e) => { barWidth.current = e.nativeEvent.layout.width; }}
+          onPress={(e) => seekTo(e.nativeEvent.locationX)}
+        >
+          <View style={[styles.barBg, { backgroundColor: colors.border }]}>
+            <View
+              style={[styles.barFill, { backgroundColor: tint, width: `${progress * 100}%` }]}
+            />
+          </View>
+        </Pressable>
         <Text style={[styles.time, { color: colors.textMuted }]}>
           {fmt(posMs || durMs)}
         </Text>
