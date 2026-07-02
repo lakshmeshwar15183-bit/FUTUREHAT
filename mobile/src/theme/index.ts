@@ -7,3 +7,11 @@ export {
   useColors,
   type ThemePreference,
 } from './ThemeContext';
+export {
+  COLOR_THEMES,
+  WALLPAPERS,
+  resolveThemePalette,
+  resolveWallpaperColor,
+  type ColorTheme,
+  type Wallpaper,
+} from './appearance';

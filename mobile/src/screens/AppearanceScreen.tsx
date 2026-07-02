@@ -14,7 +14,17 @@ import {
   getSubscription,
   isSubscriptionActive,
 } from '../lib/shared';
-import { useTheme, palettes, spacing, radius, font, type Palette, type ThemePreference } from '../theme';
+import {
+  useTheme,
+  palettes,
+  spacing,
+  radius,
+  font,
+  COLOR_THEMES,
+  WALLPAPERS,
+  type Palette,
+  type ThemePreference,
+} from '../theme';
 
 const OPTIONS: { key: ThemePreference; label: string; sub: string }[] = [
   { key: 'system', label: 'System default', sub: 'Match your device setting' },
@@ -50,7 +60,7 @@ const APP_ICONS: { id: string; label: string; premium: boolean; glyph: string }[
 ];
 
 export default function AppearanceScreen() {
-  const { preference, setPreference, colors } = useTheme();
+  const { preference, setPreference, colors, colorTheme, setColorTheme, wallpaper, setWallpaper } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
   const [premium, setPremium] = useState(false);
@@ -122,6 +132,39 @@ export default function AppearanceScreen() {
           </Pressable>
         );
       })}
+
+      {/* Named color themes — 6 palettes shared with web (user_preferences.theme),
+          the five non-Classic ones gated to FUTUREHAT+. Applied live via ThemeContext. */}
+      <View style={styles.premiumHeader}>
+        <Text style={styles.sectionTitle}>Color theme</Text>
+        {!premium && <Text style={styles.lockHint}>FUTUREHAT+</Text>}
+      </View>
+      <View style={styles.themeRow}>
+        {Object.values(COLOR_THEMES).map((t) => {
+          const on = colorTheme === t.id;
+          const locked = t.premium && !premium;
+          return (
+            <Pressable
+              key={t.id}
+              style={[styles.themeChip, on && styles.themeChipOn]}
+              onPress={() => { if (!locked) setColorTheme(t.id); }}
+              disabled={!loaded}
+            >
+              <View style={[styles.themeSwatch, { backgroundColor: t.swatch[0], borderColor: colors.border }]}>
+                <View style={[styles.themeSwatchAccent, { backgroundColor: t.swatch[1] }]} />
+                {on && (
+                  <View style={styles.themeCheck}>
+                    <Ionicons name="checkmark-circle" size={18} color={t.swatch[1]} />
+                  </View>
+                )}
+              </View>
+              <Text style={[styles.themeLabel, on && styles.themeLabelOn]} numberOfLines={1}>
+                {t.label}{locked ? ' 🔒' : ''}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
 
       {/* Premium appearance options — font, bubble style and app icon. Persisted to
           user_preferences and gated to FUTUREHAT+ (same as the web app). */}
@@ -199,13 +242,43 @@ export default function AppearanceScreen() {
         applied on the web app and future releases.
       </Text>
 
-      <Text style={[styles.sectionTitle, { marginTop: spacing(6) }]}>Chat wallpaper</Text>
-      <View style={styles.wallpaperRow}>
-        {['#0B141A', '#1A2C24', '#222E35', '#15202B', '#2A1F2D'].map((c) => (
-          <View key={c} style={[styles.wallpaper, { backgroundColor: c }]} />
-        ))}
+      <View style={styles.premiumHeader}>
+        <Text style={styles.sectionTitle}>Chat wallpaper</Text>
+        {!premium && <Text style={styles.lockHint}>FUTUREHAT+</Text>}
       </View>
-      <Text style={styles.hint}>More wallpapers unlock with FUTUREHAT+.</Text>
+      <View style={styles.wallpaperRow}>
+        {WALLPAPERS.map((w) => {
+          const on = wallpaper === w.id;
+          const locked = w.premium && !premium;
+          return (
+            <Pressable
+              key={w.id}
+              style={styles.wallpaperCell}
+              onPress={() => { if (!locked) setWallpaper(w.id); }}
+              disabled={!loaded}
+            >
+              <View
+                style={[
+                  styles.wallpaper,
+                  { backgroundColor: w.color },
+                  on && { borderColor: colors.primary, borderWidth: 2 },
+                ]}
+              >
+                {locked && <Text style={styles.wallpaperLock}>🔒</Text>}
+                {on && (
+                  <View style={styles.wallpaperCheck}>
+                    <Ionicons name="checkmark-circle" size={18} color={colors.primary} />
+                  </View>
+                )}
+              </View>
+              <Text style={[styles.wallpaperLabel, on && { color: colors.primary }]} numberOfLines={1}>
+                {w.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      <Text style={styles.hint}>Extra wallpapers unlock with FUTUREHAT+.</Text>
 
       {!loaded && (
         <View style={styles.loadingRow}>
@@ -269,8 +342,26 @@ const makeStyles = (colors: Palette) =>
     iconGlyph: { fontSize: 26 },
     iconLabel: { color: colors.textMuted, fontSize: font.tiny, fontWeight: '600', marginTop: 4 },
     iconLabelOn: { color: colors.primary },
-    wallpaperRow: { flexDirection: 'row', gap: spacing(2) },
-    wallpaper: { width: 56, height: 84, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border },
+    themeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing(3) },
+    themeChip: { width: 64, alignItems: 'center' },
+    themeChipOn: {},
+    themeSwatch: {
+      width: 56, height: 56, borderRadius: radius.md, borderWidth: 1,
+      justifyContent: 'flex-end', padding: 6, overflow: 'hidden',
+    },
+    themeSwatchAccent: { height: 16, borderRadius: 4 },
+    themeCheck: { position: 'absolute', top: 3, right: 3 },
+    themeLabel: { color: colors.textMuted, fontSize: font.tiny, fontWeight: '600', marginTop: 4 },
+    themeLabelOn: { color: colors.primary },
+    wallpaperRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing(2) },
+    wallpaperCell: { alignItems: 'center', width: 56 },
+    wallpaper: {
+      width: 56, height: 84, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border,
+      alignItems: 'center', justifyContent: 'center',
+    },
+    wallpaperLock: { fontSize: 16 },
+    wallpaperCheck: { position: 'absolute', bottom: 3, right: 3 },
+    wallpaperLabel: { color: colors.textMuted, fontSize: font.tiny, fontWeight: '600', marginTop: 4 },
     hint: { color: colors.textFaint, fontSize: font.small, marginTop: spacing(3) },
     loadingRow: { paddingVertical: spacing(6), alignItems: 'center' },
   });

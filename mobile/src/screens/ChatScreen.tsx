@@ -73,7 +73,7 @@ import {
 import { flushOutbox, onOutboxSent } from '../lib/sync';
 import { uploadMediaFromUri } from '../lib/media';
 import { formatLastSeen, formatDaySeparator } from '../lib/time';
-import { useColors, spacing, radius, font, type Palette } from '../theme';
+import { useColors, useTheme, spacing, radius, font, type Palette } from '../theme';
 import MessageBubble, { type TickStatus, isVideoUrl, replySummary } from '../components/MessageBubble';
 import SwipeToReply from '../components/SwipeToReply';
 import MediaViewer, { type ViewerItem } from '../components/MediaViewer';
@@ -118,6 +118,7 @@ export default function ChatScreen() {
   const { params } = useRoute<Rt>();
   const { conversationId } = params;
   const colors = useColors();
+  const { wallpaperColor } = useTheme();
   const insets = useSafeAreaInsets();
   const { startCall } = useCalls();
   const styles = useMemo(() => makeStyles(colors), [colors]);
@@ -997,7 +998,7 @@ export default function ChatScreen() {
 
   return (
     <KeyboardAvoidingView
-      style={styles.flex}
+      style={[styles.flex, wallpaperColor ? { backgroundColor: wallpaperColor } : null]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
     >
