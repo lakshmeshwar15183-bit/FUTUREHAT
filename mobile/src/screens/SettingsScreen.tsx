@@ -96,7 +96,23 @@ export default function SettingsScreen() {
         <Row icon="person-outline" label="Account" onPress={() => navigation.navigate('EditProfile')} />
         <Row icon="key-outline" label="Account & security" onPress={() => navigation.navigate('AccountSecurity')} />
         <Row icon="lock-closed-outline" label="Privacy" onPress={() => navigation.navigate('Privacy')} />
-        <Row icon="shield-checkmark-outline" label="App lock" onPress={() => navigation.navigate('AppLockSetup')} />
+        <Row
+          icon="shield-checkmark-outline"
+          label="App lock"
+          locked={!(premium || admin)}
+          onPress={() =>
+            premium || admin
+              ? navigation.navigate('AppLockSetup')
+              : Alert.alert(
+                  'App lock',
+                  'Require a PIN / Face ID when opening FUTUREHAT. This is a FUTUREHAT+ feature.',
+                  [
+                    { text: 'Not now', style: 'cancel' },
+                    { text: 'See FUTUREHAT+', onPress: () => navigation.navigate('Premium') },
+                  ],
+                )
+          }
+        />
         <Row icon="notifications-outline" label="Notifications" onPress={() => navigation.navigate('Notifications')} />
       </Group>
 
@@ -143,11 +159,13 @@ function Row({
   label,
   onPress,
   danger,
+  locked,
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
   onPress: () => void;
   danger?: boolean;
+  locked?: boolean;
 }) {
   const colors = useColors();
   const tint = danger ? colors.danger : colors.text;
@@ -161,6 +179,9 @@ function Row({
     >
       <Ionicons name={icon} size={22} color={danger ? colors.danger : colors.textMuted} />
       <Text style={{ flex: 1, color: tint, fontSize: font.body, marginLeft: spacing(4) }}>{label}</Text>
+      {locked && (
+        <Ionicons name="lock-closed" size={14} color={colors.textFaint} style={{ marginRight: spacing(1.5) }} />
+      )}
       {!danger && <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />}
     </Pressable>
   );
