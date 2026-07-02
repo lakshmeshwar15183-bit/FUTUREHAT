@@ -108,10 +108,27 @@ export default function PremiumScreen() {
         </View>
       )}
 
+      {active && sub && (
+        <View style={styles.memberCard}>
+          <Text style={styles.memberPlan}>
+            {sub.plan === 'yearly' ? 'Yearly' : 'Monthly'} plan
+          </Text>
+          <Text style={styles.memberDate}>
+            {sub.cancel_at_period_end ? 'Ends ' : 'Renews '}
+            {sub.current_period_end ? new Date(sub.current_period_end).toLocaleDateString() : '—'}
+          </Text>
+          {sub.cancel_at_period_end && <Text style={styles.memberCancels}>Cancels at period end.</Text>}
+        </View>
+      )}
+
       {active ? (
-        <Pressable style={styles.cancelBtn} onPress={cancel}>
-          <Text style={styles.cancelText}>Cancel renewal</Text>
-        </Pressable>
+        // Once the subscription is set to cancel, there's nothing left to cancel
+        // (mirrors web hiding the Cancel button when cancel_at_period_end).
+        !sub?.cancel_at_period_end ? (
+          <Pressable style={styles.cancelBtn} onPress={cancel}>
+            <Text style={styles.cancelText}>Cancel subscription</Text>
+          </Pressable>
+        ) : null
       ) : PAYMENTS_READY ? (
         <Pressable style={styles.cta} onPress={activate} disabled={busy}>
           {busy ? <ActivityIndicator color="#000" /> : <Text style={styles.ctaText}>Get {APP_NAME}+</Text>}
@@ -197,6 +214,13 @@ const makeStyles = (colors: Palette) =>
     ctaText: { color: '#000', fontSize: font.heading, fontWeight: '800' },
     cancelBtn: { marginTop: spacing(4), alignItems: 'center' },
     cancelText: { color: colors.danger, fontSize: font.body },
+    memberCard: {
+      backgroundColor: colors.surface, marginHorizontal: spacing(4), borderRadius: radius.md,
+      paddingVertical: spacing(4), paddingHorizontal: spacing(4), alignItems: 'center',
+    },
+    memberPlan: { color: colors.text, fontSize: font.heading, fontWeight: '700' },
+    memberDate: { color: colors.textMuted, fontSize: font.small, marginTop: 4 },
+    memberCancels: { color: colors.accentPlusText, fontSize: font.small, marginTop: 4, fontWeight: '600' },
     restore: { color: colors.textFaint, fontSize: font.small, textAlign: 'center', marginTop: spacing(3) },
     features: { padding: spacing(5), marginTop: spacing(4) },
     catTitle: { color: colors.text, fontSize: font.heading, fontWeight: '700', marginBottom: spacing(2) },

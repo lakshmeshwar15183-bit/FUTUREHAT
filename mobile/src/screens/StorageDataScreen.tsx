@@ -49,12 +49,23 @@ export default function StorageDataScreen() {
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const [s, setS] = useState<StorageSettings>(DEFAULTS);
   const [used, setUsed] = useState<number | null>(null);
+  const [disk, setDisk] = useState<{ free: number; total: number } | null>(null);
   const [clearing, setClearing] = useState(false);
 
   const measure = useCallback(async () => {
     const dir = FileSystem.cacheDirectory;
     if (!dir) { setUsed(null); return; }
     setUsed(await dirSize(dir));
+    // Device-level usage → used/quota + % bar (parity with web navigator.storage.estimate).
+    try {
+      const [free, total] = await Promise.all([
+        FileSystem.getFreeDiskStorageAsync(),
+        FileSystem.getTotalDiskCapacityAsync(),
+      ]);
+      if (total > 0) setDisk({ free, total });
+    } catch {
+      setDisk(null);
+    }
   }, []);
 
   useEffect(() => {
@@ -98,7 +109,7 @@ export default function StorageDataScreen() {
     <ScrollView style={styles.container}>
       <Text style={styles.sectionLabel}>STORAGE USED</Text>
       <View style={styles.group}>
-        <View style={[styles.row, styles.rowLast]}>
+        <View style={styles.row}>
           <View style={{ flex: 1 }}>
             <Text style={styles.rowLabel}>Cached media &amp; data</Text>
             <Text style={styles.rowDesc}>
@@ -107,6 +118,22 @@ export default function StorageDataScreen() {
           </View>
           {used === null && <ActivityIndicator color={colors.primary} />}
         </View>
+        {disk && (() => {
+          const usedDevice = Math.max(0, disk.total - disk.free);
+          const pct = Math.min(100, Math.round((usedDevice / disk.total) * 100));
+          return (
+            <View style={[styles.row, styles.rowLast, { flexDirection: 'column', alignItems: 'stretch' }]}>
+              <View style={styles.diskRow}>
+                <Text style={styles.rowLabel}>{fmtBytes(usedDevice)} used</Text>
+                <Text style={styles.rowDesc}>of {fmtBytes(disk.total)} ({pct}%)</Text>
+              </View>
+              <View style={styles.bar}>
+                <View style={[styles.barFill, { width: `${pct}%` }]} />
+              </View>
+              <Text style={styles.rowDesc}>{fmtBytes(disk.free)} free on this device</Text>
+            </View>
+          );
+        })()}
       </View>
       <Pressable style={styles.clearBtn} onPress={clearCache} disabled={clearing}>
         {clearing
@@ -141,6 +168,9 @@ const makeStyles = (colors: Palette) =>
     rowLast: { borderBottomWidth: 0 },
     rowLabel: { color: colors.text, fontSize: font.body },
     rowDesc: { color: colors.textMuted, fontSize: font.small, marginTop: 2, marginRight: spacing(3) },
+    diskRow: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between' },
+    bar: { height: 8, borderRadius: 999, backgroundColor: colors.border, overflow: 'hidden', marginVertical: spacing(2) },
+    barFill: { height: '100%', backgroundColor: colors.primary },
     clearBtn: { backgroundColor: colors.surface, marginHorizontal: spacing(3), marginTop: spacing(2), borderRadius: radius.md, paddingVertical: spacing(3.5), alignItems: 'center' },
     clearBtnText: { color: colors.primary, fontSize: font.body, fontWeight: '600' },
     note: { color: colors.textFaint, fontSize: font.small, marginHorizontal: spacing(4), marginTop: spacing(3) },
