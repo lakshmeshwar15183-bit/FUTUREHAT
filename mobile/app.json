@@ -22,7 +22,7 @@
     },
     "android": {
       "package": "dev.lakshmeshwar.futurehat",
-      "versionCode": 8,
+      "versionCode": 9,
       "allowBackup": false,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
