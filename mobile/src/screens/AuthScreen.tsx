@@ -53,6 +53,12 @@ export default function AuthScreen() {
       setError('Password is required.');
       return;
     }
+    // Match web's minLength={6} on the password field (Auth.tsx:100) — same rule in
+    // both sign-in and sign-up; skip only the forgot-password (email-only) flow.
+    if (!isForgot && password.length < 6) {
+      setError('Password must be at least 6 characters.');
+      return;
+    }
     if (isSignup && !displayName.trim()) {
       setError('Please enter a display name.');
       return;
