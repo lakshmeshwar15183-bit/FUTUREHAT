@@ -61,6 +61,7 @@ import {
   getPreferences,
   getServerPremium,
   scheduleMessage,
+  dispatchDueMessages,
   FREE_LIMITS,
   PREMIUM_LIMITS,
 } from '../lib/shared';
@@ -150,6 +151,15 @@ export default function ChatScreen() {
   const [peers, setPeers] = useState<Profile[]>([]);
   const peersRef = useRef<Profile[]>([]);
   useEffect(() => { peersRef.current = peers; }, [peers]);
+
+  // Dispatch scheduled messages whose send-time has arrived — on open + every 60s.
+  // Mirrors web ChatView (dispatchDueMessages). Without this, messages scheduled
+  // on mobile would sit in the queue and never actually send.
+  useEffect(() => {
+    void dispatchDueMessages(supabase).catch(() => {});
+    const id = setInterval(() => { void dispatchDueMessages(supabase).catch(() => {}); }, 60000);
+    return () => clearInterval(id);
+  }, []);
   const [isGroup, setIsGroup] = useState(false);
   const [onlineIds, setOnlineIds] = useState<Set<string>>(new Set());
   const [typingName, setTypingName] = useState<string | null>(null);
