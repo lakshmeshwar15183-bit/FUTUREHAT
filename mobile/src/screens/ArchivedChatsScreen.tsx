@@ -39,6 +39,7 @@ export default function ArchivedChatsScreen() {
 
   return (
     <ScrollView style={styles.container}>
+      <Text style={styles.subtitle}>Archived chats stay hidden from your main list. They reappear there when a new message arrives.</Text>
       {loading ? (
         <Text style={styles.empty}>Loading…</Text>
       ) : items.length === 0 ? (
@@ -63,6 +64,7 @@ const makeStyles = (colors: Palette) =>
   StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.bg },
     empty: { color: colors.textMuted, textAlign: 'center', marginTop: spacing(10), fontSize: font.body },
+    subtitle: { color: colors.textMuted, fontSize: font.small, paddingHorizontal: spacing(4), paddingVertical: spacing(3) },
     row: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing(4), paddingVertical: spacing(3), borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
     rowMain: { flex: 1, flexDirection: 'row', alignItems: 'center' },
     rowBody: { flex: 1, marginLeft: spacing(3) },

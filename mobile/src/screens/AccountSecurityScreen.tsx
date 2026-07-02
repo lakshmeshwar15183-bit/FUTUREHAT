@@ -3,8 +3,13 @@
 // 30-day recovery window. Standalone; persists via accountApi + Supabase auth.
 import React, { useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import * as Clipboard from 'expo-clipboard';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { supabase } from '../lib/supabase';
+import type { RootStackParamList } from '../navigation/types';
 import {
   changeEmail, changePassword, requestAccountDeletion, cancelAccountDeletion,
   getDeletionRequest, getSecurityEvents, type DeletionRequest, type SecurityEvent,
@@ -14,12 +19,19 @@ import { useColors, spacing, radius, font, type Palette } from '../theme';
 export default function AccountSecurityScreen() {
   const colors = useColors();
   const styles = useMemo(() => makeStyles(colors), [colors]);
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [phone, setPhone] = useState('');
   const [events, setEvents] = useState<SecurityEvent[]>([]);
   const [deletion, setDeletion] = useState<DeletionRequest | null>(null);
   const [twofaOn, setTwofaOn] = useState(false);
+  // Two-step verification (Supabase TOTP MFA) — full enroll/verify/disable, same
+  // as the web AccountSettingsModal (was previously "set it up on the web app").
+  const [factorId, setFactorId] = useState<string | null>(null);
+  const [enroll, setEnroll] = useState<{ factorId: string; secret: string; uri: string } | null>(null);
+  const [mfaCode, setMfaCode] = useState('');
+  const [mfaBusy, setMfaBusy] = useState(false);
 
   useEffect(() => {
     getSecurityEvents(supabase).then(setEvents).catch(() => {});
@@ -27,10 +39,68 @@ export default function AccountSecurityScreen() {
     (async () => {
       try {
         const { data } = await (supabase.auth as any).mfa.listFactors();
-        setTwofaOn(!!data?.totp?.find((f: any) => f.status === 'verified'));
+        const verified = data?.totp?.find((f: any) => f.status === 'verified');
+        setTwofaOn(!!verified);
+        setFactorId(verified?.id ?? null);
       } catch { /* MFA may be off */ }
     })();
   }, []);
+
+  async function startEnroll() {
+    setMfaBusy(true);
+    try {
+      const { data, error } = await (supabase.auth as any).mfa.enroll({ factorType: 'totp' });
+      if (error) throw error;
+      setEnroll({ factorId: data.id, secret: data.totp?.secret ?? '', uri: data.totp?.uri ?? '' });
+    } catch (e: any) {
+      Alert.alert('Error', e?.message ?? 'Could not start setup.');
+    } finally {
+      setMfaBusy(false);
+    }
+  }
+
+  async function verifyEnroll() {
+    if (!enroll || mfaCode.trim().length < 6) return;
+    setMfaBusy(true);
+    try {
+      const mfa = (supabase.auth as any).mfa;
+      const ch = await mfa.challenge({ factorId: enroll.factorId });
+      if (ch.error) throw ch.error;
+      const v = await mfa.verify({ factorId: enroll.factorId, challengeId: ch.data.id, code: mfaCode.trim() });
+      if (v.error) throw v.error;
+      setTwofaOn(true);
+      setFactorId(enroll.factorId);
+      setEnroll(null);
+      setMfaCode('');
+      Alert.alert('Enabled', 'Two-step verification is now on for your account.');
+    } catch (e: any) {
+      Alert.alert('Invalid code', e?.message ?? 'Could not verify that code.');
+    } finally {
+      setMfaBusy(false);
+    }
+  }
+
+  function cancelEnroll() {
+    // Discard the unverified factor so it doesn't linger on the account.
+    if (enroll) (supabase.auth as any).mfa.unenroll({ factorId: enroll.factorId }).catch(() => {});
+    setEnroll(null);
+    setMfaCode('');
+  }
+
+  function disable2fa() {
+    if (!factorId) return;
+    Alert.alert('Turn off two-step verification', 'Your account will then rely on your password alone.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Turn off', style: 'destructive', onPress: async () => {
+          const { error } = await (supabase.auth as any).mfa.unenroll({ factorId });
+          if (error) return Alert.alert('Error', error.message);
+          setTwofaOn(false);
+          setFactorId(null);
+        },
+      },
+    ]);
+  }
 
   async function saveEmail() {
     if (!email.trim()) return;
@@ -89,12 +159,63 @@ export default function AccountSecurityScreen() {
       <Pressable style={styles.btn} onPress={savePhone}><Text style={styles.btnText}>Save phone</Text></Pressable>
 
       <Text style={styles.sectionLabel}>TWO-STEP VERIFICATION</Text>
+      {twofaOn ? (
+        <>
+          <View style={styles.group}>
+            <Text style={styles.note}>✅ Two-step verification is on for your account.</Text>
+          </View>
+          <Pressable style={styles.btnDanger} onPress={disable2fa}>
+            <Text style={styles.btnDangerText}>Turn off two-step verification</Text>
+          </Pressable>
+        </>
+      ) : enroll ? (
+        <>
+          <View style={styles.group}>
+            <Text style={styles.note}>Add this secret to your authenticator app (Google Authenticator, Authy…), then enter the 6-digit code it generates:</Text>
+            <Pressable
+              style={styles.secretRow}
+              onPress={async () => { await Clipboard.setStringAsync(enroll.secret); Alert.alert('Copied', 'Secret copied to clipboard.'); }}
+            >
+              <Text style={styles.secretText} selectable>{enroll.secret}</Text>
+              <Ionicons name="copy-outline" size={16} color={colors.primary} />
+            </Pressable>
+            <TextInput
+              style={styles.input}
+              placeholder="123456"
+              placeholderTextColor={colors.textFaint}
+              keyboardType="number-pad"
+              maxLength={6}
+              value={mfaCode}
+              onChangeText={setMfaCode}
+            />
+          </View>
+          <Pressable style={styles.btnPrimary} onPress={verifyEnroll} disabled={mfaBusy}>
+            <Text style={styles.btnPrimaryText}>{mfaBusy ? 'Verifying…' : 'Verify & enable'}</Text>
+          </Pressable>
+          <Pressable style={styles.btn} onPress={cancelEnroll}>
+            <Text style={styles.btnText}>Cancel</Text>
+          </Pressable>
+        </>
+      ) : (
+        <>
+          <View style={styles.group}>
+            <Text style={styles.note}>Protect your account with a time-based one-time code from an authenticator app.</Text>
+          </View>
+          <Pressable style={styles.btnPrimary} onPress={startEnroll} disabled={mfaBusy}>
+            <Text style={styles.btnPrimaryText}>{mfaBusy ? 'Starting…' : 'Set up two-step verification'}</Text>
+          </Pressable>
+        </>
+      )}
+
+      <Text style={styles.sectionLabel}>YOUR DATA</Text>
       <View style={styles.group}>
-        <Text style={styles.note}>
-          {twofaOn
-            ? '✅ Two-step verification is on for your account.'
-            : 'Set up two-step verification from the FUTUREHAT web app — it then protects every device you sign in on.'}
-        </Text>
+        <Pressable style={styles.linkRow} onPress={() => navigation.navigate('DataExport')}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.rowLabel}>Export your data</Text>
+            <Text style={styles.linkSub}>Download a copy of your account data.</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
+        </Pressable>
       </View>
 
       <Text style={styles.sectionLabel}>LOGIN & SECURITY HISTORY</Text>
@@ -138,4 +259,9 @@ const makeStyles = (colors: Palette) =>
     histKind: { color: colors.text, fontSize: font.body, textTransform: 'capitalize' },
     histMeta: { color: colors.textMuted, fontSize: font.small, marginTop: 2 },
     note: { color: colors.textMuted, fontSize: font.small, marginHorizontal: spacing(4), marginTop: spacing(2) },
+    secretRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginHorizontal: spacing(4), marginTop: spacing(3), paddingVertical: spacing(2), paddingHorizontal: spacing(3), backgroundColor: colors.surfaceAlt, borderRadius: radius.sm },
+    secretText: { color: colors.text, fontSize: font.small, fontFamily: undefined, flex: 1, marginRight: spacing(2), letterSpacing: 1 },
+    linkRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing(4), paddingVertical: spacing(3) },
+    rowLabel: { color: colors.text, fontSize: font.body, fontWeight: '500' },
+    linkSub: { color: colors.textMuted, fontSize: font.small, marginTop: 2 },
   });
