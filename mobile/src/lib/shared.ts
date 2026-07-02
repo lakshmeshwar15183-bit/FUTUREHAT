@@ -3,7 +3,9 @@
 // TypeScript resolves them via the @shared/* path alias / relative source.
 export * from '../../../shared/api';
 export * from '../../../shared/types';
+export * from '../../../shared/messageExtras';
 export * from '../../../shared/premiumApi';
+export * from '../../../shared/adminApi';
 export * from '../../../shared/callsApi';
 export * from '../../../shared/communitiesApi';
 export * from '../../../shared/supportApi';

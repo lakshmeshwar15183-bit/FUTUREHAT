@@ -9,6 +9,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
 import {
   getPrivacy, setPrivacy, getBlockedIds, unblockUser, getProfile,
+  getPreferences, updatePreferences, getSubscription, isSubscriptionActive,
   type PrivacySettings, type Visibility, type Profile,
 } from '../lib/shared';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
@@ -31,9 +32,13 @@ export default function PrivacyScreen() {
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const [p, setP] = useState<PrivacySettings | null>(null);
   const [blocked, setBlocked] = useState<Profile[]>([]);
+  const [ghostMode, setGhostMode] = useState(false);
+  const [isPremium, setIsPremium] = useState(false);
 
   useEffect(() => {
     getPrivacy(supabase).then(setP).catch(() => {});
+    getPreferences(supabase).then((prefs) => setGhostMode(!!prefs?.ghost_mode)).catch(() => {});
+    getSubscription(supabase).then((sub) => setIsPremium(isSubscriptionActive(sub))).catch(() => {});
     (async () => {
       const ids = await getBlockedIds(supabase).catch(() => [] as string[]);
       const profiles = await Promise.all(ids.map((id) => getProfile(supabase, id).catch(() => null)));
@@ -44,6 +49,16 @@ export default function PrivacyScreen() {
   async function update(patch: Partial<PrivacySettings>) {
     setP((cur) => (cur ? { ...cur, ...patch } : cur));
     await setPrivacy(supabase, patch);
+  }
+
+  async function toggleGhost(v: boolean) {
+    if (!isPremium) {
+      Alert.alert('FUTUREHAT+', 'Ghost mode is a premium feature. Upgrade to FUTUREHAT+ to use it.');
+      return;
+    }
+    setGhostMode(v);
+    const { error } = await updatePreferences(supabase, { ghost_mode: v });
+    if (error) setGhostMode(!v);
   }
 
   function pickVisibility(key: keyof PrivacySettings) {
@@ -71,6 +86,21 @@ export default function PrivacyScreen() {
             <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
           </Pressable>
         ))}
+      </View>
+
+      <Text style={styles.sectionLabel}>PREMIUM</Text>
+      <View style={styles.group}>
+        <View style={styles.row}>
+          <View style={{ flex: 1, marginRight: spacing(3) }}>
+            <Text style={styles.rowLabel}>Ghost mode {!isPremium && <Text style={styles.lockHint}>premium</Text>}</Text>
+            <Text style={styles.rowDesc}>Read &amp; type without sending receipts or typing status</Text>
+          </View>
+          <Switch
+            value={isPremium && ghostMode}
+            onValueChange={toggleGhost}
+            trackColor={{ true: colors.primary, false: colors.border }}
+          />
+        </View>
       </View>
 
       <Text style={styles.sectionLabel}>RECEIPTS</Text>
@@ -110,6 +140,8 @@ const makeStyles = (colors: Palette) =>
     row: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing(4), paddingVertical: spacing(3.5), borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
     rowLabel: { flex: 1, color: colors.text, fontSize: font.body },
     rowValue: { color: colors.textMuted, fontSize: font.small, marginRight: spacing(2) },
+    rowDesc: { color: colors.textMuted, fontSize: font.small, marginTop: 2 },
+    lockHint: { color: colors.primary, fontSize: font.tiny, fontWeight: '700' },
     empty: { color: colors.textMuted, fontSize: font.small, padding: spacing(4) },
     blockedRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing(4), paddingVertical: spacing(3) },
     blockedName: { flex: 1, color: colors.text, fontSize: font.body, marginLeft: spacing(3) },

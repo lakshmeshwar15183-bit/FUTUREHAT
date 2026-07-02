@@ -2,7 +2,9 @@
 // title/avatar/last-message/unread, and routes into a thread.
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  Alert,
   FlatList,
+  Modal,
   Pressable,
   RefreshControl,
   StyleSheet,
@@ -11,11 +13,26 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { supabase } from '../lib/supabase';
-import { getMyConversations, getCurrentUser, searchAllMessages } from '../lib/shared';
+import {
+  getMyConversations,
+  getCurrentUser,
+  searchAllMessages,
+  getPinnedIds,
+  pinConversation,
+  unpinConversation,
+  getMutedIds,
+  muteConversation,
+  unmuteConversation,
+  hideConversation,
+  archiveConversation,
+  blockUser,
+  submitReport,
+} from '../lib/shared';
 import type { ConversationSummary, MessageSearchHit } from '../lib/shared';
 import { getCachedConversations, cacheConversations } from '../lib/localCache';
 import { onConnectivity } from '../lib/sync';
@@ -37,6 +54,10 @@ export default function ConversationsScreen() {
   const [uid, setUid] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [msgHits, setMsgHits] = useState<MessageSearchHit[]>([]);
+  const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
+  const [mutedIds, setMutedIds] = useState<Set<string>>(new Set());
+  const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
+  const [menuFor, setMenuFor] = useState<ConversationSummary | null>(null);
 
   const q = query.trim().toLowerCase();
   const convById = useMemo(() => {
@@ -44,10 +65,17 @@ export default function ConversationsScreen() {
     items.forEach((c) => m.set(c.conversation.id, c));
     return m;
   }, [items]);
-  const filteredItems = useMemo(
-    () => (q ? items.filter((c) => c.title.toLowerCase().includes(q)) : items),
-    [items, q],
-  );
+  const filteredItems = useMemo(() => {
+    const base = items.filter((c) => !hiddenIds.has(c.conversation.id)); // hidden chats never listed
+    const searched = q ? base.filter((c) => c.title.toLowerCase().includes(q)) : base;
+    // Pinned conversations float to the top (WhatsApp-style), otherwise the
+    // getMyConversations order (most-recent first) is preserved.
+    return [...searched].sort((a, b) => {
+      const pa = pinnedIds.has(a.conversation.id) ? 1 : 0;
+      const pb = pinnedIds.has(b.conversation.id) ? 1 : 0;
+      return pb - pa;
+    });
+  }, [items, q, hiddenIds, pinnedIds]);
 
   useEffect(() => {
     const term = query.trim();
@@ -95,6 +123,13 @@ export default function ConversationsScreen() {
       setItems(data);
       const u = await getCurrentUser(supabase);
       if (u?.id) cacheConversations(u.id, data).catch(() => {});
+      // Per-user conversation flags (pin/mute). Degrade to empty on any error.
+      Promise.all([getPinnedIds(supabase), getMutedIds(supabase)])
+        .then(([pinned, muted]) => {
+          setPinnedIds(new Set(pinned));
+          setMutedIds(new Set(muted));
+        })
+        .catch(() => {});
     } catch {
       // keep last known (cached) list on transient errors / offline
     } finally {
@@ -126,6 +161,85 @@ export default function ConversationsScreen() {
     return body;
   };
 
+  // ── Conversation row actions (long-press menu) ──────────────────────────────
+  const isPinned = menuFor ? pinnedIds.has(menuFor.conversation.id) : false;
+  const isMuted = menuFor ? mutedIds.has(menuFor.conversation.id) : false;
+  const menuIsDirect = menuFor?.conversation.type === 'direct';
+  const menuPeer = menuFor?.participants.find((p) => p.id !== uid) ?? null;
+
+  async function togglePin() {
+    if (!menuFor) return;
+    const id = menuFor.conversation.id;
+    setMenuFor(null);
+    const pinned = pinnedIds.has(id);
+    setPinnedIds((prev) => { const n = new Set(prev); pinned ? n.delete(id) : n.add(id); return n; });
+    const { error } = pinned ? await unpinConversation(supabase, id) : await pinConversation(supabase, id);
+    if (error) setPinnedIds((prev) => { const n = new Set(prev); pinned ? n.add(id) : n.delete(id); return n; });
+  }
+
+  async function toggleMute() {
+    if (!menuFor) return;
+    const id = menuFor.conversation.id;
+    setMenuFor(null);
+    const muted = mutedIds.has(id);
+    setMutedIds((prev) => { const n = new Set(prev); muted ? n.delete(id) : n.add(id); return n; });
+    const { error } = muted ? await unmuteConversation(supabase, id) : await muteConversation(supabase, id);
+    if (error) setMutedIds((prev) => { const n = new Set(prev); muted ? n.add(id) : n.delete(id); return n; });
+  }
+
+  async function doHide() {
+    if (!menuFor) return;
+    const id = menuFor.conversation.id;
+    setMenuFor(null);
+    setHiddenIds((prev) => new Set(prev).add(id));
+    const { error } = await hideConversation(supabase, id);
+    if (error) { setHiddenIds((prev) => { const n = new Set(prev); n.delete(id); return n; }); Alert.alert('Could not hide', error.message); }
+  }
+
+  async function doArchive() {
+    if (!menuFor) return;
+    const id = menuFor.conversation.id;
+    setMenuFor(null);
+    setHiddenIds((prev) => new Set(prev).add(id)); // archived chats leave the main list
+    const { error } = await archiveConversation(supabase, id);
+    if (error) { setHiddenIds((prev) => { const n = new Set(prev); n.delete(id); return n; }); Alert.alert('Could not archive', error.message); }
+  }
+
+  function doBlock() {
+    const peer = menuPeer;
+    if (!peer) return;
+    setMenuFor(null);
+    Alert.alert('Block contact', `Block ${peer.display_name ?? 'this user'}? They won't be able to message you.`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Block',
+        style: 'destructive',
+        onPress: async () => {
+          const { error } = await blockUser(supabase, peer.id);
+          if (error) Alert.alert('Could not block', error.message);
+          else Alert.alert('Blocked', `${peer.display_name ?? 'User'} has been blocked.`);
+        },
+      },
+    ]);
+  }
+
+  function doReport() {
+    const peer = menuPeer;
+    if (!peer) return;
+    setMenuFor(null);
+    Alert.alert('Report contact', `Report ${peer.display_name ?? 'this user'} to the safety team?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Report',
+        style: 'destructive',
+        onPress: async () => {
+          const { error } = await submitReport(supabase, 'user', peer.id, 'Reported from chat list');
+          Alert.alert(error ? 'Could not report' : 'Reported', error ? error.message : 'Thanks — our team will review this.');
+        },
+      },
+    ]);
+  }
+
   // Stable separator so the list doesn't rebuild every separator each render.
   const Separator = useCallback(() => <View style={styles.sep} />, [styles]);
 
@@ -138,6 +252,8 @@ export default function ConversationsScreen() {
           title: item.title,
         })
       }
+      onLongPress={() => { Haptics.selectionAsync().catch(() => {}); setMenuFor(item); }}
+      delayLongPress={280}
     >
       <Avatar uri={item.avatarUrl} name={item.title} size={52} />
       <View style={styles.rowBody}>
@@ -153,13 +269,21 @@ export default function ConversationsScreen() {
           <Text style={styles.preview} numberOfLines={1}>
             {lastPreview(item)}
           </Text>
-          {item.unreadCount > 0 && (
-            <View style={styles.badge}>
-              <Text style={styles.badgeText}>
-                {item.unreadCount > 99 ? '99+' : item.unreadCount}
-              </Text>
-            </View>
-          )}
+          <View style={styles.rowIcons}>
+            {mutedIds.has(item.conversation.id) && (
+              <Ionicons name="notifications-off" size={14} color={colors.textFaint} style={{ marginLeft: spacing(1) }} />
+            )}
+            {pinnedIds.has(item.conversation.id) && (
+              <Ionicons name="pin" size={14} color={colors.textFaint} style={{ marginLeft: spacing(1) }} />
+            )}
+            {item.unreadCount > 0 && (
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>
+                  {item.unreadCount > 99 ? '99+' : item.unreadCount}
+                </Text>
+              </View>
+            )}
+          </View>
         </View>
       </View>
     </Pressable>
@@ -256,7 +380,50 @@ export default function ConversationsScreen() {
       >
         <Ionicons name="create-outline" size={26} color="#fff" />
       </Pressable>
+
+      {/* Conversation long-press action sheet */}
+      <Modal visible={!!menuFor} transparent animationType="fade" onRequestClose={() => setMenuFor(null)}>
+        <Pressable style={styles.backdrop} onPress={() => setMenuFor(null)}>
+          <View style={styles.sheet}>
+            <Text style={styles.sheetTitle} numberOfLines={1}>{menuFor?.title}</Text>
+            <ConvAction icon={isPinned ? 'pin' : 'pin-outline'} label={isPinned ? 'Unpin' : 'Pin'} onPress={togglePin} />
+            <ConvAction icon={isMuted ? 'notifications' : 'notifications-off-outline'} label={isMuted ? 'Unmute' : 'Mute'} onPress={toggleMute} />
+            <ConvAction icon="eye-off-outline" label="Hide" onPress={doHide} />
+            <ConvAction icon="archive-outline" label="Archive" onPress={doArchive} />
+            {menuIsDirect && (
+              <>
+                <ConvAction icon="flag-outline" label="Report" onPress={doReport} />
+                <ConvAction icon="ban-outline" label="Block" danger onPress={doBlock} />
+              </>
+            )}
+          </View>
+        </Pressable>
+      </Modal>
     </View>
+  );
+}
+
+function ConvAction({
+  icon,
+  label,
+  onPress,
+  danger,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  onPress: () => void;
+  danger?: boolean;
+}) {
+  const colors = useColors();
+  const tint = danger ? colors.danger : colors.text;
+  return (
+    <Pressable
+      style={({ pressed }) => [{ flexDirection: 'row', alignItems: 'center', paddingVertical: spacing(3.5) }, pressed && { opacity: 0.6 }]}
+      onPress={onPress}
+    >
+      <Ionicons name={icon} size={22} color={danger ? colors.danger : colors.textMuted} />
+      <Text style={{ color: tint, fontSize: font.body, marginLeft: spacing(4) }}>{label}</Text>
+    </Pressable>
   );
 }
 
@@ -347,4 +514,15 @@ const makeStyles = (colors: Palette) =>
       elevation: 6,
     },
     fabPressed: { backgroundColor: colors.primaryDark },
+    rowIcons: { flexDirection: 'row', alignItems: 'center' },
+    backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+    sheet: {
+      backgroundColor: colors.surface,
+      borderTopLeftRadius: radius.lg,
+      borderTopRightRadius: radius.lg,
+      paddingHorizontal: 20,
+      paddingTop: 16,
+      paddingBottom: spacing(6),
+    },
+    sheetTitle: { color: colors.text, fontSize: font.heading, fontWeight: '700', marginBottom: 8 },
   });

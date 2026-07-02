@@ -47,6 +47,10 @@ import ArchivedChatsScreen from './src/screens/ArchivedChatsScreen';
 import LegalScreen from './src/screens/LegalScreen';
 import DiagnosticsScreen from './src/screens/DiagnosticsScreen';
 import InviteScreen from './src/screens/InviteScreen';
+import StarredScreen from './src/screens/StarredScreen';
+import AdminDashboardScreen from './src/screens/admin/AdminDashboardScreen';
+import AdminUserDetailScreen from './src/screens/admin/AdminUserDetailScreen';
+import AdminGate from './src/components/AdminGate';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator();
@@ -169,12 +173,16 @@ function RootNavigator() {
               <Stack.Screen name="Legal" component={LegalScreen} options={{ title: 'Legal & policies' }} />
               <Stack.Screen name="Diagnostics" component={DiagnosticsScreen} options={{ title: 'Diagnostics' }} />
               <Stack.Screen name="Invite" component={InviteScreen} options={{ title: 'Invite friends' }} />
+              <Stack.Screen name="Starred" component={StarredScreen} options={{ title: 'Starred messages' }} />
+              <Stack.Screen name="Admin" component={AdminDashboardScreen} options={{ title: 'Admin dashboard' }} />
+              <Stack.Screen name="AdminUserDetail" component={AdminUserDetailScreen} options={{ title: 'Manage user' }} />
             </>
           ) : (
             <Stack.Screen name="Auth" component={AuthScreen} options={{ headerShown: false }} />
           )}
         </Stack.Navigator>
       </NavigationContainer>
+      {signedIn && <AdminGate />}
       {signedIn && locked && (
         <View style={StyleSheet.absoluteFill}>
           <LockScreen />

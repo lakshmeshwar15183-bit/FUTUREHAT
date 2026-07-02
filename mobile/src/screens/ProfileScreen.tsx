@@ -10,8 +10,11 @@ import { supabase } from '../lib/supabase';
 import {
   getCurrentUser, getProfile, startDirectConversation,
   blockUser, unblockUser, getBlockedIds, submitReport, getSharedMedia,
+  getMutedIds, muteConversation, unmuteConversation,
+  getPremiumUserIds, joinPresence,
 } from '../lib/shared';
 import type { Profile, CallType, Message } from '../lib/shared';
+import { formatLastSeen } from '../lib/time';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import { useCalls } from '../calls/CallContext';
 import Avatar from '../components/Avatar';
@@ -31,7 +34,11 @@ export default function ProfileScreen() {
   const [isMe, setIsMe] = useState(false);
   const [loading, setLoading] = useState(true);
   const [blocked, setBlocked] = useState(false);
+  const [muted, setMuted] = useState(false);
+  const [isPremium, setIsPremium] = useState(false);
+  const [online, setOnline] = useState(false);
   const [photos, setPhotos] = useState<Message[]>([]);
+  const [docs, setDocs] = useState<Message[]>([]);
   const [viewerUrl, setViewerUrl] = useState<string | null>(null);
 
   useEffect(() => {
@@ -42,13 +49,36 @@ export default function ProfileScreen() {
       setProfile(p);
       const ids = await getBlockedIds(supabase).catch(() => [] as string[]);
       setBlocked(ids.includes(params.userId));
+      const premiumIds = await getPremiumUserIds(supabase).catch(() => [] as string[]);
+      setIsPremium(premiumIds.includes(params.userId));
       setLoading(false);
       if (params.conversationId) {
-        const media = await getSharedMedia(supabase, params.conversationId).catch(() => [] as Message[]);
+        const convId = params.conversationId;
+        const mutedIds = await getMutedIds(supabase).catch(() => [] as string[]);
+        setMuted(mutedIds.includes(convId));
+        const media = await getSharedMedia(supabase, convId).catch(() => [] as Message[]);
         setPhotos(media.filter((m) => m.type === 'image' && m.media_url));
+        setDocs(media.filter((m) => m.type === 'file'));
       }
     })();
   }, [params.userId, params.conversationId]);
+
+  // Real-time presence: mirror ChatScreen — join the global presence channel and
+  // mark this contact "online" when their id is present. Skip for self.
+  useEffect(() => {
+    if (isMe) return;
+    let channel: ReturnType<typeof joinPresence> | null = null;
+    (async () => {
+      const me = await getCurrentUser(supabase);
+      if (!me) return;
+      channel = joinPresence(supabase, me.id, (onlineIds) => setOnline(onlineIds.has(params.userId)));
+    })();
+    return () => {
+      if (channel) supabase.removeChannel(channel);
+    };
+  }, [isMe, params.userId]);
+
+  const presence = online ? 'online' : formatLastSeen(profile?.last_seen) || 'offline';
 
   async function toggleBlock() {
     const was = blocked;
@@ -56,6 +86,16 @@ export default function ProfileScreen() {
     setBlocked(!was);
     const { error } = was ? await unblockUser(supabase, params.userId) : await blockUser(supabase, params.userId);
     if (error) setBlocked(was);
+  }
+
+  async function toggleMute() {
+    if (!params.conversationId) return;
+    const was = muted;
+    setMuted(!was);
+    const { error } = was
+      ? await unmuteConversation(supabase, params.conversationId)
+      : await muteConversation(supabase, params.conversationId);
+    if (error) setMuted(was);
   }
 
   function report() {
@@ -105,15 +145,34 @@ export default function ProfileScreen() {
     <ScrollView style={styles.container}>
       <View style={styles.header}>
         <Avatar uri={profile?.avatar_url} name={profile?.display_name} size={120} />
-        <Text style={styles.name}>{profile?.display_name ?? 'FUTUREHAT user'}</Text>
+        <View style={styles.nameRow}>
+          <Text style={styles.name}>{profile?.display_name ?? 'FUTUREHAT user'}</Text>
+          {isPremium && (
+            <Ionicons name="star" size={18} color={colors.primary} style={styles.premiumBadge} />
+          )}
+        </View>
         {!!profile?.username && <Text style={styles.username}>@{profile.username}</Text>}
+        {!isMe && <Text style={styles.presence}>{presence}</Text>}
       </View>
 
       {!isMe && (
         <View style={styles.actions}>
           <ActionButton icon="chatbubble" label="Message" onPress={message} />
+          {!!params.conversationId && (
+            <ActionButton
+              icon={muted ? 'notifications-off' : 'notifications'}
+              label={muted ? 'Unmute' : 'Mute'}
+              onPress={toggleMute}
+            />
+          )}
           <ActionButton icon="call" label="Voice" onPress={() => call('audio')} />
           <ActionButton icon="videocam" label="Video" onPress={() => call('video')} />
+        </View>
+      )}
+
+      {!isMe && blocked && (
+        <View style={styles.blockedBanner}>
+          <Text style={styles.blockedText}>🚫 You have blocked this user.</Text>
         </View>
       )}
 
@@ -136,6 +195,19 @@ export default function ProfileScreen() {
               </Pressable>
             ))}
           </View>
+        </Section>
+      )}
+
+      {docs.length > 0 && (
+        <Section title={`Files & docs · ${docs.length}`}>
+          {docs.slice(0, 12).map((m) => (
+            <View key={m.id} style={styles.docRow}>
+              <Ionicons name="document-attach-outline" size={22} color={colors.primary} />
+              <Text style={styles.docName} numberOfLines={1}>
+                {m.content || 'Attachment'}
+              </Text>
+            </View>
+          ))}
         </Section>
       )}
 
@@ -210,14 +282,21 @@ const makeStyles = (colors: Palette) =>
     container: { flex: 1, backgroundColor: colors.bg },
     center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg },
     header: { alignItems: 'center', paddingVertical: spacing(8), backgroundColor: colors.surface },
-    name: { color: colors.text, fontSize: font.title, fontWeight: '700', marginTop: spacing(3) },
+    nameRow: { flexDirection: 'row', alignItems: 'center', marginTop: spacing(3) },
+    name: { color: colors.text, fontSize: font.title, fontWeight: '700' },
+    premiumBadge: { marginLeft: 6 },
     username: { color: colors.textMuted, fontSize: font.body, marginTop: 2 },
+    presence: { color: colors.primary, fontSize: font.small, marginTop: 4 },
     actions: { flexDirection: 'row', justifyContent: 'center', gap: spacing(8), paddingVertical: spacing(5), backgroundColor: colors.surface, marginBottom: spacing(2) },
     about: { color: colors.text, fontSize: font.body, lineHeight: 21 },
     editBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: spacing(4), gap: 8 },
     editText: { color: colors.primary, fontSize: font.heading, fontWeight: '600' },
     actionRow: { flexDirection: 'row', alignItems: 'center', gap: spacing(4), paddingHorizontal: spacing(5), paddingVertical: spacing(3.5), backgroundColor: colors.surface, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
     actionRowText: { color: colors.text, fontSize: font.body },
+    blockedBanner: { backgroundColor: colors.surface, paddingHorizontal: spacing(5), paddingVertical: spacing(3), marginBottom: spacing(2) },
+    blockedText: { color: colors.danger, fontSize: font.body, textAlign: 'center' },
+    docRow: { flexDirection: 'row', alignItems: 'center', gap: spacing(3), paddingVertical: spacing(2) },
+    docName: { flex: 1, color: colors.text, fontSize: font.body },
     mediaGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 4 },
     mediaThumb: { width: 78, height: 78, borderRadius: radius.sm, backgroundColor: colors.surface },
     viewer: { flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', alignItems: 'center', justifyContent: 'center' },

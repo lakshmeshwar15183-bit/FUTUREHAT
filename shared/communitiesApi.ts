@@ -213,6 +213,24 @@ export async function votePoll(
   return { error };
 }
 
+// Remove the current user's vote for a single option (used by multiple-choice
+// polls to toggle a chosen option back off — mirrors web PollCard `cast`).
+export async function unvotePoll(
+  client: SupabaseClient,
+  pollId: UUID,
+  optionIndex: number,
+): Promise<{ error: Error | null }> {
+  const user = await getCurrentUser(client);
+  if (!user) return { error: new Error('not authenticated') };
+  const { error } = await client
+    .from('poll_votes')
+    .delete()
+    .eq('poll_id', pollId)
+    .eq('user_id', user.id)
+    .eq('option_index', optionIndex);
+  return { error };
+}
+
 // ── Events ───────────────────────────────────────────────────────────────────
 export async function createEvent(
   client: SupabaseClient,

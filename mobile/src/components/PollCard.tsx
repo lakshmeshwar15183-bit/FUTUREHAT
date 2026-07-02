@@ -29,6 +29,8 @@ export default function PollCard({ poll, votes, myUserId, onVote }: Props) {
     () => new Set(votes.filter((v) => v.user_id === myUserId).map((v) => v.option_index)),
     [votes, myUserId],
   );
+  // A poll past its closes_at can no longer be voted on (mirrors web).
+  const closed = !!poll.closes_at && new Date(poll.closes_at).getTime() < Date.now();
 
   return (
     <View style={styles.card}>
@@ -43,7 +45,7 @@ export default function PollCard({ poll, votes, myUserId, onVote }: Props) {
         const pct = total ? Math.round((c / total) * 100) : 0;
         const chosen = mine.has(i);
         return (
-          <Pressable key={i} style={styles.opt} onPress={() => onVote(i)}>
+          <Pressable key={i} style={styles.opt} onPress={() => onVote(i)} disabled={closed}>
             <View style={styles.barTrack}>
               <View style={[styles.barFill, { width: `${pct}%`, backgroundColor: chosen ? colors.primary : colors.surfaceAlt }]} />
             </View>
@@ -60,7 +62,9 @@ export default function PollCard({ poll, votes, myUserId, onVote }: Props) {
         );
       })}
 
-      <Text style={styles.total}>{total} vote{total === 1 ? '' : 's'}</Text>
+      <Text style={styles.total}>
+        {total} vote{total === 1 ? '' : 's'} · {poll.multiple ? 'multiple choice' : 'single choice'}{closed ? ' · closed' : ''}
+      </Text>
     </View>
   );
 }

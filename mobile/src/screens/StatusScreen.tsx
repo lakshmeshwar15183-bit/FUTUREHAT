@@ -186,8 +186,15 @@ export default function StatusScreen() {
         }
         renderItem={({ item }) => (
           <Pressable style={styles.row} onPress={() => setViewing(item)}>
-            <View style={[styles.ring, { borderColor: item.allSeen ? colors.border : colors.primary }]}>
-              <Avatar uri={item.profile?.avatar_url} name={item.profile?.display_name} size={50} />
+            <View>
+              <View style={[styles.ring, { borderColor: item.allSeen ? colors.border : colors.primary }]}>
+                <Avatar uri={item.profile?.avatar_url} name={item.profile?.display_name} size={50} />
+              </View>
+              {item.statuses.length > 1 && (
+                <View style={styles.countBadge}>
+                  <Text style={styles.countBadgeText}>{item.statuses.length}</Text>
+                </View>
+              )}
             </View>
             <View style={styles.rowBody}>
               <Text style={styles.name}>{item.profile?.display_name ?? 'FUTUREHAT user'}</Text>
@@ -511,6 +518,21 @@ const makeStyles = (colors: Palette) =>
       borderWidth: 2,
       borderColor: colors.surface,
     },
+    countBadge: {
+      position: 'absolute',
+      top: -2,
+      right: -2,
+      minWidth: 18,
+      height: 18,
+      paddingHorizontal: 4,
+      borderRadius: 9,
+      backgroundColor: colors.primary,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 2,
+      borderColor: colors.bg,
+    },
+    countBadgeText: { color: '#fff', fontSize: font.tiny, fontWeight: '700' },
     rowBody: { marginLeft: spacing(3), flex: 1 },
     name: { color: colors.text, fontSize: font.heading, fontWeight: '500' },
     sub: { color: colors.textMuted, fontSize: font.small, marginTop: 2 },

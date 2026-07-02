@@ -103,10 +103,17 @@ export default function SettingsScreen() {
       <Group>
         <Row icon="color-palette-outline" label="Appearance & Themes" onPress={() => navigation.navigate('Appearance')} />
         <Row icon="chatbubble-ellipses-outline" label="Chats" onPress={() => navigation.navigate('ChatSettings')} />
+        <Row icon="star-outline" label="Starred messages" onPress={() => navigation.navigate('Starred')} />
         <Row icon="folder-outline" label="Storage & Data" onPress={() => navigation.navigate('StorageData')} />
         <Row icon="archive-outline" label="Archived chats" onPress={() => navigation.navigate('ArchivedChats')} />
         <Row icon="download-outline" label="Export my data" onPress={() => navigation.navigate('DataExport')} />
       </Group>
+
+      {admin && (
+        <Group>
+          <Row icon="shield-half-outline" label="Admin dashboard" onPress={() => navigation.navigate('Admin')} />
+        </Group>
+      )}
 
       <Group>
         <Row icon="share-social-outline" label="Invite a friend" onPress={() => navigation.navigate('Invite')} />

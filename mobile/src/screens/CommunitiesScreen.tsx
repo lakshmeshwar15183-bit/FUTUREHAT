@@ -1,12 +1,12 @@
 // FUTUREHAT mobile — Communities tab: list the communities you're in, create new.
 import React, { useCallback, useMemo, useState } from 'react';
-import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { supabase } from '../lib/supabase';
-import { getMyCommunities } from '../lib/shared';
+import { getMyCommunities, joinCommunity } from '../lib/shared';
 import type { Community } from '../lib/shared';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import Avatar from '../components/Avatar';
@@ -20,12 +20,29 @@ export default function CommunitiesScreen() {
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const [items, setItems] = useState<Community[]>([]);
   const [loading, setLoading] = useState(true);
+  const [joinId, setJoinId] = useState('');
+  const [joining, setJoining] = useState(false);
 
   const load = useCallback(async () => {
     setItems(await getMyCommunities(supabase));
     setLoading(false);
   }, []);
   useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  async function handleJoin() {
+    const id = joinId.trim();
+    if (!id || joining) return;
+    setJoining(true);
+    const { error } = await joinCommunity(supabase, id);
+    setJoining(false);
+    if (error) {
+      Alert.alert('Could not join', error.message || 'Check the community ID and try again.');
+      return;
+    }
+    setJoinId('');
+    await load();
+    Alert.alert('Joined community', 'You’re in.');
+  }
 
   return (
     <View style={styles.container}>
@@ -37,12 +54,34 @@ export default function CommunitiesScreen() {
         windowSize={10}
         removeClippedSubviews
         ListHeaderComponent={
-          <Pressable style={styles.newRow} onPress={() => navigation.navigate('CreateCommunity')}>
-            <View style={styles.newIcon}>
-              <Ionicons name="people" size={26} color="#fff" />
+          <>
+            <Pressable style={styles.newRow} onPress={() => navigation.navigate('CreateCommunity')}>
+              <View style={styles.newIcon}>
+                <Ionicons name="people" size={26} color="#fff" />
+              </View>
+              <Text style={styles.newLabel}>New community</Text>
+            </Pressable>
+            <View style={styles.joinRow}>
+              <TextInput
+                style={styles.joinInput}
+                placeholder="Join by community ID"
+                placeholderTextColor={colors.textFaint}
+                value={joinId}
+                onChangeText={setJoinId}
+                autoCapitalize="none"
+                autoCorrect={false}
+                returnKeyType="join"
+                onSubmitEditing={handleJoin}
+              />
+              <Pressable
+                style={[styles.joinBtn, (!joinId.trim() || joining) && styles.joinBtnDisabled]}
+                onPress={handleJoin}
+                disabled={!joinId.trim() || joining}
+              >
+                <Text style={styles.joinBtnText}>Join</Text>
+              </Pressable>
             </View>
-            <Text style={styles.newLabel}>New community</Text>
-          </Pressable>
+          </>
         }
         renderItem={({ item }) => (
           <Pressable
@@ -80,6 +119,11 @@ const makeStyles = (colors: Palette) =>
     newRow: { flexDirection: 'row', alignItems: 'center', padding: spacing(4) },
     newIcon: { width: 52, height: 52, borderRadius: radius.md, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
     newLabel: { color: colors.text, fontSize: font.heading, fontWeight: '600', marginLeft: spacing(3) },
+    joinRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing(4), paddingBottom: spacing(3), gap: spacing(2) },
+    joinInput: { flex: 1, backgroundColor: colors.surface, color: colors.text, borderRadius: radius.pill, paddingHorizontal: spacing(4), paddingVertical: spacing(3), fontSize: font.body },
+    joinBtn: { backgroundColor: colors.primary, borderRadius: radius.pill, paddingHorizontal: spacing(5), paddingVertical: spacing(3), alignItems: 'center', justifyContent: 'center' },
+    joinBtnDisabled: { opacity: 0.5 },
+    joinBtnText: { color: '#fff', fontSize: font.body, fontWeight: '700' },
     row: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing(4), paddingVertical: spacing(2.5) },
     body: { flex: 1, marginLeft: spacing(3) },
     name: { color: colors.text, fontSize: font.heading, fontWeight: '600' },

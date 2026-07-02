@@ -1,13 +1,46 @@
 // FUTUREHAT mobile — Diagnostics & app info. Shows environment details and lets
 // the user share a diagnostic report to attach to a support ticket. Standalone.
-import React, { useMemo } from 'react';
-import { Platform, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useMemo, useState } from 'react';
+import {
+  Dimensions,
+  NativeModules,
+  PixelRatio,
+  Platform,
+  Pressable,
+  ScrollView,
+  Share,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+import NetInfo from '@react-native-community/netinfo';
+import { useFocusEffect } from '@react-navigation/native';
+
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import { APP_NAME, APP_VERSION, CREDIT } from '../branding';
+
+// Device locale from RN's built-in native settings (no extra dependency).
+// iOS exposes an array under AppleLanguages; Android exposes a `localeIdentifier`.
+function deviceLocale(): string {
+  try {
+    const s: any = NativeModules.SettingsManager?.settings;
+    const ios = s?.AppleLocale || s?.AppleLanguages?.[0];
+    const android = NativeModules.I18nManager?.localeIdentifier;
+    return ios || android || 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
 
 export default function DiagnosticsScreen() {
   const colors = useColors();
   const styles = useMemo(() => makeStyles(colors), [colors]);
+
+  const [online, setOnline] = useState('checking…');
+  const [connection, setConnection] = useState('unknown');
+
+  const { width, height } = Dimensions.get('window');
+  const scale = PixelRatio.get();
 
   const info: Record<string, string> = {
     App: APP_NAME,
@@ -15,7 +48,23 @@ export default function DiagnosticsScreen() {
     Developer: CREDIT,
     Platform: `${Platform.OS} ${String(Platform.Version)}`,
     'JS engine': (global as any).HermesInternal ? 'Hermes' : 'JSC',
+    Language: deviceLocale(),
+    Online: online,
+    Connection: connection,
+    Screen: `${Math.round(width)}×${Math.round(height)} @${scale}x`,
   };
+
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      NetInfo.fetch().then((state) => {
+        if (!active) return;
+        setOnline(state.isConnected ? 'yes' : 'no');
+        setConnection(state.type || 'unknown');
+      });
+      return () => { active = false; };
+    }, []),
+  );
 
   function shareReport() {
     const lines = [

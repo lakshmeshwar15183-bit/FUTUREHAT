@@ -26,4 +26,7 @@ export type RootStackParamList = {
   Legal: undefined;
   Diagnostics: undefined;
   Invite: undefined;
+  Starred: undefined;
+  Admin: undefined;
+  AdminUserDetail: { userId: string; isOwner: boolean };
 };

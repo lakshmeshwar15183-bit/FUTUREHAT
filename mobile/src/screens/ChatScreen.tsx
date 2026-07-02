@@ -47,9 +47,18 @@ import {
   getPolls,
   getPollVotes,
   votePoll,
+  unvotePoll,
   messageMatchesKind,
+  getStarredIds,
+  starMessage,
+  unstarMessage,
+  getHiddenMessageIds,
+  hideMessageForMe,
+  getChatSettings,
+  getPreferences,
+  getServerPremium,
 } from '../lib/shared';
-import type { Message, MessageReaction, Profile, ConversationSummary, Poll, PollVote, SearchKind } from '../lib/shared';
+import type { Message, MessageReaction, Profile, ConversationSummary, Poll, PollVote, SearchKind, ChatSettings } from '../lib/shared';
 import {
   getCachedMessages,
   cacheMessages,
@@ -76,6 +85,13 @@ type Nav = NativeStackNavigationProp<RootStackParamList, 'Chat'>;
 type Rt = RouteProp<RootStackParamList, 'Chat'>;
 
 const QUICK_EMOJI = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+// Full reaction palette shown when the user taps "＋" on the quick-emoji row —
+// mirrors the web emoji picker so reactions reach parity across platforms.
+const MORE_EMOJI = [
+  '👍', '❤️', '😂', '😮', '😢', '🙏', '🔥', '🎉', '👏', '💯',
+  '😍', '🤔', '😭', '😅', '🙌', '💪', '✅', '❌', '👀', '🤝',
+  '😎', '🥳', '😴', '🤯', '😇', '🤗', '😡', '💔', '⭐', '🚀',
+];
 
 // WhatsApp-style one-line summary for the reply/edit preview bar — delegates to
 // the shared helper so the composer bar and in-bubble quote read identically.
@@ -124,6 +140,10 @@ export default function ChatScreen() {
   const [reply, setReply] = useState<Message | null>(null);
   const [editing, setEditing] = useState<Message | null>(null);
   const [selected, setSelected] = useState<Message | null>(null);
+  const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
+  const [emojiComposerOpen, setEmojiComposerOpen] = useState(false);
+  const [starredIds, setStarredIds] = useState<Set<string>>(new Set());
+  const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectionForward, setSelectionForward] = useState(false);
@@ -136,7 +156,12 @@ export default function ChatScreen() {
   const [forwardOpen, setForwardOpen] = useState(false);
   const [forwardList, setForwardList] = useState<ConversationSummary[]>([]);
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
+  const [recSecs, setRecSecs] = useState(0); // live elapsed seconds while recording (web parity)
   const [sending, setSending] = useState(false);
+  // Whether pressing Return sends the message (WhatsApp-style), from Chat settings.
+  const [enterToSend, setEnterToSend] = useState(true);
+  // Floating "jump to latest" button appears once the user scrolls up an inverted list.
+  const [atBottom, setAtBottom] = useState(true);
 
   const [polls, setPolls] = useState<Poll[]>([]);
   const [pollVotes, setPollVotes] = useState<Map<string, PollVote[]>>(new Map());
@@ -147,6 +172,10 @@ export default function ChatScreen() {
 
   const listRef = useRef<FlatList<TimelineItem>>(null);
   const typingChannel = useRef<ReturnType<typeof createTypingChannel> | null>(null);
+  // Ghost mode (premium): when on, suppress read receipts + typing broadcasts, so
+  // the peer can't see that you've read or are typing. Read via a ref inside
+  // realtime callbacks so toggling never needs a re-subscribe (mirrors web).
+  const ghostRef = useRef(false);
   const typingTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const setMsgs = useCallback((updater: (prev: Message[]) => Message[]) => {
@@ -168,11 +197,22 @@ export default function ChatScreen() {
 
   const onVotePoll = useCallback(
     async (poll: Poll, optionIndex: number) => {
-      await votePoll(supabase, poll.id, optionIndex, poll.multiple);
+      // Multiple-choice: re-tapping a chosen option toggles it back off (web parity).
+      // Otherwise cast a vote (votePoll clears prior votes for single-choice).
+      const already =
+        poll.multiple &&
+        (pollVotes.get(poll.id) ?? []).some(
+          (v) => v.user_id === uid && v.option_index === optionIndex,
+        );
+      if (already) {
+        await unvotePoll(supabase, poll.id, optionIndex);
+      } else {
+        await votePoll(supabase, poll.id, optionIndex, poll.multiple);
+      }
       const fresh = await getPollVotes(supabase, poll.id);
       setPollVotes((prev) => new Map(prev).set(poll.id, fresh));
     },
-    [],
+    [uid, pollVotes],
   );
 
   async function submitPoll() {
@@ -243,10 +283,22 @@ export default function ChatScreen() {
         applyReceipts(rc);
         loadPolls().catch(() => {});
 
-        // mark unread incoming as read
-        msgs
-          .filter((m) => m.sender_id !== myId)
-          .forEach((m) => markMessageAsRead(supabase, m.id).catch(() => {}));
+        // Per-user message extras (star + delete-for-me). Degrade to empty if the
+        // 0011/0014 migrations aren't applied — the shared helpers already do.
+        Promise.all([getStarredIds(supabase), getHiddenMessageIds(supabase)])
+          .then(([starred, hidden]) => {
+            if (!active) return;
+            setStarredIds(new Set(starred));
+            setHiddenIds(new Set(hidden));
+          })
+          .catch(() => {});
+
+        // mark unread incoming as read (unless ghost mode suppresses receipts)
+        if (!ghostRef.current) {
+          msgs
+            .filter((m) => m.sender_id !== myId)
+            .forEach((m) => markMessageAsRead(supabase, m.id).catch(() => {}));
+        }
       } catch {
         // Offline / transient error: keep the cached view already on screen.
         if (active) setLoading(false);
@@ -297,7 +349,7 @@ export default function ChatScreen() {
           ? prev.map((m) => (m.id === incoming.id ? incoming : m))
           : [...prev, incoming]));
         upsertCachedMessage(conversationId, incoming).catch(() => {});
-        if (incoming.sender_id !== uid) {
+        if (incoming.sender_id !== uid && !ghostRef.current) {
           markMessageAsRead(supabase, incoming.id).catch(() => {});
         }
         requestAnimationFrame(() => listRef.current?.scrollToOffset({ offset: 0, animated: true }));
@@ -440,10 +492,35 @@ export default function ChatScreen() {
   }
 
   // ── Compose / send ────────────────────────────────────────────────────────
+  // Honour the "Enter to send" chat setting (mirrors web). Defaults to true.
+  useEffect(() => {
+    getChatSettings(supabase).then((s) => setEnterToSend(s.enterToSend)).catch(() => {});
+  }, []);
+
+  // Load ghost mode = premium AND ghost_mode pref (mirrors web `isPremium && prefs.ghost_mode`).
+  useEffect(() => {
+    Promise.all([getServerPremium(supabase).catch(() => false), getPreferences(supabase).catch(() => null)])
+      .then(([premium, prefs]) => { ghostRef.current = !!premium && !!prefs?.ghost_mode; })
+      .catch(() => {});
+  }, []);
+
   function onChangeText(t: string) {
     setText(t);
     setDraft(conversationId, t).catch(() => {}); // persist draft so it survives close/offline
-    typingChannel.current?.notify({ userId: uid ?? '', name: 'Someone', typing: t.length > 0 });
+    // Ghost mode: never broadcast typing.
+    if (!ghostRef.current) typingChannel.current?.notify({ userId: uid ?? '', name: 'Someone', typing: t.length > 0 });
+  }
+
+  // WhatsApp-style Return-to-send. On a hardware keyboard, Enter without Shift
+  // sends; Shift+Enter inserts a newline. Soft keyboards fall through to the
+  // returnKeyType="send" / onSubmitEditing path below.
+  function onInputKeyPress(e: any) {
+    if (!enterToSend) return;
+    const ne = e?.nativeEvent ?? {};
+    if (ne.key === 'Enter' && !ne.shiftKey) {
+      e.preventDefault?.();
+      handleSend();
+    }
   }
 
   async function handleSend() {
@@ -552,6 +629,14 @@ export default function ChatScreen() {
   }
 
   // ── Voice notes ───────────────────────────────────────────────────────────
+  // Tick the elapsed-recording counter once per second while a recording is live.
+  useEffect(() => {
+    if (!recording) { setRecSecs(0); return; }
+    setRecSecs(0);
+    const id = setInterval(() => setRecSecs((s) => s + 1), 1000);
+    return () => clearInterval(id);
+  }, [recording]);
+
   async function startRecording() {
     try {
       const perm = await Audio.requestPermissionsAsync();
@@ -610,20 +695,86 @@ export default function ChatScreen() {
   }
 
   // ── Message actions ───────────────────────────────────────────────────────
-  async function react(emoji: string) {
+  // Toggle a reaction. From the action sheet `target` is omitted (uses `selected`);
+  // tapping an existing reaction pill passes the message directly so the sheet
+  // needn't be open (WhatsApp/web parity — tap a pill to add/remove your reaction).
+  async function react(emoji: string, target?: Message) {
+    const t = target ?? selected;
+    if (!t) return;
+    if (!target) setSelected(null);
+    await toggleReaction(supabase, t.id, emoji);
+    getReactions(supabase, messagesRef.current.map((m) => m.id)).then(setReactions);
+  }
+
+  // Star / unstar a message (per-user bookmark). Optimistic; the browser screen
+  // reads the same starred_messages table.
+  async function toggleStar() {
     if (!selected) return;
     const target = selected;
     setSelected(null);
-    await toggleReaction(supabase, target.id, emoji);
-    getReactions(supabase, messagesRef.current.map((m) => m.id)).then(setReactions);
+    const isStarred = starredIds.has(target.id);
+    setStarredIds((prev) => {
+      const next = new Set(prev);
+      if (isStarred) next.delete(target.id); else next.add(target.id);
+      return next;
+    });
+    const { error } = isStarred
+      ? await unstarMessage(supabase, target.id)
+      : await starMessage(supabase, target.id);
+    if (error) {
+      // revert on failure
+      setStarredIds((prev) => {
+        const next = new Set(prev);
+        if (isStarred) next.add(target.id); else next.delete(target.id);
+        return next;
+      });
+    }
+  }
+
+  // Delete-for-me: hide a single message locally for this user only (unlike
+  // delete-for-everyone). Backed by hidden_messages.
+  async function deleteForMe() {
+    if (!selected) return;
+    const target = selected;
+    setSelected(null);
+    setHiddenIds((prev) => new Set(prev).add(target.id));
+    const { error } = await hideMessageForMe(supabase, target.id);
+    if (error) {
+      setHiddenIds((prev) => {
+        const next = new Set(prev);
+        next.delete(target.id);
+        return next;
+      });
+      Alert.alert('Could not delete', error.message);
+    }
+  }
+
+  // Message info — delivery/read status + timestamps, mirroring web's info view.
+  function showInfo() {
+    if (!selected) return;
+    const target = selected;
+    setSelected(null);
+    const mine = target.sender_id === uid;
+    const rc = receipts.get(target.id);
+    const status = target.pending ? 'Sending…' : rc === 'read' ? 'Read' : rc === 'delivered' ? 'Delivered' : 'Sent';
+    const lines = [
+      `Sent: ${new Date(target.created_at).toLocaleString()}`,
+      target.edited_at ? `Edited: ${new Date(target.edited_at).toLocaleString()}` : null,
+      mine ? `Status: ${status}` : null,
+      starredIds.has(target.id) ? 'Starred: yes' : null,
+    ].filter(Boolean).join('\n');
+    Alert.alert('Message info', lines || 'No details available.');
   }
 
   async function doDelete() {
     if (!selected) return;
     const target = selected;
-    Alert.alert('Delete message', 'Are you sure you want to delete this message?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
+    const mine = target.sender_id === uid;
+    const buttons: any[] = [{ text: 'Cancel', style: 'cancel' }];
+    // Delete-for-me is available on any message; delete-for-everyone only on own.
+    buttons.push({ text: 'Delete for me', onPress: deleteForMe });
+    if (mine) {
+      buttons.push({
         text: 'Delete for everyone',
         style: 'destructive',
         onPress: async () => {
@@ -631,8 +782,9 @@ export default function ChatScreen() {
           await deleteMessage(supabase, target.id);
           setMsgs((prev) => prev.map((m) => (m.id === target.id ? { ...m, is_deleted: true } : m)));
         },
-      },
-    ]);
+      });
+    }
+    Alert.alert('Delete message', 'Choose how to delete this message.', buttons);
   }
 
   // Bulk delete for multi-select (delete-for-everyone).
@@ -698,7 +850,9 @@ export default function ChatScreen() {
   // separators and flag consecutive same-sender messages (WhatsApp grouping).
   const timeline = useMemo<TimelineItem[]>(() => {
     const merged: TimelineItem[] = [
-      ...messages.map((m): TimelineItem => ({ kind: 'msg', id: m.id, at: m.created_at, message: m })),
+      ...messages
+        .filter((m) => !hiddenIds.has(m.id)) // delete-for-me: never show to this user
+        .map((m): TimelineItem => ({ kind: 'msg', id: m.id, at: m.created_at, message: m })),
       ...polls.map((p): TimelineItem => ({ kind: 'poll', id: `poll:${p.id}`, at: p.created_at, poll: p })),
     ];
     merged.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
@@ -725,7 +879,7 @@ export default function ChatScreen() {
       }
     }
     return out;
-  }, [messages, polls]);
+  }, [messages, polls, hiddenIds]);
 
   // Index messages + peers once per data change so each row is an O(1) lookup
   // instead of an O(n) .find() that ran for every visible bubble on every render.
@@ -780,6 +934,8 @@ export default function ChatScreen() {
           replyTo={replyTo}
           onReplyPress={replyTo ? () => scrollToMessage(replyTo.id) : undefined}
           reactions={reactionsByMsg.get(msg.id)}
+          onReactionPress={(emoji) => react(emoji, msg)}
+          starred={starredIds.has(msg.id)}
           tick={mine ? (msg.pending ? 'sending' : receipts.get(msg.id) ?? 'sent') : undefined}
           selected={selectionMode && selectedIds.has(msg.id)}
           selectionMode={selectionMode}
@@ -882,6 +1038,11 @@ export default function ChatScreen() {
               </Pressable>
             ))}
           </View>
+          {searchActive && matchIds.length === 0 && (
+            <Text style={styles.searchNoResults}>
+              {searchTerm.trim() ? `No messages match “${searchTerm.trim()}”.` : 'No messages match this filter.'}
+            </Text>
+          )}
         </View>
       )}
 
@@ -902,12 +1063,25 @@ export default function ChatScreen() {
         maxToRenderPerBatch={12}
         windowSize={11}
         updateCellsBatchingPeriod={40}
+        onScroll={(e) => setAtBottom(e.nativeEvent.contentOffset.y < 240)}
+        scrollEventThrottle={80}
         onScrollToIndexFailed={(info) => {
           setTimeout(() => {
             try { listRef.current?.scrollToIndex({ index: info.index, animated: true, viewPosition: 0.5 }); } catch { /* give up */ }
           }, 120);
         }}
       />
+
+      {/* Jump-to-latest button (shown once scrolled up), mirrors web. */}
+      {!atBottom && (
+        <Pressable
+          style={styles.jumpLatest}
+          onPress={() => listRef.current?.scrollToOffset({ offset: 0, animated: true })}
+          hitSlop={6}
+        >
+          <Ionicons name="chevron-down" size={24} color={colors.text} />
+        </Pressable>
+      )}
 
       {/* Reply / edit preview bar */}
       {(reply || editing) && (
@@ -940,7 +1114,9 @@ export default function ChatScreen() {
           </Pressable>
           <View style={styles.recordingPill}>
             <View style={styles.recDot} />
-            <Text style={styles.recText}>Recording… 🗑 cancel · ➤ send</Text>
+            <Text style={styles.recText}>
+              {`${Math.floor(recSecs / 60)}:${String(recSecs % 60).padStart(2, '0')}`} · 🗑 cancel · ➤ send
+            </Text>
           </View>
           <Pressable onPress={() => stopRecording(true)} style={styles.sendBtn}>
             <Ionicons name="send" size={20} color="#fff" />
@@ -957,8 +1133,15 @@ export default function ChatScreen() {
             placeholderTextColor={colors.textFaint}
             value={text}
             onChangeText={onChangeText}
+            onKeyPress={onInputKeyPress}
+            onSubmitEditing={enterToSend ? handleSend : undefined}
+            blurOnSubmit={false}
+            returnKeyType={enterToSend ? 'send' : 'default'}
             multiline
           />
+          <Pressable onPress={() => setEmojiComposerOpen(true)} hitSlop={8} style={{ marginRight: 4 }}>
+            <Ionicons name="happy-outline" size={26} color={colors.textMuted} />
+          </Pressable>
           {text.trim().length > 0 ? (
             <Pressable onPress={handleSend} style={({ pressed }) => [styles.sendBtn, pressed && styles.sendBtnPressed]} disabled={sending}>
               <Ionicons name={editing ? 'checkmark' : 'send'} size={20} color="#fff" />
@@ -1040,8 +1223,17 @@ export default function ChatScreen() {
                   <Text style={styles.emoji}>{e}</Text>
                 </Pressable>
               ))}
+              {/* Open the full emoji palette — reaction parity with web. */}
+              <Pressable onPress={() => setEmojiPickerOpen(true)} hitSlop={6} style={styles.emojiMore}>
+                <Ionicons name="add" size={22} color={colors.textMuted} />
+              </Pressable>
             </View>
             <ActionRow icon="arrow-undo" label="Reply" onPress={() => { setReply(selected); setSelected(null); }} />
+            <ActionRow
+              icon={selected && starredIds.has(selected.id) ? 'star' : 'star-outline'}
+              label={selected && starredIds.has(selected.id) ? 'Unstar' : 'Star'}
+              onPress={toggleStar}
+            />
             <ActionRow icon="checkmark-circle-outline" label="Select" onPress={() => { if (selected) enterSelection(selected); setSelected(null); }} />
             {selected?.type === 'text' && (
               <ActionRow
@@ -1054,6 +1246,7 @@ export default function ChatScreen() {
               />
             )}
             <ActionRow icon="arrow-redo" label="Forward" onPress={openForward} />
+            <ActionRow icon="information-circle-outline" label="Info" onPress={showInfo} />
             {selected?.sender_id === uid && selected?.type === 'text' && (
               <ActionRow
                 icon="create"
@@ -1061,10 +1254,50 @@ export default function ChatScreen() {
                 onPress={() => { setEditing(selected); setText(selected?.content ?? ''); setSelected(null); }}
               />
             )}
-            {selected?.sender_id === uid && (
-              <ActionRow icon="trash" label="Delete" danger onPress={doDelete} />
-            )}
+            <ActionRow icon="trash" label="Delete" danger onPress={doDelete} />
           </View>
+        </Pressable>
+      </Modal>
+
+      {/* Full emoji reaction picker */}
+      <Modal visible={emojiPickerOpen} transparent animationType="fade" onRequestClose={() => setEmojiPickerOpen(false)}>
+        <Pressable style={styles.backdrop} onPress={() => setEmojiPickerOpen(false)}>
+          <Pressable style={[styles.sheet, styles.emojiPickerSheet, { paddingBottom: insets.bottom + 16 }]} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.sheetTitle}>React</Text>
+            <View style={styles.emojiGrid}>
+              {MORE_EMOJI.map((e) => (
+                <Pressable
+                  key={e}
+                  hitSlop={4}
+                  style={styles.emojiGridCell}
+                  onPress={() => { setEmojiPickerOpen(false); react(e); }}
+                >
+                  <Text style={styles.emojiGridText}>{e}</Text>
+                </Pressable>
+              ))}
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Composer emoji picker — inserts into the message draft */}
+      <Modal visible={emojiComposerOpen} transparent animationType="fade" onRequestClose={() => setEmojiComposerOpen(false)}>
+        <Pressable style={styles.backdrop} onPress={() => setEmojiComposerOpen(false)}>
+          <Pressable style={[styles.sheet, styles.emojiPickerSheet, { paddingBottom: insets.bottom + 16 }]} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.sheetTitle}>Emoji</Text>
+            <View style={styles.emojiGrid}>
+              {MORE_EMOJI.map((e) => (
+                <Pressable
+                  key={e}
+                  hitSlop={4}
+                  style={styles.emojiGridCell}
+                  onPress={() => onChangeText(text + e)}
+                >
+                  <Text style={styles.emojiGridText}>{e}</Text>
+                </Pressable>
+              ))}
+            </View>
+          </Pressable>
         </Pressable>
       </Modal>
 
@@ -1198,6 +1431,25 @@ const makeStyles = (colors: Palette) =>
       paddingTop: 6,
       backgroundColor: colors.surface,
     },
+    searchNoResults: { color: colors.textMuted, fontSize: font.small, paddingTop: 8, paddingBottom: 2 },
+    jumpLatest: {
+      position: 'absolute',
+      right: 14,
+      bottom: 78,
+      width: 42,
+      height: 42,
+      borderRadius: 21,
+      backgroundColor: colors.surface,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      shadowColor: '#000',
+      shadowOpacity: 0.2,
+      shadowRadius: 4,
+      shadowOffset: { width: 0, height: 2 },
+      elevation: 4,
+    },
     input: {
       flex: 1,
       color: colors.text,
@@ -1259,4 +1511,12 @@ const makeStyles = (colors: Palette) =>
       borderBottomColor: colors.border,
     },
     emoji: { fontSize: 30 },
+    emojiMore: {
+      width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center',
+      backgroundColor: colors.surfaceAlt,
+    },
+    emojiPickerSheet: { maxHeight: '55%' },
+    emojiGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
+    emojiGridCell: { width: '16.66%', alignItems: 'center', paddingVertical: 10 },
+    emojiGridText: { fontSize: 30 },
   });

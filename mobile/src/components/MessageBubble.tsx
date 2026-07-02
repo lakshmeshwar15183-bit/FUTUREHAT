@@ -44,13 +44,17 @@ interface Props {
   /** Continuation of a run from the same sender — hides the tail + sender name. */
   grouped?: boolean;
   onOpenImage?: (url: string) => void;
-  onReactionPress?: () => void;
+  /** Tapping an existing reaction pill toggles the current user's reaction for
+   *  that emoji (WhatsApp/web parity). */
+  onReactionPress?: (emoji: string) => void;
   /** Lowercased search term to highlight inside text bodies. */
   highlight?: string;
   /** This bubble is the active search match (gets a ring). */
   activeMatch?: boolean;
   /** Whether the chat is in multi-select mode (affects tap behaviour). */
   selectionMode?: boolean;
+  /** Show a small star in the meta row when this message is bookmarked. */
+  starred?: boolean;
 }
 
 /** Split text into <Text> runs, wrapping case-insensitive matches of `term`. */
@@ -100,6 +104,7 @@ function MessageBubble({
   onReactionPress,
   highlight = '',
   activeMatch = false,
+  starred = false,
 }: Props) {
   const colors = useColors();
   const styles = useMemo(() => makeStyles(colors), [colors]);
@@ -133,6 +138,13 @@ function MessageBubble({
     >
       <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs, bubbleShape, activeMatch && styles.bubbleActiveMatch]}>
         {!mine && senderName && !groupedRun && <Text style={styles.sender}>{senderName}</Text>}
+
+        {message.is_forwarded && (
+          <View style={styles.forwarded}>
+            <Ionicons name="arrow-redo-outline" size={12} color={mine ? colors.bubbleOutMuted : colors.textFaint} />
+            <Text style={[styles.forwardedText, { color: mine ? colors.bubbleOutMuted : colors.textFaint }]}>Forwarded</Text>
+          </View>
+        )}
 
         {replyTo && (
           <Pressable
@@ -185,6 +197,9 @@ function MessageBubble({
         )}
 
         <View style={styles.meta}>
+          {starred && (
+            <Ionicons name="star" size={12} color={mine ? colors.bubbleOutMuted : colors.textFaint} style={{ marginRight: 3 }} />
+          )}
           {message.edited_at && <Text style={[styles.edited, { color: mine ? colors.bubbleOutMuted : colors.textFaint }]}>edited</Text>}
           <Text style={[styles.time, { color: mine ? colors.bubbleOutMuted : colors.textFaint }]}>
             {formatTime(message.created_at)}
@@ -201,17 +216,16 @@ function MessageBubble({
       </View>
 
       {grouped.length > 0 && (
-        <Pressable
-          onPress={onReactionPress}
-          style={[styles.reactions, mine ? styles.reactionsMine : styles.reactionsTheirs]}
-        >
+        <View style={[styles.reactions, mine ? styles.reactionsMine : styles.reactionsTheirs]}>
           {grouped.map((g) => (
-            <Text key={g.emoji} style={[styles.reactionChip, g.mine && styles.reactionChipMine]}>
-              {g.emoji}
-              {g.count > 1 ? ` ${g.count}` : ''}
-            </Text>
+            <Pressable key={g.emoji} onPress={() => onReactionPress?.(g.emoji)} hitSlop={4}>
+              <Text style={[styles.reactionChip, g.mine && styles.reactionChipMine]}>
+                {g.emoji}
+                {g.count > 1 ? ` ${g.count}` : ''}
+              </Text>
+            </Pressable>
           ))}
-        </Pressable>
+        </View>
       )}
     </Pressable>
   );
@@ -240,13 +254,14 @@ function areEqual(a: Props, b: Props): boolean {
     a.tick !== b.tick ||
     a.activeMatch !== b.activeMatch ||
     a.highlight !== b.highlight ||
-    a.senderName !== b.senderName
+    a.senderName !== b.senderName ||
+    a.starred !== b.starred
   ) return false;
   const m = a.message, n = b.message;
   if (
     m.id !== n.id || m.content !== n.content || m.type !== n.type ||
     m.media_url !== n.media_url || m.is_deleted !== n.is_deleted || m.edited_at !== n.edited_at ||
-    m.pending !== n.pending
+    m.pending !== n.pending || m.is_forwarded !== n.is_forwarded
   ) return false;
   if (
     (a.replyTo?.id ?? null) !== (b.replyTo?.id ?? null) ||
@@ -275,6 +290,8 @@ const makeStyles = (colors: Palette) =>
     bubbleActiveMatch: { borderWidth: 2, borderColor: colors.primary },
     highlightHit: { backgroundColor: colors.primary, color: '#fff' },
     sender: { color: colors.primary, fontSize: font.small, fontWeight: '700', marginBottom: 2 },
+    forwarded: { flexDirection: 'row', alignItems: 'center', gap: 3, marginBottom: 2 },
+    forwardedText: { fontSize: font.tiny, fontStyle: 'italic' },
     text: { fontSize: font.body, lineHeight: 20 },
     deleted: { fontSize: font.body, fontStyle: 'italic' },
     image: { width: 220, height: 220, borderRadius: radius.md, marginBottom: 2 },
