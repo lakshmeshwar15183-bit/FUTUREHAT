@@ -6,6 +6,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -16,6 +17,7 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useHeaderHeight } from '@react-navigation/elements';
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
@@ -126,8 +128,17 @@ export default function ChatScreen() {
   const colors = useColors();
   const { wallpaperColor, isPremium } = useTheme();
   const insets = useSafeAreaInsets();
+  // Real header height for this device/orientation (notch, status bar, landscape
+  // all vary) — feeds KeyboardAvoidingView's offset so the composer lands exactly
+  // above the keyboard instead of relying on a hardcoded guess.
+  const headerHeight = useHeaderHeight();
   const { startCall } = useCalls();
   const styles = useMemo(() => makeStyles(colors), [colors]);
+
+  // Whether the soft keyboard is currently up. When it is, the OS inset already
+  // sits above the keyboard, so we drop the safe-area bottom padding to avoid a
+  // double gap — the composer hugs the keyboard, WhatsApp-style. Restored on hide.
+  const [keyboardUp, setKeyboardUp] = useState(false);
 
   const [uid, setUid] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -171,6 +182,9 @@ export default function ChatScreen() {
   const [enterToSend, setEnterToSend] = useState(true);
   // Floating "jump to latest" button appears once the user scrolls up an inverted list.
   const [atBottom, setAtBottom] = useState(true);
+  // Ref mirror so the keyboard-show listener can read "am I at the bottom?" at
+  // fire time without re-subscribing every scroll.
+  const atBottomRef = useRef(true);
 
   const [polls, setPolls] = useState<Poll[]>([]);
   const [pollVotes, setPollVotes] = useState<Map<string, PollVote[]>>(new Map());
@@ -194,6 +208,27 @@ export default function ChatScreen() {
       messagesRef.current = next;
       return next;
     });
+  }, []);
+
+  // WhatsApp-style keyboard follow. On show: collapse the safe-area bottom gap so
+  // the composer hugs the keyboard, and — if the user was already at the newest
+  // message — keep the latest in view as the list shrinks (inverted, so offset 0).
+  // On hide: restore the safe-area gap. Covers open/close, emoji keyboard, and
+  // height changes (each fires a fresh show event); rotation re-runs via new metrics.
+  useEffect(() => {
+    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const onShow = Keyboard.addListener(showEvt, () => {
+      setKeyboardUp(true);
+      if (atBottomRef.current) {
+        requestAnimationFrame(() => listRef.current?.scrollToOffset({ offset: 0, animated: true }));
+      }
+    });
+    const onHide = Keyboard.addListener(hideEvt, () => setKeyboardUp(false));
+    return () => {
+      onShow.remove();
+      onHide.remove();
+    };
   }, []);
 
   const loadPolls = useCallback(async () => {
@@ -1059,8 +1094,14 @@ export default function ChatScreen() {
   return (
     <KeyboardAvoidingView
       style={[styles.flex, wallpaperColor ? { backgroundColor: wallpaperColor } : null]}
+      // iOS: pad the view up by the keyboard height. Android: no behavior — the
+      // window's native adjustResize already shrinks the layout, and stacking a
+      // 'height'/'padding' behavior on top double-shrinks and causes jumps.
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
+      // iOS offset: measure "above the keyboard" from the top of our content, not
+      // the screen. The real header height is correct on notch/non-notch and after
+      // rotation (useHeaderHeight re-reports), unlike the previous hardcoded 88.
+      keyboardVerticalOffset={Platform.OS === 'ios' ? headerHeight : 0}
     >
       {searchOpen && (
         <View style={styles.searchBar}>
@@ -1125,7 +1166,11 @@ export default function ChatScreen() {
         maxToRenderPerBatch={12}
         windowSize={11}
         updateCellsBatchingPeriod={40}
-        onScroll={(e) => setAtBottom(e.nativeEvent.contentOffset.y < 240)}
+        onScroll={(e) => {
+          const bottom = e.nativeEvent.contentOffset.y < 240;
+          atBottomRef.current = bottom;
+          setAtBottom(bottom);
+        }}
         scrollEventThrottle={80}
         onScrollToIndexFailed={(info) => {
           setTimeout(() => {
@@ -1170,7 +1215,7 @@ export default function ChatScreen() {
 
       {/* Composer */}
       {recording ? (
-        <View style={[styles.composer, { paddingBottom: insets.bottom + 6 }]}>
+        <View style={[styles.composer, { paddingBottom: (keyboardUp ? 0 : insets.bottom) + 6 }]}>
           <Pressable onPress={() => stopRecording(false)} hitSlop={8}>
             <Ionicons name="trash-outline" size={24} color={colors.danger} />
           </Pressable>
@@ -1185,8 +1230,8 @@ export default function ChatScreen() {
           </Pressable>
         </View>
       ) : (
-        <View style={[styles.composer, { paddingBottom: insets.bottom + 6 }]}>
-          <Pressable onPress={() => setAttachOpen(true)} hitSlop={8}>
+        <View style={[styles.composer, { paddingBottom: (keyboardUp ? 0 : insets.bottom) + 6 }]}>
+          <Pressable onPress={() => { Keyboard.dismiss(); setAttachOpen(true); }} hitSlop={8}>
             <Ionicons name="add-circle-outline" size={28} color={colors.textMuted} />
           </Pressable>
           <TextInput
@@ -1201,7 +1246,11 @@ export default function ChatScreen() {
             returnKeyType={enterToSend ? 'send' : 'default'}
             multiline
           />
-          <Pressable onPress={() => setEmojiComposerOpen(true)} hitSlop={8} style={{ marginRight: 4 }}>
+          <Pressable
+            onPress={() => { Keyboard.dismiss(); setEmojiComposerOpen(true); }}
+            hitSlop={8}
+            style={{ marginRight: 4 }}
+          >
             <Ionicons name="happy-outline" size={26} color={colors.textMuted} />
           </Pressable>
           {text.trim().length > 0 ? (
