@@ -10,6 +10,7 @@
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { supabase } from '../supabase';
+import { safeHref } from '../util/safeUrl';
 import {
   blockUser, unblockUser, getBlockedIds, submitReport,
   muteConversation, unmuteConversation, getMutedIds,
@@ -172,7 +173,7 @@ export function ContactProfileModal({ profile, online, isPremium, conversationId
             {docs.length > 0 && (
               <div className="contact-doc-list">
                 {docs.slice(0, 8).map((m) => (
-                  <a key={m.id} href={m.media_url!} target="_blank" rel="noreferrer" className="contact-doc">
+                  <a key={m.id} href={safeHref(m.media_url)} target="_blank" rel="noreferrer" className="contact-doc">
                     <span className="contact-doc-icon">📎</span>
                     <span className="contact-doc-name">{m.content || 'Attachment'}</span>
                   </a>

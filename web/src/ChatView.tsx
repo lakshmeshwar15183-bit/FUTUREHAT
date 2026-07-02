@@ -26,6 +26,7 @@ import { ContactProfileModal } from './profile/ContactProfileModal';
 import { MediaLightbox, type MediaItem } from './media/MediaLightbox';
 import './media/MediaLightbox.css';
 import { getStarredIds, starMessage, unstarMessage, getHiddenMessageIds, hideMessageForMe } from '@shared/messageExtras';
+import { safeHref } from './util/safeUrl';
 import {
   PhoneIcon, VideoIcon, SearchIcon, PaperclipIcon, PollIcon, ClockIcon, MicIcon, SendIcon,
   StarIcon, ReplyIcon, ForwardIcon, CopyIcon, EditIcon, TrashIcon, SmileIcon, MinimizeIcon,
@@ -677,8 +678,8 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
                             <span className="message-video-play">▶</span>
                           </button>
                         )}
-                        {msg.type === 'file' && msg.media_url && !isVideoUrl(msg.media_url) && (
-                          <a href={msg.media_url} target="_blank" rel="noopener noreferrer" className="message-file">📎 {msg.content || 'File'}</a>
+                        {msg.type === 'file' && msg.media_url && !isVideoUrl(msg.media_url) && safeHref(msg.media_url) && (
+                          <a href={safeHref(msg.media_url)} target="_blank" rel="noopener noreferrer" className="message-file">📎 {msg.content || 'File'}</a>
                         )}
                         {(msg.type === 'text' || (msg.content && msg.type !== 'audio')) && <div className="message-text">{highlight(msg.content ?? '')}</div>}
                         <div className="message-time">
