@@ -8,7 +8,16 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Animated,
+  Dimensions,
+  PanResponder,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { RTCView, type MediaStream } from 'react-native-webrtc';
@@ -199,6 +208,11 @@ function ActiveCallView({
   const [videoOn, setVideoOn] = useState(call.type === 'video');
   const [speaker, setSpeaker] = useState(call.type === 'video');
   const [elapsed, setElapsed] = useState(0);
+  // Signal-strength quality 1–4 (4 = excellent), mirrors web getStats polling.
+  const [netQuality, setNetQuality] = useState(4);
+  // WhatsApp-style minimize: shrink the call to a draggable floating bubble so the
+  // user can navigate the app mid-call (web CallContext minimize-to-bubble parity).
+  const [minimized, setMinimized] = useState(false);
 
   // Build + start the WebRTC session.
   useEffect(() => {
@@ -238,8 +252,120 @@ function ActiveCallView({
     return () => clearInterval(t);
   }, [connected]);
 
+  // Network-quality indicator — polls getStats read-only (never touches the PC),
+  // deriving a 1–4 score from packet loss + round-trip time. Same thresholds as
+  // web CallContext so the bars mean the same thing on both platforms.
+  useEffect(() => {
+    if (!connected) {
+      setNetQuality(4);
+      return;
+    }
+    let prevLost = 0;
+    let prevRecv = 0;
+    const id = setInterval(async () => {
+      const stats = await sessionRef.current?.getStats();
+      if (!stats) return;
+      let lost = 0;
+      let recv = 0;
+      let rtt = 0;
+      stats.forEach((report: any) => {
+        if (report.type === 'inbound-rtp') {
+          lost += Number(report.packetsLost || 0);
+          recv += Number(report.packetsReceived || 0);
+        }
+        if (
+          report.type === 'candidate-pair' &&
+          report.nominated &&
+          typeof report.currentRoundTripTime === 'number'
+        ) {
+          rtt = report.currentRoundTripTime;
+        }
+      });
+      const dLost = Math.max(0, lost - prevLost);
+      const dRecv = Math.max(0, recv - prevRecv);
+      prevLost = lost;
+      prevRecv = recv;
+      const loss = dRecv + dLost > 0 ? dLost / (dRecv + dLost) : 0;
+      let q = 4;
+      if (loss > 0.08 || rtt > 0.5) q = 1;
+      else if (loss > 0.04 || rtt > 0.3) q = 2;
+      else if (loss > 0.015 || rtt > 0.15) q = 3;
+      setNetQuality(q);
+    }, 2000);
+    return () => clearInterval(id);
+  }, [connected]);
+
   const showVideo = call.type === 'video';
   const timer = `${Math.floor(elapsed / 60)}:${(elapsed % 60).toString().padStart(2, '0')}`;
+  const status = connected ? timer : call.isCaller ? 'Ringing…' : 'Connecting…';
+
+  // Draggable minimized bubble position. Sizes differ for video (small window) vs
+  // audio (wide pill); the bubble starts pinned to the top-right like WhatsApp.
+  const screen = Dimensions.get('window');
+  const bubbleW = showVideo ? 124 : 230;
+  const bubbleH = showVideo ? 172 : 60;
+  const pan = useRef(new Animated.ValueXY({ x: screen.width - bubbleW - 14, y: 0 })).current;
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_e, g) => Math.abs(g.dx) > 4 || Math.abs(g.dy) > 4,
+      onPanResponderGrant: () => {
+        pan.setOffset({ x: (pan.x as any)._value, y: (pan.y as any)._value });
+        pan.setValue({ x: 0, y: 0 });
+      },
+      onPanResponderMove: Animated.event([null, { dx: pan.x, dy: pan.y }], { useNativeDriver: false }),
+      onPanResponderRelease: () => {
+        pan.flattenOffset();
+        const cx = Math.max(8, Math.min((pan.x as any)._value, screen.width - bubbleW - 8));
+        const cy = Math.max(0, Math.min((pan.y as any)._value, screen.height - bubbleH - 140));
+        Animated.spring(pan, { toValue: { x: cx, y: cy }, useNativeDriver: false, friction: 7 }).start();
+      },
+    }),
+  ).current;
+
+  // Minimized floating bubble — a compact, draggable window onto the call. It is
+  // NOT an absoluteFill, so touches outside it pass through to the app beneath,
+  // which is exactly what lets the user keep using FUTUREHAT during a call.
+  if (minimized) {
+    return (
+      <Animated.View
+        style={[styles.bubbleBase, { top: insets.top + 8 }, pan.getLayout()]}
+        {...panResponder.panHandlers}
+      >
+        {showVideo ? (
+          <Pressable style={styles.bubbleVideo} onPress={() => setMinimized(false)}>
+            {remoteStream ? (
+              <RTCView streamURL={remoteStream.toURL()} style={StyleSheet.absoluteFill} objectFit="cover" />
+            ) : (
+              <View style={styles.bubbleVideoPlaceholder}>
+                <Avatar uri={call.peer?.avatar_url} name={call.peer?.display_name} size={44} />
+              </View>
+            )}
+            <View style={styles.bubbleOverlayBar}>
+              {connected && <NetBars q={netQuality} size={3} />}
+              <Text style={styles.bubbleTimer} numberOfLines={1}>{connected ? timer : '…'}</Text>
+              <Pressable hitSlop={8} onPress={() => sessionRef.current!.end(true)} style={styles.bubbleHangup}>
+                <Ionicons name="call" size={14} color="#fff" style={{ transform: [{ rotate: '135deg' }] }} />
+              </Pressable>
+            </View>
+          </Pressable>
+        ) : (
+          <Pressable style={styles.bubblePill} onPress={() => setMinimized(false)}>
+            <Avatar uri={call.peer?.avatar_url} name={call.peer?.display_name} size={36} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.bubblePeer} numberOfLines={1}>{call.peer?.display_name ?? 'Call'}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                {connected && <NetBars q={netQuality} size={3} />}
+                <Text style={styles.bubbleTimer} numberOfLines={1}>{connected ? timer : status}</Text>
+              </View>
+            </View>
+            <Pressable hitSlop={8} onPress={() => sessionRef.current!.end(true)} style={styles.bubbleHangup}>
+              <Ionicons name="call" size={16} color="#fff" style={{ transform: [{ rotate: '135deg' }] }} />
+            </Pressable>
+          </Pressable>
+        )}
+      </Animated.View>
+    );
+  }
 
   return (
     <View style={[StyleSheet.absoluteFill, styles.callContainer]}>
@@ -255,11 +381,17 @@ function ActiveCallView({
         <RTCView streamURL={localStream.toURL()} style={[styles.pip, { top: insets.top + 12 }]} objectFit="cover" zOrder={1} />
       )}
 
+      {/* Minimize (left) · network-quality bars (right) */}
+      <Pressable style={[styles.minimizeBtn, { top: insets.top + 12 }]} hitSlop={10} onPress={() => setMinimized(true)}>
+        <Ionicons name="chevron-down" size={26} color="#fff" />
+      </Pressable>
+      <View style={[styles.netTop, { top: insets.top + 16 }]}>
+        {connected && <NetBars q={netQuality} size={4} />}
+      </View>
+
       <View style={[styles.callHeader, { top: insets.top + 16 }]}>
         <Text style={styles.callPeer}>{call.peer?.display_name ?? 'FUTUREHAT user'}</Text>
-        <Text style={styles.callStatus}>
-          {connected ? timer : call.isCaller ? 'Ringing…' : 'Connecting…'}
-        </Text>
+        <Text style={styles.callStatus}>{status}</Text>
       </View>
 
       <View style={[styles.controls, { paddingBottom: insets.bottom + 24 }]}>
@@ -279,6 +411,27 @@ function ActiveCallView({
       {!connected && !remoteStream && (
         <ActivityIndicator color="#fff" style={{ position: 'absolute', alignSelf: 'center', bottom: 160 }} />
       )}
+    </View>
+  );
+}
+
+// Signal-strength network indicator (1–4 bars), mirrors web NetBars. Green when
+// good, amber when weak, red when poor; inactive bars are dim.
+function NetBars({ q, size = 4 }: { q: number; size?: number }) {
+  const color = q <= 1 ? '#F15C6D' : q === 2 ? '#F5B942' : '#2BD167';
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 2 }}>
+      {[1, 2, 3, 4].map((i) => (
+        <View
+          key={i}
+          style={{
+            width: size,
+            height: size * (i + 1),
+            borderRadius: 1,
+            backgroundColor: i <= q ? color : 'rgba(255,255,255,0.3)',
+          }}
+        />
+      ))}
     </View>
   );
 }
@@ -315,6 +468,16 @@ const styles = StyleSheet.create({
   callHeader: { position: 'absolute', alignSelf: 'center', alignItems: 'center' },
   callPeer: { color: '#fff', fontSize: 22, fontWeight: '700' },
   callStatus: { color: '#cfd9d6', fontSize: 14, marginTop: 4 },
+  minimizeBtn: { position: 'absolute', left: 16, zIndex: 10 },
+  netTop: { position: 'absolute', right: 20, alignItems: 'flex-end', zIndex: 10 },
+  bubbleBase: { position: 'absolute', left: 0, borderRadius: 16, overflow: 'hidden', backgroundColor: '#0B141A', zIndex: 300, elevation: 12, shadowColor: '#000', shadowOpacity: 0.4, shadowRadius: 10, shadowOffset: { width: 0, height: 4 } },
+  bubbleVideo: { width: 124, height: 172 },
+  bubbleVideoPlaceholder: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0B141A' },
+  bubbleOverlayBar: { position: 'absolute', left: 0, right: 0, bottom: 0, flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 8, paddingVertical: 6, backgroundColor: 'rgba(0,0,0,0.45)' },
+  bubblePill: { width: 230, height: 60, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 10 },
+  bubblePeer: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  bubbleTimer: { color: '#cfd9d6', fontSize: 12, flex: 1 },
+  bubbleHangup: { width: 30, height: 30, borderRadius: 15, backgroundColor: '#F15C6D', alignItems: 'center', justifyContent: 'center' },
   controls: { position: 'absolute', bottom: 0, left: 0, right: 0, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 18 },
   ctl: { width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center' },
   ctlActive: { backgroundColor: '#fff' },

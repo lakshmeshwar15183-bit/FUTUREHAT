@@ -370,6 +370,16 @@ export class CallSession {
     this.localStream?.getVideoTracks().forEach((t: any) => t._switchCamera?.());
   }
 
+  // Read-only stats sample for the network-quality indicator. Never touches the
+  // peer connection — just reads the latest RTCStatsReport (Map-like: forEach).
+  async getStats(): Promise<any | null> {
+    try {
+      return this.pc ? await (this.pc as any).getStats() : null;
+    } catch {
+      return null;
+    }
+  }
+
   end(sendBye = true) {
     if (this.ended) return;
     this.ended = true;
