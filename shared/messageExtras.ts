@@ -40,7 +40,12 @@ export async function getHiddenMessageIds(client: SupabaseClient): Promise<UUID[
 export async function hideMessageForMe(client: SupabaseClient, messageId: UUID): Promise<{ error: Error | null }> {
   const user = await getCurrentUser(client);
   if (!user) return { error: new Error('not authenticated') };
-  const { error } = await client.from('hidden_messages').upsert({ user_id: user.id, message_id: messageId });
+  const { error } = await client
+    .from('hidden_messages')
+    .upsert(
+      { user_id: user.id, message_id: messageId },
+      { onConflict: 'user_id,message_id', ignoreDuplicates: true },
+    );
   return { error };
 }
 
@@ -75,9 +80,21 @@ export async function deleteConversationForMe(
   //    the operation the user actually asked for ("delete chat"); if it fails we
   //    report the real error. It's ungated (deleted_conversations, 0016) and
   //    reversible (the row is dropped when the chat is later revived).
+  //
+  //    IMPORTANT: use ON CONFLICT DO NOTHING (ignoreDuplicates), NOT a plain
+  //    upsert. A default upsert compiles to `INSERT ... ON CONFLICT DO UPDATE`,
+  //    whose UPDATE branch is checked against the table's UPDATE RLS policy —
+  //    which deleted_conversations deliberately does NOT have. Re-deleting an
+  //    already-deleted chat would then hit the (absent) UPDATE policy and fail
+  //    with "new row violates row-level security policy (USING expression)".
+  //    A row already existing is a success for us (the chat is gone either way),
+  //    so DO NOTHING is both correct and immune to the missing UPDATE policy.
   const { error: convErr } = await client
     .from('deleted_conversations')
-    .upsert({ user_id: user.id, conversation_id: conversationId });
+    .upsert(
+      { user_id: user.id, conversation_id: conversationId },
+      { onConflict: 'user_id,conversation_id', ignoreDuplicates: true },
+    );
   if (convErr) return { error: new Error(convErr.message) };
 
   // 2) SECONDARY, best-effort — hide every existing message so the thread
@@ -91,7 +108,9 @@ export async function deleteConversationForMe(
       .eq('conversation_id', conversationId);
     if (msgs && msgs.length) {
       const rows = msgs.map((m: any) => ({ user_id: user.id, message_id: m.id }));
-      await client.from('hidden_messages').upsert(rows);
+      await client
+        .from('hidden_messages')
+        .upsert(rows, { onConflict: 'user_id,message_id', ignoreDuplicates: true });
     }
   } catch {
     /* non-fatal: the conversation is already removed from the list */

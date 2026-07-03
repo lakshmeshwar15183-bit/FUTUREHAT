@@ -454,6 +454,9 @@ function ChatScreenInner() {
       supabase.removeChannel(rcChannel);
       leavePresence(presenceChannel); // shared room: unhook this screen only
       supabase.removeChannel(tc.channel);
+      // Cancel any pending "typing…" auto-clear so it can't fire setTypingName
+      // after this screen has unmounted (no state updates after unmount).
+      if (typingTimeout.current) { clearTimeout(typingTimeout.current); typingTimeout.current = null; }
     };
   }, [uid, conversationId, setMsgs, applyReceipts]);
 

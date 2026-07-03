@@ -44,6 +44,7 @@ import {
   submitReport,
   joinPresence,
   leavePresence,
+  subscribeToConversationRemovals,
   getPremiumUserIds,
   getServerPremium,
   FREE_LIMITS,
@@ -211,6 +212,32 @@ export default function ConversationsScreen() {
     }, [load]),
   );
 
+  // Instantly drop conversations from the visible list AND the offline cache.
+  // This is the single source of "the chat is gone now": removing from `items`
+  // makes it vanish immediately regardless of filters, and rewriting the cache
+  // stops it resurrecting on the next focus / cold open (the reported "only
+  // disappears after pull-to-refresh" bug — the optimistic hide alone was being
+  // undone by the background load() + a stale cache). Idempotent.
+  const dropConversationsLocally = useCallback((ids: string[]) => {
+    if (!ids.length) return;
+    const idSet = new Set(ids);
+    animateSelection();
+    setItems((prev) => {
+      const next = prev.filter((c) => !idSet.has(c.conversation.id));
+      if (next.length !== prev.length && uid) cacheConversations(uid, next).catch(() => {});
+      return next;
+    });
+  }, [uid]);
+
+  // Realtime: keep every device in sync. When a chat is deleted for everyone
+  // (participant rows cascade-delete) or deleted for me on another device
+  // (deleted_conversations insert), drop it here too — no manual refresh needed.
+  useEffect(() => {
+    if (!uid) return;
+    const ch = subscribeToConversationRemovals(supabase, uid, (cid) => dropConversationsLocally([cid]));
+    return () => { supabase.removeChannel(ch); };
+  }, [uid, dropConversationsLocally]);
+
   const lastPreview = (c: ConversationSummary): string => {
     const m = c.lastMessage;
     if (!m) return 'Tap to start chatting';
@@ -326,12 +353,6 @@ export default function ConversationsScreen() {
     const ids = selConvs.map((c) => c.conversation.id);
     if (!ids.length) return;
 
-    const dropFromList = (targetIds: string[]) => {
-      const prev = hiddenIds;
-      setHiddenIds((p) => { const n = new Set(p); targetIds.forEach((id) => n.add(id)); return n; });
-      return prev;
-    };
-
     // "Delete for everyone" is offered only on a SINGLE chat the user is allowed
     // to wipe for all: a direct chat, or a group they created. (Telegram parity.)
     const canEveryone =
@@ -344,11 +365,12 @@ export default function ConversationsScreen() {
       style: 'destructive',
       onPress: async () => {
         clearSelection();
-        const prev = dropFromList(ids);
-        // Optimistically drop from the list; deleted_conversations makes it stick.
+        // Instant + durable: drop from the list AND the offline cache right away.
+        dropConversationsLocally(ids);
         const results = await Promise.all(ids.map((id) => deleteConversationForMe(supabase, id)));
         const failed = results.find((r) => r.error);
-        if (failed) { setHiddenIds(prev); Alert.alert('Could not delete', failed.error?.message); }
+        // On failure, re-sync from the server so nothing is wrongly hidden.
+        if (failed) { Alert.alert('Could not delete', failed.error?.message); load(); }
       },
     });
     if (canEveryone) {
@@ -358,9 +380,9 @@ export default function ConversationsScreen() {
         onPress: async () => {
           const id = ids[0];
           clearSelection();
-          const prev = dropFromList([id]);
+          dropConversationsLocally([id]);
           const { error } = await deleteConversationForEveryone(supabase, id);
-          if (error) { setHiddenIds(prev); Alert.alert('Could not delete', error.message); }
+          if (error) { Alert.alert('Could not delete', error.message); load(); }
         },
       });
     }

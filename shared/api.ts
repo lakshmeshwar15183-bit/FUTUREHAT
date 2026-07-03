@@ -545,18 +545,26 @@ export function joinPresence(
   // Hand the newcomer the state we already have so it paints immediately.
   if (room.online.size) onChange(new Set(room.online));
 
-  // Return a proxy that removeChannel()-style cleanup understands: unhooking this
-  // listener, and only really removing the underlying channel when none remain.
-  const handle = room.channel as RealtimeChannel & { __unsubscribePresence?: () => void };
-  handle.__unsubscribePresence = () => {
-    const r = presenceRooms.get(PRESENCE_TOPIC);
-    if (!r) return;
-    r.subscribers.delete(onChange);
-    if (r.subscribers.size === 0) {
-      presenceRooms.delete(PRESENCE_TOPIC);
-      void client.removeChannel(r.channel);
-    }
-  };
+  // Return a PER-CALLER handle whose __unsubscribePresence removes exactly THIS
+  // caller's onChange. Crucially we do NOT stamp this onto the shared
+  // room.channel: that object is reused across every subscriber, so mutating it
+  // would overwrite the previous caller's unsubscribe closure — and then leaving
+  // one screen would remove another screen's callback, leaving an UNMOUNTED
+  // screen's setState listener alive in the room (state-update-after-unmount +
+  // a slow subscriber leak). A fresh object per caller keeps each cleanup exact.
+  // leavePresence() only ever reads __unsubscribePresence, so a lightweight
+  // handle is sufficient.
+  const handle = {
+    __unsubscribePresence: () => {
+      const r = presenceRooms.get(PRESENCE_TOPIC);
+      if (!r) return;
+      r.subscribers.delete(onChange);
+      if (r.subscribers.size === 0) {
+        presenceRooms.delete(PRESENCE_TOPIC);
+        void client.removeChannel(r.channel);
+      }
+    },
+  } as unknown as RealtimeChannel;
   return handle;
 }
 
@@ -591,6 +599,45 @@ export function subscribeToReceipts(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'message_receipts' },
       (payload: any) => onChange(payload.new),
+    )
+    .subscribe();
+}
+
+// ── Conversation removals (delete-for-me / delete-for-everyone sync) ───────────
+// Fires when a conversation should leave THIS user's list — on ANY of their
+// devices — without a manual refresh:
+//   • a `conversation_participants` row of theirs is deleted (delete-for-everyone
+//     cascades these away, or they were removed from a group), or
+//   • a `deleted_conversations` row of theirs is inserted (they hit "Delete for
+//     me" on another device).
+// It hands the caller the affected conversation id; the caller drops it from the
+// list + cache. Realtime DELETE payloads carry only the replica-identity columns
+// (the composite PK here — conversation_id + user_id), which is exactly what we
+// need to (a) confirm the row is this user's and (b) know which chat to remove.
+export function subscribeToConversationRemovals(
+  client: SupabaseClient,
+  userId: UUID,
+  onRemove: (conversationId: UUID) => void,
+): RealtimeChannel {
+  return client
+    .channel(`conv-removals:${userId}`)
+    .on(
+      'postgres_changes',
+      { event: 'DELETE', schema: 'public', table: 'conversation_participants' },
+      (payload: any) => {
+        const row = payload.old ?? {};
+        // DELETE payloads include the PK; ignore rows that aren't ours.
+        if (row.user_id && row.user_id !== userId) return;
+        if (row.conversation_id) onRemove(row.conversation_id);
+      },
+    )
+    .on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'deleted_conversations', filter: `user_id=eq.${userId}` },
+      (payload: any) => {
+        const row = payload.new ?? {};
+        if (row.conversation_id) onRemove(row.conversation_id);
+      },
     )
     .subscribe();
 }
