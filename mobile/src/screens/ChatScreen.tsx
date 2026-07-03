@@ -57,6 +57,8 @@ import {
   unstarMessage,
   getHiddenMessageIds,
   hideMessageForMe,
+  reportMessage,
+  REPORT_REASONS,
   getChatSettings,
   getPreferences,
   getServerPremium,
@@ -65,7 +67,7 @@ import {
   FREE_LIMITS,
   PREMIUM_LIMITS,
 } from '../lib/shared';
-import type { Message, MessageReaction, Profile, ConversationSummary, Poll, PollVote, SearchKind, ChatSettings } from '../lib/shared';
+import type { Message, MessageReaction, Profile, ConversationSummary, Poll, PollVote, SearchKind, ChatSettings, ReportReason } from '../lib/shared';
 import {
   getCachedMessages,
   cacheMessages,
@@ -86,6 +88,7 @@ import SwipeToReply from '../components/SwipeToReply';
 import MediaViewer, { type ViewerItem } from '../components/MediaViewer';
 import PollCard from '../components/PollCard';
 import ScheduleMessageModal from '../components/ScheduleMessageModal';
+import ErrorBoundary from '../components/ErrorBoundary';
 import { STICKERS } from '../lib/stickers';
 import { useCalls } from '../calls/CallContext';
 import type { RootStackParamList } from '../navigation/types';
@@ -122,7 +125,9 @@ type TimelineItem =
   | { kind: 'poll'; id: string; at: string; poll: Poll }
   | { kind: 'day'; id: string; at: string; label: string };
 
-export default function ChatScreen() {
+// Wrapped in an ErrorBoundary (see default export at the bottom) so a render
+// throw shows a recoverable fallback instead of a blank chat screen.
+function ChatScreenInner() {
   const navigation = useNavigation<Nav>();
   const { params } = useRoute<Rt>();
   const { conversationId } = params;
@@ -173,6 +178,11 @@ export default function ChatScreen() {
   const [reply, setReply] = useState<Message | null>(null);
   const [editing, setEditing] = useState<Message | null>(null);
   const [selected, setSelected] = useState<Message | null>(null);
+  // Report-message flow: `reportTarget` opens the reason picker; `reportBusy`
+  // guards against double-submit while the RPC is in flight.
+  const [reportTarget, setReportTarget] = useState<Message | null>(null);
+  const [reportDetails, setReportDetails] = useState('');
+  const [reportBusy, setReportBusy] = useState(false);
   const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
   const [emojiComposerOpen, setEmojiComposerOpen] = useState(false);
   const [starredIds, setStarredIds] = useState<Set<string>>(new Set());
@@ -866,6 +876,42 @@ export default function ChatScreen() {
     Alert.alert('Message info', lines || 'No details available.');
   }
 
+  // Report a message (WhatsApp/Telegram style): confirm → pick a reason → submit.
+  // Only offered on messages you did NOT send. Step 1 is the confirmation dialog.
+  function startReport() {
+    if (!selected) return;
+    const target = selected;
+    setSelected(null);
+    Alert.alert(
+      'Report message',
+      'Report this message to the FUTUREHAT moderators?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Report',
+          style: 'destructive',
+          onPress: () => { setReportDetails(''); setReportTarget(target); },
+        },
+      ],
+    );
+  }
+
+  // Step 2: a reason was chosen — submit and give clear success/failure feedback.
+  async function submitReport(reason: ReportReason) {
+    const target = reportTarget;
+    if (!target || reportBusy) return;
+    setReportBusy(true);
+    const { error } = await reportMessage(supabase, target.id, reason, reportDetails.trim() || undefined);
+    setReportBusy(false);
+    setReportTarget(null);
+    setReportDetails('');
+    if (error) {
+      Alert.alert('Could not report', error.message);
+    } else {
+      Alert.alert('Report submitted', 'Thanks — our moderators will review this message.');
+    }
+  }
+
   async function doDelete() {
     if (!selected) return;
     const target = selected;
@@ -1426,8 +1472,41 @@ export default function ChatScreen() {
                 onPress={() => { setEditing(selected); setText(selected?.content ?? ''); setSelected(null); }}
               />
             )}
+            {!!uid && selected?.sender_id !== uid && (
+              <ActionRow icon="flag-outline" label="Report" danger onPress={startReport} />
+            )}
             <ActionRow icon="trash" label="Delete" danger onPress={doDelete} />
           </View>
+        </Pressable>
+      </Modal>
+
+      {/* Report-message reason picker (step 2 of the report flow). */}
+      <Modal visible={!!reportTarget} transparent animationType="slide" onRequestClose={() => setReportTarget(null)}>
+        <Pressable style={styles.backdrop} onPress={() => !reportBusy && setReportTarget(null)}>
+          <Pressable style={[styles.sheet, { paddingBottom: insets.bottom + 12 }]} onPress={() => {}}>
+            <Text style={styles.reportTitle}>Report message</Text>
+            <Text style={styles.reportSubtitle}>Why are you reporting this message?</Text>
+            {REPORT_REASONS.map((r) => (
+              <Pressable
+                key={r.value}
+                style={attachStyles.actionRow}
+                disabled={reportBusy}
+                onPress={() => submitReport(r.value)}
+              >
+                <Ionicons name="flag-outline" size={20} color={colors.textMuted} />
+                <Text style={[attachStyles.actionLabel, { color: colors.text }]}>{r.label}</Text>
+              </Pressable>
+            ))}
+            <TextInput
+              style={styles.reportNote}
+              placeholder="Add a note (optional)"
+              placeholderTextColor={colors.textMuted}
+              value={reportDetails}
+              onChangeText={setReportDetails}
+              editable={!reportBusy}
+              multiline
+            />
+          </Pressable>
         </Pressable>
       </Modal>
 
@@ -1673,6 +1752,13 @@ const makeStyles = (colors: Palette) =>
       paddingTop: 16,
     },
     sheetTitle: { color: colors.text, fontSize: font.heading, fontWeight: '700', marginBottom: 8 },
+    reportTitle: { color: colors.text, fontSize: font.heading, fontWeight: '700', marginTop: 2 },
+    reportSubtitle: { color: colors.textMuted, fontSize: font.small, marginTop: 2, marginBottom: 6 },
+    reportNote: {
+      color: colors.text, fontSize: font.body, backgroundColor: colors.surfaceAlt,
+      borderRadius: radius.md, paddingHorizontal: 12, paddingVertical: 10, marginTop: 10,
+      minHeight: 44, maxHeight: 100,
+    },
     stickerGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', paddingTop: 4 },
     stickerCell: { width: '23%', aspectRatio: 1, marginBottom: 10, alignItems: 'center', justifyContent: 'center' },
     stickerImg: { width: '100%', height: '100%', borderRadius: 12 },
@@ -1714,3 +1800,15 @@ const makeStyles = (colors: Palette) =>
     emojiGridText: { fontSize: 30 },
     emojiLock: { position: 'absolute', bottom: 6, right: '28%', fontSize: 11 },
   });
+
+// Public screen: the chat UI guarded by an ErrorBoundary. Any exception thrown
+// while rendering the conversation (message list, action-sheet modals, bubbles)
+// is caught here and shown as a recoverable "Try again" state — the screen can
+// never silently go blank.
+export default function ChatScreen() {
+  return (
+    <ErrorBoundary label="ChatScreen">
+      <ChatScreenInner />
+    </ErrorBoundary>
+  );
+}

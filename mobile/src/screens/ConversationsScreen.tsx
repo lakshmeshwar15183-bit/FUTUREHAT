@@ -36,6 +36,7 @@ import {
   getHiddenIds,
   unhideConversation,
   deleteConversationForMe,
+  deleteConversationForEveryone,
   getDeletedConversationIds,
   archiveConversation,
   markConversationRead,
@@ -324,24 +325,52 @@ export default function ConversationsScreen() {
   function batchDelete() {
     const ids = selConvs.map((c) => c.conversation.id);
     if (!ids.length) return;
+
+    const dropFromList = (targetIds: string[]) => {
+      const prev = hiddenIds;
+      setHiddenIds((p) => { const n = new Set(p); targetIds.forEach((id) => n.add(id)); return n; });
+      return prev;
+    };
+
+    // "Delete for everyone" is offered only on a SINGLE chat the user is allowed
+    // to wipe for all: a direct chat, or a group they created. (Telegram parity.)
+    const canEveryone =
+      selCount === 1 && !!singleConv &&
+      (singleConv.conversation.type === 'direct' || singleConv.conversation.created_by === uid);
+
+    const buttons: any[] = [{ text: 'Cancel', style: 'cancel' }];
+    buttons.push({
+      text: 'Delete for me',
+      style: 'destructive',
+      onPress: async () => {
+        clearSelection();
+        const prev = dropFromList(ids);
+        // Optimistically drop from the list; deleted_conversations makes it stick.
+        const results = await Promise.all(ids.map((id) => deleteConversationForMe(supabase, id)));
+        const failed = results.find((r) => r.error);
+        if (failed) { setHiddenIds(prev); Alert.alert('Could not delete', failed.error?.message); }
+      },
+    });
+    if (canEveryone) {
+      buttons.push({
+        text: 'Delete for everyone',
+        style: 'destructive',
+        onPress: async () => {
+          const id = ids[0];
+          clearSelection();
+          const prev = dropFromList([id]);
+          const { error } = await deleteConversationForEveryone(supabase, id);
+          if (error) { setHiddenIds(prev); Alert.alert('Could not delete', error.message); }
+        },
+      });
+    }
+
     Alert.alert(
       ids.length > 1 ? `Delete ${ids.length} chats?` : 'Delete chat?',
-      'This clears the messages from your device and removes the chat from your list. The other person will still have their copy.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete for me',
-          style: 'destructive',
-          onPress: async () => {
-            clearSelection();
-            const prev = hiddenIds;
-            // Optimistically drop from the list; hidden_conversations makes it stick.
-            setHiddenIds((p) => { const n = new Set(p); ids.forEach((id) => n.add(id)); return n; });
-            const results = await Promise.all(ids.map((id) => deleteConversationForMe(supabase, id)));
-            if (results.some((r) => r.error)) { setHiddenIds(prev); Alert.alert('Could not delete'); }
-          },
-        },
-      ],
+      canEveryone
+        ? 'Delete this chat just for you, or delete it for everyone in the conversation.'
+        : 'This removes the chat from your list. The other person will still have their copy.',
+      buttons,
     );
   }
 
