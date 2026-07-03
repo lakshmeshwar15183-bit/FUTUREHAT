@@ -40,6 +40,9 @@ interface Props {
   tick?: TickStatus;
   onLongPress?: () => void;
   onPress?: () => void;
+  /** Tapping the always-visible ⋯ button opens the message action sheet
+   *  (reactions + reply/copy/forward/…), matching web's hover menu. */
+  onMore?: () => void;
   selected?: boolean;
   /** Continuation of a run from the same sender — hides the tail + sender name. */
   grouped?: boolean;
@@ -98,12 +101,14 @@ function MessageBubble({
   tick,
   onLongPress,
   onPress,
+  onMore,
   selected,
   grouped: groupedRun,
   onOpenImage,
   onReactionPress,
   highlight = '',
   activeMatch = false,
+  selectionMode = false,
   starred = false,
 }: Props) {
   const colors = useColors();
@@ -197,6 +202,11 @@ function MessageBubble({
         )}
 
         <View style={styles.meta}>
+          {onMore && !selectionMode && (
+            <Pressable onPress={onMore} hitSlop={10} style={styles.moreBtn}>
+              <Ionicons name="ellipsis-horizontal" size={15} color={mine ? colors.bubbleOutMuted : colors.textFaint} />
+            </Pressable>
+          )}
           {starred && (
             <Ionicons name="star" size={12} color={mine ? colors.bubbleOutMuted : colors.textFaint} style={{ marginRight: 3 }} />
           )}
@@ -313,6 +323,7 @@ const makeStyles = (colors: Palette) =>
     replyName: { color: colors.primary, fontSize: font.tiny, fontWeight: '700' },
     replyText: { fontSize: font.small },
     meta: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-end', marginTop: 2 },
+    moreBtn: { marginRight: 6, opacity: 0.7 },
     edited: { fontSize: 10, marginRight: 4 },
     time: { fontSize: 10 },
     reactions: {

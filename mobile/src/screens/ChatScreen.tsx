@@ -7,7 +7,6 @@ import {
   Alert,
   FlatList,
   Keyboard,
-  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
@@ -16,8 +15,8 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import Animated, { useAnimatedKeyboard, useAnimatedStyle } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useHeaderHeight } from '@react-navigation/elements';
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
@@ -130,17 +129,22 @@ export default function ChatScreen() {
   const colors = useColors();
   const { wallpaperColor, isPremium } = useTheme();
   const insets = useSafeAreaInsets();
-  // Real header height for this device/orientation (notch, status bar, landscape
-  // all vary) — feeds KeyboardAvoidingView's offset so the composer lands exactly
-  // above the keyboard instead of relying on a hardcoded guess.
-  const headerHeight = useHeaderHeight();
   const { startCall } = useCalls();
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
-  // Whether the soft keyboard is currently up. When it is, the OS inset already
-  // sits above the keyboard, so we drop the safe-area bottom padding to avoid a
-  // double gap — the composer hugs the keyboard, WhatsApp-style. Restored on hide.
-  const [keyboardUp, setKeyboardUp] = useState(false);
+  // WhatsApp-identical keyboard handling. We do NOT use KeyboardAvoidingView:
+  // targetSdk 35 forces edge-to-edge on Android 15+, which makes the manifest's
+  // `adjustResize` a no-op (the window no longer shrinks for the IME), so the
+  // composer would sit BEHIND the keyboard. Instead we read the live IME height
+  // from reanimated's useAnimatedKeyboard (driven off the system WindowInsets
+  // animation, so it tracks the keyboard 1:1 with matching speed/curve) and pad
+  // the whole thread up by it — works under forced edge-to-edge and on iOS, with
+  // no hardcoded offsets. When the keyboard is down we fall back to the bottom
+  // safe-area inset (gesture-nav bar / home indicator).
+  const keyboard = useAnimatedKeyboard();
+  const keyboardStyle = useAnimatedStyle(() => ({
+    paddingBottom: Math.max(keyboard.height.value, insets.bottom),
+  }));
 
   const [uid, setUid] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -221,25 +225,20 @@ export default function ChatScreen() {
     });
   }, []);
 
-  // WhatsApp-style keyboard follow. On show: collapse the safe-area bottom gap so
-  // the composer hugs the keyboard, and — if the user was already at the newest
-  // message — keep the latest in view as the list shrinks (inverted, so offset 0).
-  // On hide: restore the safe-area gap. Covers open/close, emoji keyboard, and
-  // height changes (each fires a fresh show event); rotation re-runs via new metrics.
+  // Keep the latest message in view as the keyboard opens. The composer already
+  // follows the keyboard via useAnimatedKeyboard (padding), which shrinks the
+  // inverted list from the bottom; if the user was at the newest message we nudge
+  // it back to offset 0 so the last bubble stays visible above the composer.
+  // Covers open/close, emoji keyboard, and height changes (each fires a fresh
+  // show event); rotation re-runs via new metrics.
   useEffect(() => {
     const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
     const onShow = Keyboard.addListener(showEvt, () => {
-      setKeyboardUp(true);
       if (atBottomRef.current) {
         requestAnimationFrame(() => listRef.current?.scrollToOffset({ offset: 0, animated: true }));
       }
     });
-    const onHide = Keyboard.addListener(hideEvt, () => setKeyboardUp(false));
-    return () => {
-      onShow.remove();
-      onHide.remove();
-    };
+    return () => onShow.remove();
   }, []);
 
   const loadPolls = useCallback(async () => {
@@ -1053,6 +1052,7 @@ export default function ChatScreen() {
             else setSelected(msg);
           }}
           onPress={selectionMode ? () => toggleSelect(msg) : undefined}
+          onMore={() => setSelected(msg)}
           onOpenImage={(url) => (selectionMode ? toggleSelect(msg) : setViewerUrl(url))}
           highlight={searchActive ? search : ''}
           activeMatch={msg.id === activeMatchId}
@@ -1103,16 +1103,8 @@ export default function ChatScreen() {
   }
 
   return (
-    <KeyboardAvoidingView
-      style={[styles.flex, wallpaperColor ? { backgroundColor: wallpaperColor } : null]}
-      // iOS: pad the view up by the keyboard height. Android: no behavior — the
-      // window's native adjustResize already shrinks the layout, and stacking a
-      // 'height'/'padding' behavior on top double-shrinks and causes jumps.
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      // iOS offset: measure "above the keyboard" from the top of our content, not
-      // the screen. The real header height is correct on notch/non-notch and after
-      // rotation (useHeaderHeight re-reports), unlike the previous hardcoded 88.
-      keyboardVerticalOffset={Platform.OS === 'ios' ? headerHeight : 0}
+    <Animated.View
+      style={[styles.flex, wallpaperColor ? { backgroundColor: wallpaperColor } : null, keyboardStyle]}
     >
       {searchOpen && (
         <View style={styles.searchBar}>
@@ -1226,7 +1218,7 @@ export default function ChatScreen() {
 
       {/* Composer */}
       {recording ? (
-        <View style={[styles.composer, { paddingBottom: (keyboardUp ? 0 : insets.bottom) + 6 }]}>
+        <View style={[styles.composer, { paddingBottom: 6 }]}>
           <Pressable onPress={() => stopRecording(false)} hitSlop={8}>
             <Ionicons name="trash-outline" size={24} color={colors.danger} />
           </Pressable>
@@ -1241,7 +1233,7 @@ export default function ChatScreen() {
           </Pressable>
         </View>
       ) : (
-        <View style={[styles.composer, { paddingBottom: (keyboardUp ? 0 : insets.bottom) + 6 }]}>
+        <View style={[styles.composer, { paddingBottom: 6 }]}>
           <Pressable onPress={() => { Keyboard.dismiss(); setAttachOpen(true); }} hitSlop={8}>
             <Ionicons name="add-circle-outline" size={28} color={colors.textMuted} />
           </Pressable>
@@ -1521,7 +1513,7 @@ export default function ChatScreen() {
       {viewerIndex >= 0 && (
         <MediaViewer items={viewerItems} index={viewerIndex} onClose={() => setViewerUrl(null)} />
       )}
-    </KeyboardAvoidingView>
+    </Animated.View>
   );
 }
 
