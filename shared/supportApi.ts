@@ -1,10 +1,41 @@
 // FUTUREHAT — trust & safety data layer: reports, support tickets, blocks, mutes.
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { UUID } from './types.js';
+import type { UUID, ReportReason } from './types.js';
 import { getCurrentUser } from './api.js';
 
 export type ReportTargetType = 'user' | 'message' | 'conversation' | 'channel' | 'community';
 export type TicketKind = 'support' | 'bug' | 'feedback' | 'appeal' | 'grievance';
+
+// Fixed reason list surfaced by the mobile "Report message" picker. Kept next to
+// the report call so the UI and the server CHECK constraint can't drift apart.
+export const REPORT_REASONS: ReadonlyArray<{ value: ReportReason; label: string }> = [
+  { value: 'spam',             label: 'Spam' },
+  { value: 'harassment',       label: 'Harassment' },
+  { value: 'abuse',            label: 'Abuse' },
+  { value: 'fake_information', label: 'Fake Information' },
+  { value: 'illegal_content',  label: 'Illegal Content' },
+  { value: 'violence',         label: 'Violence' },
+  { value: 'child_safety',     label: 'Child Safety' },
+  { value: 'other',            label: 'Other' },
+];
+
+// Report a single message. Uses the report_message() SECURITY DEFINER RPC (0017)
+// which snapshots the message content, derives the reported user + conversation,
+// and verifies the reporter is a participant — so the admin dashboard gets a
+// complete, tamper-proof record even if the message is later deleted.
+export async function reportMessage(
+  client: SupabaseClient,
+  messageId: UUID,
+  reason: ReportReason,
+  details?: string,
+): Promise<{ error: Error | null }> {
+  const { error } = await client.rpc('report_message', {
+    p_message: messageId,
+    p_reason: reason,
+    p_details: details ?? null,
+  });
+  return { error: error ? new Error(error.message) : null };
+}
 
 export interface SupportTicket {
   id: UUID;

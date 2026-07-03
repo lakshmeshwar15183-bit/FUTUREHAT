@@ -299,3 +299,46 @@ export interface AdminGlobalSearch {
   messages: Array<{ id: UUID; conversation_id: UUID; sender_id: UUID; type: string; content: string | null; created_at: string }>;
   reports: Array<{ id: UUID; target_type: string; target_id: UUID; reason: string; status: string; created_at: string }>;
 }
+
+// ── Message reporting (0017) ────────────────────────────────────────────────
+// Fixed reason vocabulary shared by the mobile picker and the admin dashboard.
+export type ReportReason =
+  | 'spam' | 'harassment' | 'abuse' | 'fake_information'
+  | 'illegal_content' | 'violence' | 'child_safety' | 'other';
+
+export type ReportStatus = 'open' | 'reviewing' | 'resolved' | 'dismissed';
+
+// One row from admin_list_reports() — joins reporter + reported-user profiles and
+// the (live or snapshotted) message content onto the report.
+export interface AdminReport {
+  report_id: UUID;
+  message_id: UUID | null;
+  conversation_id: UUID | null;
+  reporter_id: UUID;
+  reported_user_id: UUID | null;
+  reason: ReportReason;
+  description: string | null;
+  status: ReportStatus;
+  created_at: string;
+  reviewed_at: string | null;
+  reviewed_by: UUID | null;
+  message_content: string | null;
+  message_exists: boolean;
+  reporter_username: string | null;
+  reporter_name: string | null;
+  reporter_avatar: string | null;
+  reported_username: string | null;
+  reported_name: string | null;
+  reported_avatar: string | null;
+  conversation_type: string | null;
+  conversation_name: string | null;
+}
+
+export interface AdminConversationView {
+  conversation: { id: UUID; type: string; name: string | null; created_at: string } | null;
+  participants: Array<{ id: UUID; username: string | null; display_name: string | null; avatar_url: string | null }>;
+  messages: Array<{
+    id: UUID; sender_id: UUID; type: string; content: string | null; media_url: string | null;
+    is_deleted: boolean; created_at: string; edited_at: string | null;
+  }>;
+}

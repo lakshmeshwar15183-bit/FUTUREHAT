@@ -71,22 +71,66 @@ export async function deleteConversationForMe(
   const user = await getCurrentUser(client);
   if (!user) return { error: new Error('not authenticated') };
 
-  // 1) Hide every message currently in the thread (delete-for-me, one row each).
-  const { data: msgs, error: selErr } = await client
-    .from('messages')
-    .select('id')
-    .eq('conversation_id', conversationId);
-  if (selErr) return { error: selErr };
-  if (msgs && msgs.length) {
-    const rows = msgs.map((m: any) => ({ user_id: user.id, message_id: m.id }));
-    const { error: hideErr } = await client.from('hidden_messages').upsert(rows);
-    if (hideErr) return { error: hideErr };
-  }
-
-  // 2) Remove the conversation from this user's list (free; reversible if the
-  //    chat is later revived by deleting the row).
+  // 1) PRIMARY write — remove the conversation from this user's list. This is
+  //    the operation the user actually asked for ("delete chat"); if it fails we
+  //    report the real error. It's ungated (deleted_conversations, 0016) and
+  //    reversible (the row is dropped when the chat is later revived).
   const { error: convErr } = await client
     .from('deleted_conversations')
     .upsert({ user_id: user.id, conversation_id: conversationId });
-  return { error: convErr };
+  if (convErr) return { error: new Error(convErr.message) };
+
+  // 2) SECONDARY, best-effort — hide every existing message so the thread
+  //    reopens empty (WhatsApp behaviour). A failure here (e.g. a very large
+  //    thread, or the 0011 table not yet applied) must NOT surface as "could not
+  //    delete": the chat is already gone from the list. We simply skip it.
+  try {
+    const { data: msgs } = await client
+      .from('messages')
+      .select('id')
+      .eq('conversation_id', conversationId);
+    if (msgs && msgs.length) {
+      const rows = msgs.map((m: any) => ({ user_id: user.id, message_id: m.id }));
+      await client.from('hidden_messages').upsert(rows);
+    }
+  } catch {
+    /* non-fatal: the conversation is already removed from the list */
+  }
+
+  return { error: null };
+}
+
+/**
+ * "Delete for everyone" at the CONVERSATION level (Telegram-style). Hard-deletes
+ * the conversation for ALL participants via the delete_conversation_for_everyone
+ * RPC (0018), which re-checks permission server-side: allowed for either member
+ * of a direct chat, or the creator of a group. The DB cascades remove every
+ * message / participant / receipt, so no orphan rows are left behind.
+ */
+export async function deleteConversationForEveryone(
+  client: SupabaseClient,
+  conversationId: UUID,
+): Promise<{ error: Error | null }> {
+  const { error } = await client.rpc('delete_conversation_for_everyone', {
+    p_conversation: conversationId,
+  });
+  return { error: error ? new Error(error.message) : null };
+}
+
+/** Whether the current user may "delete for everyone" on this conversation:
+ *  direct chats (both members) or groups they created. Cheap client-side gate
+ *  for showing the option; the RPC re-checks authoritatively. */
+export async function canDeleteForEveryone(
+  client: SupabaseClient,
+  conversationId: UUID,
+): Promise<boolean> {
+  const user = await getCurrentUser(client);
+  if (!user) return false;
+  const { data } = await client
+    .from('conversations')
+    .select('type, created_by')
+    .eq('id', conversationId)
+    .maybeSingle();
+  if (!data) return false;
+  return data.type === 'direct' || data.created_by === user.id;
 }

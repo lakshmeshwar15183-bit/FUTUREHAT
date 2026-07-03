@@ -21,6 +21,9 @@ import type {
   AdminMessageStats,
   AdminDbHealth,
   AdminGlobalSearch,
+  AdminReport,
+  AdminConversationView,
+  ReportStatus,
 } from './types.js';
 
 // ── Privilege checks (server-authoritative) ─────────────────────────────────────
@@ -238,6 +241,56 @@ export async function adminAuditLog(client: SupabaseClient, limit = 200): Promis
 export async function adminRemoveDevice(client: SupabaseClient, deviceId: UUID): Promise<void> {
   const { error } = await client.rpc('admin_remove_device', { p_device: deviceId });
   if (error) throw error;
+}
+
+// ── Reports (0017) ──────────────────────────────────────────────────────────
+// List reports, optionally filtered by status. Newest first.
+export async function adminListReports(
+  client: SupabaseClient, status?: ReportStatus, limit = 200,
+): Promise<AdminReport[]> {
+  const { data, error } = await client.rpc('admin_list_reports', {
+    p_status: status ?? null, p_limit: limit,
+  });
+  if (error) throw error;
+  return (data as AdminReport[]) ?? [];
+}
+
+// Count of still-actionable reports (open + reviewing) — powers the badge.
+export async function adminReportsPendingCount(client: SupabaseClient): Promise<number> {
+  const { data, error } = await client.rpc('admin_reports_pending_count');
+  if (error) throw error;
+  return (data as number) ?? 0;
+}
+
+// Move a report through Review / Dismiss / Resolve (stamps reviewer + time).
+export async function adminSetReportStatus(
+  client: SupabaseClient, reportId: UUID, status: ReportStatus,
+): Promise<void> {
+  const { error } = await client.rpc('admin_set_report_status', {
+    p_report: reportId, p_status: status,
+  });
+  if (error) throw error;
+}
+
+// Warn a user, optionally linked to the report that triggered it.
+export async function adminWarnUser(
+  client: SupabaseClient, target: UUID, message: string, reportId?: UUID,
+): Promise<void> {
+  const { error } = await client.rpc('admin_warn_user', {
+    p_target: target, p_message: message, p_report: reportId ?? null,
+  });
+  if (error) throw error;
+}
+
+// Load a full conversation so the dashboard can open it and jump to a message.
+export async function adminGetConversation(
+  client: SupabaseClient, conversationId: UUID, limit = 300,
+): Promise<AdminConversationView> {
+  const { data, error } = await client.rpc('admin_get_conversation', {
+    p_conversation: conversationId, p_limit: limit,
+  });
+  if (error) throw error;
+  return data as AdminConversationView;
 }
 
 // Register/update the current device (clients call on launch so admins can see and
