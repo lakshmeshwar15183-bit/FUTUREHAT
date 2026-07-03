@@ -44,12 +44,25 @@ export async function hideMessageForMe(client: SupabaseClient, messageId: UUID):
   return { error };
 }
 
+/** Conversation ids this user has "deleted for me" (removed from their list).
+ *  Free for everyone — backed by deleted_conversations (0016), NOT the premium
+ *  hidden_conversations table. Degrades to [] if the migration isn't applied. */
+export async function getDeletedConversationIds(client: SupabaseClient): Promise<UUID[]> {
+  const { data } = await client.from('deleted_conversations').select('conversation_id');
+  return (data ?? []).map((r: any) => r.conversation_id);
+}
+
 /**
  * "Delete chat for me" — clears an entire conversation for THIS user only, the
- * WhatsApp way. Hides every existing message via hidden_messages (delete-for-me)
- * so the thread reopens empty, then removes the conversation from the list via
- * hidden_conversations. The other participant keeps their full copy. Idempotent;
- * upserts tolerate re-running. Returns the first error encountered, if any.
+ * WhatsApp way, and works for FREE users. Hides every existing message via
+ * hidden_messages (delete-for-me) so the thread reopens empty, then removes the
+ * conversation from the list via deleted_conversations. The other participant
+ * keeps their full copy. Idempotent; upserts tolerate re-running. Returns the
+ * first error encountered, if any.
+ *
+ * NOTE: this deliberately uses deleted_conversations (ungated), NOT the premium
+ * hidden_conversations table — "Delete for me" is a basic action, whereas "Hide
+ * chat" is a separate premium privacy feature.
  */
 export async function deleteConversationForMe(
   client: SupabaseClient,
@@ -70,9 +83,10 @@ export async function deleteConversationForMe(
     if (hideErr) return { error: hideErr };
   }
 
-  // 2) Remove the conversation from this user's list (reversible via "Show hidden").
+  // 2) Remove the conversation from this user's list (free; reversible if the
+  //    chat is later revived by deleting the row).
   const { error: convErr } = await client
-    .from('hidden_conversations')
+    .from('deleted_conversations')
     .upsert({ user_id: user.id, conversation_id: conversationId });
   return { error: convErr };
 }

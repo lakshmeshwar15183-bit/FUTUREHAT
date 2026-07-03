@@ -36,6 +36,7 @@ import {
   getHiddenIds,
   unhideConversation,
   deleteConversationForMe,
+  getDeletedConversationIds,
   archiveConversation,
   markConversationRead,
   blockUser,
@@ -178,11 +179,19 @@ export default function ConversationsScreen() {
       if (u?.id) cacheConversations(u.id, data).catch(() => {});
       // Per-user conversation flags (pin/mute/hidden) + premium wiring. Hidden
       // must be loaded here so hidden chats stay hidden across reloads (web parity).
-      Promise.all([getPinnedIds(supabase), getMutedIds(supabase), getHiddenIds(supabase)])
-        .then(([pinned, muted, hidden]) => {
+      Promise.all([
+        getPinnedIds(supabase),
+        getMutedIds(supabase),
+        getHiddenIds(supabase),
+        getDeletedConversationIds(supabase),
+      ])
+        .then(([pinned, muted, hidden, deleted]) => {
           setPinnedIds(new Set(pinned));
           setMutedIds(new Set(muted));
-          setHiddenIds(new Set(hidden));
+          // "Delete for me" chats leave the list just like hidden ones. Merging
+          // them into the same set keeps the filter + "Show hidden" reveal simple;
+          // a chat revived by a new message is restored by clearing its row.
+          setHiddenIds(new Set([...hidden, ...deleted]));
         })
         .catch(() => {});
       getPremiumUserIds(supabase).then((ids) => setPremiumIds(new Set(ids))).catch(() => {});
