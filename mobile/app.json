@@ -2,7 +2,7 @@
   "expo": {
     "name": "FUTUREHAT",
     "slug": "futurehat",
-    "version": "1.3.8",
+    "version": "1.3.9",
     "orientation": "portrait",
     "scheme": "futurehat",
     "userInterfaceStyle": "automatic",
@@ -22,7 +22,7 @@
     },
     "android": {
       "package": "dev.lakshmeshwar.futurehat",
-      "versionCode": 12,
+      "versionCode": 13,
       "allowBackup": false,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
