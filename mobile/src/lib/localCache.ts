@@ -17,6 +17,7 @@ const K = {
   profile: (id: string) => `fh:cache:profile:${id}`,
   draft: (convId: string) => `fh:draft:${convId}`,
   outbox: 'fh:outbox:v1',
+  actions: 'fh:actions:v1',
 };
 
 // Cap how many messages we retain per conversation so the cache stays bounded
@@ -48,6 +49,18 @@ async function writeJSON(key: string, value: unknown): Promise<void> {
   } catch {
     /* best-effort: never let a cache write break the UI */
   }
+}
+
+// ── Generic namespaced cache ────────────────────────────────────────────────
+// The reusable "read local first, sync later" primitive behind every screen.
+// Callers pick a stable key (e.g. `statuses`, `starred:<uid>`, `prefs:<uid>`)
+// and get instant reads + fire-and-forget writes. Never throws — a corrupt or
+// missing entry degrades to the fallback so the UI always has something to show.
+export async function getCache<T>(key: string, fallback: T): Promise<T> {
+  return readJSON<T>(`fh:cache:kv:${key}`, fallback);
+}
+export async function setCache<T>(key: string, value: T): Promise<void> {
+  await writeJSON(`fh:cache:kv:${key}`, value);
 }
 
 // ── Conversation list ─────────────────────────────────────────────────────────
@@ -153,6 +166,38 @@ export async function updateOutboxItem(tempId: string, patch: Partial<OutboxItem
   const cur = await getOutbox();
   const next = cur.map((i) => (i.tempId === tempId ? { ...i, ...patch } : i));
   await writeJSON(K.outbox, next);
+}
+
+// ── Action queue (durable outbox for NON-message mutations) ────────────────────
+// Every non-message write — pin/mute/archive/hide/star/delete-for-me/mark-read,
+// profile edits, settings changes, block — is applied to local state + cache
+// INSTANTLY, then recorded here and replayed against Supabase in the background.
+// If offline (or a send fails), the descriptor stays queued and auto-runs when
+// connectivity returns, so the UI never blocks on the network and no write is
+// lost across an app restart. `kind` selects a handler registered in sync.ts.
+export interface QueuedAction {
+  id: string;
+  kind: string;
+  payload: any;
+  createdAt: string;
+  attempts: number;
+}
+
+export async function getActionQueue(): Promise<QueuedAction[]> {
+  return readJSON<QueuedAction[]>(K.actions, []);
+}
+export async function enqueueAction(action: QueuedAction): Promise<void> {
+  const cur = await getActionQueue();
+  cur.push(action);
+  await writeJSON(K.actions, cur);
+}
+export async function removeAction(id: string): Promise<void> {
+  const cur = await getActionQueue();
+  await writeJSON(K.actions, cur.filter((a) => a.id !== id));
+}
+export async function updateAction(id: string, patch: Partial<QueuedAction>): Promise<void> {
+  const cur = await getActionQueue();
+  await writeJSON(K.actions, cur.map((a) => (a.id === id ? { ...a, ...patch } : a)));
 }
 
 /** Outbox items for a specific conversation, as optimistic Message rows so the

@@ -11,12 +11,37 @@
 import NetInfo from '@react-native-community/netinfo';
 
 import { supabase } from './supabase';
-import { sendMessage } from './shared';
+import {
+  sendMessage,
+  pinConversation,
+  unpinConversation,
+  muteConversation,
+  unmuteConversation,
+  archiveConversation,
+  unarchiveConversation,
+  hideConversation,
+  unhideConversation,
+  markConversationRead,
+  blockUser,
+  starMessage,
+  unstarMessage,
+  hideMessageForMe,
+  deleteConversationForMe,
+  deleteConversationForEveryone,
+  updateMyProfile,
+  updatePreferences,
+  setChatSettings,
+} from './shared';
 import {
   getOutbox,
   removeFromOutbox,
   updateOutboxItem,
   upsertCachedMessage,
+  getActionQueue,
+  enqueueAction,
+  removeAction,
+  updateAction,
+  uuidv4,
   type OutboxItem,
 } from './localCache';
 
@@ -88,6 +113,85 @@ export async function flushOutbox(): Promise<void> {
   }
 }
 
+// ── Generic action queue runner ───────────────────────────────────────────────
+// Handlers turn a queued descriptor back into the shared network call. Each
+// returns a Supabase-style { error } (or throws) so the runner can tell a
+// transient failure (keep + retry) from success (dequeue). Registered once here
+// so screens only ever call queueAction(kind, payload) — never the network
+// directly for these mutations.
+type ActionResult = { error?: unknown } | void;
+const actionHandlers: Record<string, (payload: any) => Promise<ActionResult>> = {
+  pin: (p) => pinConversation(supabase, p.conversationId),
+  unpin: (p) => unpinConversation(supabase, p.conversationId),
+  mute: (p) => muteConversation(supabase, p.conversationId),
+  unmute: (p) => unmuteConversation(supabase, p.conversationId),
+  archive: (p) => archiveConversation(supabase, p.conversationId),
+  unarchive: (p) => unarchiveConversation(supabase, p.conversationId),
+  hide: (p) => hideConversation(supabase, p.conversationId),
+  unhide: (p) => unhideConversation(supabase, p.conversationId),
+  markRead: (p) => markConversationRead(supabase, p.conversationId),
+  block: (p) => blockUser(supabase, p.userId),
+  star: (p) => starMessage(supabase, p.messageId),
+  unstar: (p) => unstarMessage(supabase, p.messageId),
+  hideMessage: (p) => hideMessageForMe(supabase, p.messageId),
+  deleteForMe: (p) => deleteConversationForMe(supabase, p.conversationId),
+  deleteForEveryone: (p) => deleteConversationForEveryone(supabase, p.conversationId),
+  updateProfile: (p) => updateMyProfile(supabase, p.updates),
+  updatePreferences: (p) => updatePreferences(supabase, p.updates),
+  updateChatSettings: (p) => setChatSettings(supabase, p.patch),
+};
+
+// Drop an action after this many failed attempts so a permanently-invalid write
+// (e.g. a since-deleted row) can't wedge the queue forever. Generous, so a long
+// offline stretch never discards a legitimate action.
+const MAX_ACTION_ATTEMPTS = 25;
+
+let flushingActions = false;
+
+/** Replay the action queue oldest-first. A transient failure is left queued and
+ *  retried on the next flush; a genuinely stuck item is dropped after
+ *  MAX_ACTION_ATTEMPTS. One failing item never blocks the others. */
+export async function flushActions(): Promise<void> {
+  if (flushingActions) return;
+  flushingActions = true;
+  try {
+    const queue = await getActionQueue();
+    for (const action of queue) {
+      if (!online) break; // nothing to gain while offline
+      const handler = actionHandlers[action.kind];
+      if (!handler) { await removeAction(action.id); continue; } // unknown kind: drop
+      try {
+        const res = await handler(action.payload);
+        const err = res && typeof res === 'object' ? (res as any).error : null;
+        if (err) {
+          const attempts = (action.attempts ?? 0) + 1;
+          if (attempts >= MAX_ACTION_ATTEMPTS) await removeAction(action.id);
+          else await updateAction(action.id, { attempts });
+        } else {
+          await removeAction(action.id);
+        }
+      } catch {
+        const attempts = (action.attempts ?? 0) + 1;
+        if (attempts >= MAX_ACTION_ATTEMPTS) await removeAction(action.id);
+        else await updateAction(action.id, { attempts });
+      }
+    }
+  } finally {
+    flushingActions = false;
+  }
+}
+
+/**
+ * Record a mutation and sync it in the background. Screens call this AFTER they
+ * have already updated local state + cache, so the UI is instant and the network
+ * is pure sync. Runs immediately if online; otherwise the descriptor waits in the
+ * durable queue and auto-runs on reconnect. Never rejects.
+ */
+export async function queueAction(kind: string, payload: unknown): Promise<void> {
+  await enqueueAction({ id: uuidv4(), kind, payload, createdAt: new Date().toISOString(), attempts: 0 });
+  if (online) flushActions().catch(() => {});
+}
+
 let started = false;
 
 /** Wire up the connectivity listener + initial flush. Call once at app start. */
@@ -99,11 +203,12 @@ export function startSync(): () => void {
     const cameOnline = nowOnline && !online;
     online = nowOnline;
     onlineListeners.forEach((l) => l(online));
-    if (cameOnline) flushOutbox();
+    if (cameOnline) { flushOutbox(); flushActions(); }
   });
-  // Attempt an initial flush shortly after launch (covers messages queued in a
-  // previous session that never sent).
+  // Attempt an initial flush shortly after launch (covers messages + actions
+  // queued in a previous session that never synced).
   flushOutbox();
+  flushActions();
   return () => {
     unsub();
     started = false;

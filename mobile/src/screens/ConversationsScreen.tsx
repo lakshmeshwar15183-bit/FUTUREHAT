@@ -50,8 +50,8 @@ import {
   FREE_LIMITS,
 } from '../lib/shared';
 import type { ConversationSummary, MessageSearchHit } from '../lib/shared';
-import { getCachedConversations, cacheConversations } from '../lib/localCache';
-import { onConnectivity } from '../lib/sync';
+import { getCachedConversations, cacheConversations, getCache, setCache } from '../lib/localCache';
+import { onConnectivity, queueAction } from '../lib/sync';
 import { formatListTimestamp } from '../lib/time';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import Avatar from '../components/Avatar';
@@ -65,6 +65,10 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 const animateSelection = () => LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+
+// Cache-key bases for the per-user conversation flag sets, so pinned/muted/hidden
+// state hydrates instantly (offline included) and survives an app restart.
+const FLAG_KEY = { pinned: 'pinned', muted: 'muted', hidden: 'hidden' } as const;
 
 export default function ConversationsScreen() {
   const navigation = useNavigation<Nav>();
@@ -159,8 +163,20 @@ export default function ConversationsScreen() {
           if (!alive) return;
           setUid(id);
           if (id) {
-            const cached = await getCachedConversations(id);
-            if (alive && cached.length) {
+            // Instant hydrate: list + the pin/mute/hidden flag sets, all from
+            // local cache, so the chats AND their badges/order appear offline
+            // with zero network wait. The background load() reconciles later.
+            const [cached, pinned, muted, hidden] = await Promise.all([
+              getCachedConversations(id),
+              getCache<string[]>(`${FLAG_KEY.pinned}:${id}`, []),
+              getCache<string[]>(`${FLAG_KEY.muted}:${id}`, []),
+              getCache<string[]>(`${FLAG_KEY.hidden}:${id}`, []),
+            ]);
+            if (!alive) return;
+            if (pinned.length) setPinnedIds(new Set(pinned));
+            if (muted.length) setMutedIds(new Set(muted));
+            if (hidden.length) setHiddenIds(new Set(hidden));
+            if (cached.length) {
               setItems(cached);
               setLoading(false); // we have something to show — never block on the network
             }
@@ -193,7 +209,14 @@ export default function ConversationsScreen() {
           // "Delete for me" chats leave the list just like hidden ones. Merging
           // them into the same set keeps the filter + "Show hidden" reveal simple;
           // a chat revived by a new message is restored by clearing its row.
-          setHiddenIds(new Set([...hidden, ...deleted]));
+          const hiddenMerged = [...new Set([...hidden, ...deleted])];
+          setHiddenIds(new Set(hiddenMerged));
+          // Refresh the flag caches so the next cold/offline open is accurate.
+          if (uid) {
+            setCache(`${FLAG_KEY.pinned}:${uid}`, pinned).catch(() => {});
+            setCache(`${FLAG_KEY.muted}:${uid}`, muted).catch(() => {});
+            setCache(`${FLAG_KEY.hidden}:${uid}`, hiddenMerged).catch(() => {});
+          }
         })
         .catch(() => {});
       getPremiumUserIds(supabase).then((ids) => setPremiumIds(new Set(ids))).catch(() => {});
@@ -204,7 +227,7 @@ export default function ConversationsScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [uid]);
 
   useFocusEffect(
     useCallback(() => {
@@ -225,6 +248,22 @@ export default function ConversationsScreen() {
     setItems((prev) => {
       const next = prev.filter((c) => !idSet.has(c.conversation.id));
       if (next.length !== prev.length && uid) cacheConversations(uid, next).catch(() => {});
+      return next;
+    });
+  }, [uid]);
+
+  // Flip a flag set (pinned/muted/hidden) locally AND persist it to cache in one
+  // step, so the change is instant, offline-safe, and survives an app restart.
+  const setFlagSet = useCallback((
+    setter: React.Dispatch<React.SetStateAction<Set<string>>>,
+    keyBase: string,
+    ids: string[],
+    add: boolean,
+  ) => {
+    setter((prev) => {
+      const next = new Set(prev);
+      ids.forEach((id) => (add ? next.add(id) : next.delete(id)));
+      if (uid) setCache(`${keyBase}:${uid}`, [...next]).catch(() => {});
       return next;
     });
   }, [uid]);
@@ -321,29 +360,25 @@ export default function ConversationsScreen() {
       }
     }
     clearSelection();
-    const prev = pinnedIds;
-    setPinnedIds((p) => { const n = new Set(p); ids.forEach((id) => unpin ? n.delete(id) : n.add(id)); return n; });
-    const results = await Promise.all(ids.map((id) => (unpin ? unpinConversation(supabase, id) : pinConversation(supabase, id))));
-    if (results.some((r) => r.error)) { setPinnedIds(prev); Alert.alert('Could not update pins'); }
+    // Instant + durable: flip local state, persist the flag to cache, and queue
+    // the sync. No await, no revert — offline just means it syncs on reconnect.
+    setFlagSet(setPinnedIds, FLAG_KEY.pinned, ids, !unpin);
+    ids.forEach((id) => queueAction(unpin ? 'unpin' : 'pin', { conversationId: id }));
   }
 
   async function batchMute() {
     const ids = selConvs.map((c) => c.conversation.id);
     const unmute = allMuted;
     clearSelection();
-    const prev = mutedIds;
-    setMutedIds((p) => { const n = new Set(p); ids.forEach((id) => unmute ? n.delete(id) : n.add(id)); return n; });
-    const results = await Promise.all(ids.map((id) => (unmute ? unmuteConversation(supabase, id) : muteConversation(supabase, id))));
-    if (results.some((r) => r.error)) { setMutedIds(prev); Alert.alert('Could not update mute'); }
+    setFlagSet(setMutedIds, FLAG_KEY.muted, ids, !unmute);
+    ids.forEach((id) => queueAction(unmute ? 'unmute' : 'mute', { conversationId: id }));
   }
 
   async function batchArchive() {
     const ids = selConvs.map((c) => c.conversation.id);
     clearSelection();
-    const prev = hiddenIds;
-    setHiddenIds((p) => { const n = new Set(p); ids.forEach((id) => n.add(id)); return n; }); // archived chats leave the main list
-    const results = await Promise.all(ids.map((id) => archiveConversation(supabase, id)));
-    if (results.some((r) => r.error)) { setHiddenIds(prev); Alert.alert('Could not archive'); }
+    setFlagSet(setHiddenIds, FLAG_KEY.hidden, ids, true); // archived chats leave the main list
+    ids.forEach((id) => queueAction('archive', { conversationId: id }));
   }
 
   // "Delete chat for me" (WhatsApp-style): clears the thread for THIS user only —
@@ -363,26 +398,23 @@ export default function ConversationsScreen() {
     buttons.push({
       text: 'Delete for me',
       style: 'destructive',
-      onPress: async () => {
+      onPress: () => {
         clearSelection();
-        // Instant + durable: drop from the list AND the offline cache right away.
+        // Instant + durable: drop from the list AND the offline cache right away,
+        // then queue the server writes (auto-retries on reconnect — never blocks).
         dropConversationsLocally(ids);
-        const results = await Promise.all(ids.map((id) => deleteConversationForMe(supabase, id)));
-        const failed = results.find((r) => r.error);
-        // On failure, re-sync from the server so nothing is wrongly hidden.
-        if (failed) { Alert.alert('Could not delete', failed.error?.message); load(); }
+        ids.forEach((id) => queueAction('deleteForMe', { conversationId: id }));
       },
     });
     if (canEveryone) {
       buttons.push({
         text: 'Delete for everyone',
         style: 'destructive',
-        onPress: async () => {
+        onPress: () => {
           const id = ids[0];
           clearSelection();
           dropConversationsLocally([id]);
-          const { error } = await deleteConversationForEveryone(supabase, id);
-          if (error) { Alert.alert('Could not delete', error.message); load(); }
+          queueAction('deleteForEveryone', { conversationId: id });
         },
       });
     }
@@ -396,13 +428,11 @@ export default function ConversationsScreen() {
     );
   }
 
-  async function batchUnhide() {
+  function batchUnhide() {
     const ids = selConvs.map((c) => c.conversation.id);
     clearSelection();
-    const prev = hiddenIds;
-    setHiddenIds((p) => { const n = new Set(p); ids.forEach((id) => n.delete(id)); return n; });
-    const results = await Promise.all(ids.map((id) => unhideConversation(supabase, id)));
-    if (results.some((r) => r.error)) { setHiddenIds(prev); Alert.alert('Could not unhide'); }
+    setFlagSet(setHiddenIds, FLAG_KEY.hidden, ids, false);
+    ids.forEach((id) => queueAction('unhide', { conversationId: id }));
   }
 
   async function batchMarkRead() {
@@ -410,7 +440,7 @@ export default function ConversationsScreen() {
     clearSelection();
     if (!ids.length) return;
     setItems((prev) => prev.map((c) => (ids.includes(c.conversation.id) ? { ...c, unreadCount: 0 } : c)));
-    await Promise.all(ids.map((id) => markConversationRead(supabase, id).catch(() => ({ error: null }))));
+    ids.forEach((id) => queueAction('markRead', { conversationId: id }));
     // A background load() reconciles the true count on next focus/refresh.
   }
 
@@ -423,10 +453,11 @@ export default function ConversationsScreen() {
       {
         text: 'Block',
         style: 'destructive',
-        onPress: async () => {
+        onPress: () => {
           clearSelection();
-          const { error } = await blockUser(supabase, peer.id);
-          Alert.alert(error ? 'Could not block' : 'Blocked', error ? error.message : `${name} has been blocked.`);
+          // Instant feedback; the block syncs in the background (auto-retries).
+          queueAction('block', { userId: peer.id });
+          Alert.alert('Blocked', `${name} has been blocked.`);
         },
       },
     ]);
