@@ -17,6 +17,7 @@ import {
   getCurrentUser,
 } from '../lib/shared';
 import type { Channel, CommunityEvent, CommunityMember } from '../lib/shared';
+import { getCache, setCache } from '../lib/localCache';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import Avatar from '../components/Avatar';
 import EventComposerModal, { type EventDraft } from '../components/EventComposerModal';
@@ -62,20 +63,34 @@ export default function CommunityDetailScreen() {
   const [channelKind, setChannelKind] = useState<Channel['kind']>('text');
   const [eventModal, setEventModal] = useState(false);
 
+  const cacheKey = `community:${communityId}`;
+
   const load = useCallback(async () => {
+    // Instant: paint channels/events/members from cache first (offline included),
+    // so the community opens with no blank/spinner, then refresh in background.
+    getCache<{ channels: Channel[]; events: CommunityEvent[]; members: CommunityMember[]; ownerId: string | null } | null>(cacheKey, null)
+      .then((c) => {
+        if (!c) return;
+        setChannels(c.channels);
+        setEvents(c.events);
+        setMembers(c.members);
+        setOwnerId(c.ownerId);
+      });
     const [ch, ev, mem, comm, me] = await Promise.all([
-      getChannels(supabase, communityId),
-      getCommunityEvents(supabase, communityId),
-      getCommunityMembers(supabase, communityId),
+      getChannels(supabase, communityId).catch(() => [] as Channel[]),
+      getCommunityEvents(supabase, communityId).catch(() => [] as CommunityEvent[]),
+      getCommunityMembers(supabase, communityId).catch(() => [] as CommunityMember[]),
       supabase.from('communities').select('owner_id').eq('id', communityId).maybeSingle(),
       getCurrentUser(supabase),
     ]);
+    const ownerId = (comm.data as any)?.owner_id ?? null;
     setChannels(ch);
     setEvents(ev);
     setMembers(mem);
-    setOwnerId((comm.data as any)?.owner_id ?? null);
+    setOwnerId(ownerId);
     setMyId(me?.id ?? null);
-  }, [communityId]);
+    setCache(cacheKey, { channels: ch, events: ev, members: mem, ownerId }).catch(() => {});
+  }, [communityId, cacheKey]);
 
   const filteredMembers = useMemo(() => {
     const q = memberQuery.trim().toLowerCase();

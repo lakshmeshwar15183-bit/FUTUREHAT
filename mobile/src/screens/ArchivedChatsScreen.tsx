@@ -6,7 +6,9 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { supabase } from '../lib/supabase';
-import { getMyConversations, getArchivedIds, unarchiveConversation, type ConversationSummary } from '../lib/shared';
+import { getMyConversations, getArchivedIds, getCurrentUser, type ConversationSummary } from '../lib/shared';
+import { getCachedConversations, getCache, setCache } from '../lib/localCache';
+import { queueAction } from '../lib/sync';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import Avatar from '../components/Avatar';
 import type { RootStackParamList } from '../navigation/types';
@@ -19,22 +21,47 @@ export default function ArchivedChatsScreen() {
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const [items, setItems] = useState<ConversationSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [uid, setUid] = useState<string | null>(null);
 
   useEffect(() => {
+    let active = true;
+    const filterArchived = (convs: ConversationSummary[], ids: string[]) => {
+      const set = new Set(ids);
+      return convs.filter((c) => set.has(c.conversation.id));
+    };
     (async () => {
+      const u = await getCurrentUser(supabase).catch(() => null);
+      if (!active) return;
+      const id = u?.id ?? null;
+      setUid(id);
+      // Instant: paint from cached conversations + cached archived ids (offline
+      // included). No spinner when a cache exists.
+      if (id) {
+        const [cachedConvs, cachedIds] = await Promise.all([
+          getCachedConversations(id),
+          getCache<string[]>(`archivedIds:${id}`, []),
+        ]);
+        if (active && cachedConvs.length) { setItems(filterArchived(cachedConvs, cachedIds)); setLoading(false); }
+      }
+      // Background refresh + re-cache.
       const [convs, ids] = await Promise.all([
         getMyConversations(supabase).catch(() => [] as ConversationSummary[]),
         getArchivedIds(supabase).catch(() => [] as string[]),
       ]);
-      const set = new Set(ids);
-      setItems(convs.filter((c) => set.has(c.conversation.id)));
+      if (!active) return;
+      setItems(filterArchived(convs, ids));
       setLoading(false);
+      if (id) setCache(`archivedIds:${id}`, ids).catch(() => {});
     })();
+    return () => { active = false; };
   }, []);
 
-  async function unarchive(id: string) {
-    setItems((cur) => cur.filter((c) => c.conversation.id !== id));
-    await unarchiveConversation(supabase, id);
+  function unarchive(id: string) {
+    setItems((cur) => cur.filter((c) => c.conversation.id !== id)); // instant
+    if (uid) getCache<string[]>(`archivedIds:${uid}`, []).then((ids) =>
+      setCache(`archivedIds:${uid}`, ids.filter((x) => x !== id)),
+    );
+    queueAction('unarchive', { conversationId: id }); // durable, auto-retry
   }
 
   return (

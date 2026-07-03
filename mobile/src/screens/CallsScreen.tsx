@@ -7,6 +7,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { supabase } from '../lib/supabase';
 import { getCallHistory, getCurrentUser, getProfile } from '../lib/shared';
 import type { Call, Profile } from '../lib/shared';
+import { getCache, setCache } from '../lib/localCache';
 import { formatListTimestamp } from '../lib/time';
 import { useColors, spacing, font, type Palette } from '../theme';
 import Avatar from '../components/Avatar';
@@ -25,8 +26,12 @@ export default function CallsScreen() {
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
+    // Instant: paint the last-known call history from cache (offline included),
+    // so the tab never shows a blank/spinner when a cache exists. Pure read of
+    // the history LIST — the calling stack itself is untouched.
+    getCache<Row[]>('callHistory', []).then((c) => { if (c.length) { setRows(c); setLoading(false); } });
     const me = await getCurrentUser(supabase);
-    const calls = await getCallHistory(supabase, 100);
+    const calls = await getCallHistory(supabase, 100).catch(() => [] as Call[]);
     const cache = new Map<string, Profile | null>();
     const built: Row[] = [];
     for (const call of calls) {
@@ -34,7 +39,7 @@ export default function CallsScreen() {
       // For 1:1 the "peer" of an outgoing call is unknown from the row alone;
       // we show the caller for incoming and a generic label for outgoing.
       const peerId = call.caller_id;
-      if (!cache.has(peerId)) cache.set(peerId, await getProfile(supabase, peerId));
+      if (!cache.has(peerId)) cache.set(peerId, await getProfile(supabase, peerId).catch(() => null));
       built.push({
         call,
         peer: cache.get(peerId) ?? null,
@@ -44,6 +49,7 @@ export default function CallsScreen() {
     }
     setRows(built);
     setLoading(false);
+    setCache('callHistory', built).catch(() => {});
   }, []);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
