@@ -7,6 +7,8 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { supabase } from '../lib/supabase';
 import { getChatSettings, setChatSettings, type ChatSettings, type FontSize, type MediaQuality } from '../lib/shared';
+import { getCache, setCache } from '../lib/localCache';
+import { queueAction } from '../lib/sync';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 
 export default function ChatSettingsScreen() {
@@ -14,11 +16,20 @@ export default function ChatSettingsScreen() {
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const [c, setC] = useState<ChatSettings | null>(null);
 
-  useEffect(() => { getChatSettings(supabase).then(setC).catch(() => {}); }, []);
+  useEffect(() => {
+    // Instant: cached chat settings first (offline included), then refresh.
+    getCache<ChatSettings | null>('chatSettings', null).then((cached) => { if (cached) setC(cached); });
+    getChatSettings(supabase).then((s) => { setC(s); setCache('chatSettings', s); }).catch(() => {});
+  }, []);
 
-  async function update(patch: Partial<ChatSettings>) {
-    setC((cur) => (cur ? { ...cur, ...patch } : cur));
-    await setChatSettings(supabase, patch);
+  function update(patch: Partial<ChatSettings>) {
+    // Instant: update local state + cache, then queue the sync (auto-retries).
+    setC((cur) => {
+      const next = cur ? { ...cur, ...patch } : cur;
+      if (next) setCache('chatSettings', next);
+      return next;
+    });
+    queueAction('updateChatSettings', { patch });
   }
 
   function pickFont() {

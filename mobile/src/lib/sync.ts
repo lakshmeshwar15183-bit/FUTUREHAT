@@ -23,6 +23,7 @@ import {
   unhideConversation,
   markConversationRead,
   blockUser,
+  unblockUser,
   starMessage,
   unstarMessage,
   hideMessageForMe,
@@ -31,6 +32,7 @@ import {
   updateMyProfile,
   updatePreferences,
   setChatSettings,
+  setPrivacy,
 } from './shared';
 import {
   getOutbox,
@@ -131,6 +133,7 @@ const actionHandlers: Record<string, (payload: any) => Promise<ActionResult>> = 
   unhide: (p) => unhideConversation(supabase, p.conversationId),
   markRead: (p) => markConversationRead(supabase, p.conversationId),
   block: (p) => blockUser(supabase, p.userId),
+  unblock: (p) => unblockUser(supabase, p.userId),
   star: (p) => starMessage(supabase, p.messageId),
   unstar: (p) => unstarMessage(supabase, p.messageId),
   hideMessage: (p) => hideMessageForMe(supabase, p.messageId),
@@ -139,6 +142,7 @@ const actionHandlers: Record<string, (payload: any) => Promise<ActionResult>> = 
   updateProfile: (p) => updateMyProfile(supabase, p.updates),
   updatePreferences: (p) => updatePreferences(supabase, p.updates),
   updateChatSettings: (p) => setChatSettings(supabase, p.patch),
+  updatePrivacy: (p) => setPrivacy(supabase, p.patch),
 };
 
 // Drop an action after this many failed attempts so a permanently-invalid write

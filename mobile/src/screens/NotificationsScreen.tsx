@@ -8,6 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { supabase } from '../lib/supabase';
 import { getPreferences, updatePreferences } from '../lib/shared';
+import { getCache, setCache } from '../lib/localCache';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import InputModal from '../components/InputModal';
 
@@ -47,15 +48,28 @@ export default function NotificationsScreen() {
   const [editWindow, setEditWindow] = useState(false);
 
   useEffect(() => {
-    getPreferences(supabase).then((p: any) => setN({ ...DEFAULTS, ...((p?.extra && p.extra.notifications) ?? {}) })).catch(() => {});
+    // Instant: cached notification settings first (offline included), then refresh.
+    getCache<NotifSettings | null>('notifs', null).then((c) => { if (c) setN({ ...DEFAULTS, ...c }); });
+    getPreferences(supabase)
+      .then((p: any) => {
+        const merged = { ...DEFAULTS, ...((p?.extra && p.extra.notifications) ?? {}) };
+        setN(merged);
+        setCache('notifs', merged);
+      })
+      .catch(() => {});
   }, []);
 
   async function update(patch: Partial<NotifSettings>) {
     const next = { ...n, ...patch };
-    setN(next);
-    const prefs: any = await getPreferences(supabase).catch(() => ({}));
-    const extra = (prefs && typeof prefs.extra === 'object' && prefs.extra) ? prefs.extra : {};
-    await updatePreferences(supabase, { extra: { ...extra, notifications: next } } as any);
+    setN(next);               // instant UI
+    setCache('notifs', next); // instant local persistence (offline included)
+    // Merge into the existing prefs.extra (which also holds chat settings) so we
+    // never clobber sibling keys, then write. The UI already updated above, so a
+    // slow / failed network never blocks it.
+    const prefs: any = await getPreferences(supabase).catch(() => null);
+    if (!prefs) return; // couldn't read current extra — skip to avoid clobbering
+    const extra = (typeof prefs.extra === 'object' && prefs.extra) ? prefs.extra : {};
+    await updatePreferences(supabase, { extra: { ...extra, notifications: next } } as any).catch(() => {});
   }
 
   function saveWindow(values: Record<string, string>) {

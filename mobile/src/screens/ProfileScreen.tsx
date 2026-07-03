@@ -14,6 +14,8 @@ import {
   getPremiumUserIds, joinPresence, leavePresence,
 } from '../lib/shared';
 import type { Profile, CallType, Message } from '../lib/shared';
+import { getCachedProfile, cacheProfile } from '../lib/localCache';
+import { queueAction } from '../lib/sync';
 import { formatLastSeen } from '../lib/time';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import { useCalls } from '../calls/CallContext';
@@ -58,10 +60,14 @@ export default function ProfileScreen() {
 
   useEffect(() => {
     (async () => {
+      // Instant: show the cached profile first (offline included, no spinner),
+      // then refresh from the network below.
+      const cached = await getCachedProfile(params.userId);
+      if (cached) { setProfile(cached); setLoading(false); }
       const me = await getCurrentUser(supabase);
       setIsMe(me?.id === params.userId);
-      const p = await getProfile(supabase, params.userId);
-      setProfile(p);
+      const p = await getProfile(supabase, params.userId).catch(() => null);
+      if (p) { setProfile(p); cacheProfile(p); }
       const ids = await getBlockedIds(supabase).catch(() => [] as string[]);
       setBlocked(ids.includes(params.userId));
       const premiumIds = await getPremiumUserIds(supabase).catch(() => [] as string[]);
@@ -98,19 +104,15 @@ export default function ProfileScreen() {
   async function toggleBlock() {
     const was = blocked;
     if (!was && !(await confirmAsync('Block user', `Block ${profile?.display_name ?? 'this user'}?`))) return;
-    setBlocked(!was);
-    const { error } = was ? await unblockUser(supabase, params.userId) : await blockUser(supabase, params.userId);
-    if (error) setBlocked(was);
+    setBlocked(!was); // instant; syncs in the background (auto-retries offline)
+    queueAction(was ? 'unblock' : 'block', { userId: params.userId });
   }
 
-  async function toggleMute() {
+  function toggleMute() {
     if (!params.conversationId) return;
     const was = muted;
     setMuted(!was);
-    const { error } = was
-      ? await unmuteConversation(supabase, params.conversationId)
-      : await muteConversation(supabase, params.conversationId);
-    if (error) setMuted(was);
+    queueAction(was ? 'unmute' : 'mute', { conversationId: params.conversationId });
   }
 
   function report() {

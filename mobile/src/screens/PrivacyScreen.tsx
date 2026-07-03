@@ -12,6 +12,8 @@ import {
   getPreferences, updatePreferences, getSubscription, isSubscriptionActive,
   type PrivacySettings, type Visibility, type Profile,
 } from '../lib/shared';
+import { getCache, setCache } from '../lib/localCache';
+import { queueAction } from '../lib/sync';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import Avatar from '../components/Avatar';
 
@@ -36,8 +38,11 @@ export default function PrivacyScreen() {
   const [isPremium, setIsPremium] = useState(false);
 
   useEffect(() => {
-    getPrivacy(supabase).then(setP).catch(() => {});
-    getPreferences(supabase).then((prefs) => setGhostMode(!!prefs?.ghost_mode)).catch(() => {});
+    // Instant: cached privacy + ghost first (offline included), then refresh.
+    getCache<PrivacySettings | null>('privacy', null).then((c) => { if (c) setP(c); });
+    getCache<boolean>('ghostMode', false).then((g) => setGhostMode(g));
+    getPrivacy(supabase).then((s) => { setP(s); setCache('privacy', s); }).catch(() => {});
+    getPreferences(supabase).then((prefs) => { const g = !!prefs?.ghost_mode; setGhostMode(g); setCache('ghostMode', g); }).catch(() => {});
     getSubscription(supabase).then((sub) => setIsPremium(isSubscriptionActive(sub))).catch(() => {});
     (async () => {
       const ids = await getBlockedIds(supabase).catch(() => [] as string[]);
@@ -46,19 +51,24 @@ export default function PrivacyScreen() {
     })();
   }, []);
 
-  async function update(patch: Partial<PrivacySettings>) {
-    setP((cur) => (cur ? { ...cur, ...patch } : cur));
-    await setPrivacy(supabase, patch);
+  function update(patch: Partial<PrivacySettings>) {
+    // Instant: update local state + cache, then queue the sync (auto-retries).
+    setP((cur) => {
+      const next = cur ? { ...cur, ...patch } : cur;
+      if (next) setCache('privacy', next);
+      return next;
+    });
+    queueAction('updatePrivacy', { patch });
   }
 
-  async function toggleGhost(v: boolean) {
+  function toggleGhost(v: boolean) {
     if (!isPremium) {
       Alert.alert('FUTUREHAT+', 'Ghost mode is a premium feature. Upgrade to FUTUREHAT+ to use it.');
       return;
     }
     setGhostMode(v);
-    const { error } = await updatePreferences(supabase, { ghost_mode: v });
-    if (error) setGhostMode(!v);
+    setCache('ghostMode', v);
+    queueAction('updatePreferences', { updates: { ghost_mode: v } });
   }
 
   function pickVisibility(key: keyof PrivacySettings) {
@@ -70,9 +80,9 @@ export default function PrivacyScreen() {
     ]);
   }
 
-  async function unblock(id: string) {
+  function unblock(id: string) {
     setBlocked((b) => b.filter((x) => x.id !== id));
-    await unblockUser(supabase, id);
+    queueAction('unblock', { userId: id });
   }
 
   return (
