@@ -35,11 +35,13 @@ import {
   hideConversation,
   getHiddenIds,
   unhideConversation,
+  deleteConversationForMe,
   archiveConversation,
   markConversationRead,
   blockUser,
   submitReport,
   joinPresence,
+  leavePresence,
   getPremiumUserIds,
   getServerPremium,
   FREE_LIMITS,
@@ -138,7 +140,7 @@ export default function ConversationsScreen() {
       .catch(() => {});
     return () => {
       alive = false;
-      if (channel) supabase.removeChannel(channel);
+      leavePresence(channel); // shared room: unhook this screen only
     };
   }, []);
 
@@ -307,24 +309,26 @@ export default function ConversationsScreen() {
     if (results.some((r) => r.error)) { setHiddenIds(prev); Alert.alert('Could not archive'); }
   }
 
-  // "Delete" here = Hide (reversible via "Show hidden chats") — the app has no
-  // hard conversation delete. Destructive-styled confirmation before removing.
+  // "Delete chat for me" (WhatsApp-style): clears the thread for THIS user only —
+  // every message is hidden and the conversation leaves the list. The other person
+  // keeps their copy. deleteConversationForMe() does both server-side writes.
   function batchDelete() {
     const ids = selConvs.map((c) => c.conversation.id);
     if (!ids.length) return;
     Alert.alert(
       ids.length > 1 ? `Delete ${ids.length} chats?` : 'Delete chat?',
-      'They will be removed from your list. You can restore them anytime from "Show hidden chats".',
+      'This clears the messages from your device and removes the chat from your list. The other person will still have their copy.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Delete',
+          text: 'Delete for me',
           style: 'destructive',
           onPress: async () => {
             clearSelection();
             const prev = hiddenIds;
+            // Optimistically drop from the list; hidden_conversations makes it stick.
             setHiddenIds((p) => { const n = new Set(p); ids.forEach((id) => n.add(id)); return n; });
-            const results = await Promise.all(ids.map((id) => hideConversation(supabase, id)));
+            const results = await Promise.all(ids.map((id) => deleteConversationForMe(supabase, id)));
             if (results.some((r) => r.error)) { setHiddenIds(prev); Alert.alert('Could not delete'); }
           },
         },

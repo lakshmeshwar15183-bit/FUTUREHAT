@@ -11,7 +11,7 @@ import {
   getCurrentUser, getProfile, startDirectConversation,
   blockUser, unblockUser, getBlockedIds, submitReport, getSharedMedia,
   getMutedIds, muteConversation, unmuteConversation,
-  getPremiumUserIds, joinPresence,
+  getPremiumUserIds, joinPresence, leavePresence,
 } from '../lib/shared';
 import type { Profile, CallType, Message } from '../lib/shared';
 import { formatLastSeen } from '../lib/time';
@@ -89,7 +89,7 @@ export default function ProfileScreen() {
       channel = joinPresence(supabase, me.id, (onlineIds) => setOnline(onlineIds.has(params.userId)));
     })();
     return () => {
-      if (channel) supabase.removeChannel(channel);
+      leavePresence(channel); // shared room: unhook this screen only
     };
   }, [isMe, params.userId]);
 

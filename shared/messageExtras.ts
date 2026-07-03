@@ -43,3 +43,36 @@ export async function hideMessageForMe(client: SupabaseClient, messageId: UUID):
   const { error } = await client.from('hidden_messages').upsert({ user_id: user.id, message_id: messageId });
   return { error };
 }
+
+/**
+ * "Delete chat for me" — clears an entire conversation for THIS user only, the
+ * WhatsApp way. Hides every existing message via hidden_messages (delete-for-me)
+ * so the thread reopens empty, then removes the conversation from the list via
+ * hidden_conversations. The other participant keeps their full copy. Idempotent;
+ * upserts tolerate re-running. Returns the first error encountered, if any.
+ */
+export async function deleteConversationForMe(
+  client: SupabaseClient,
+  conversationId: UUID,
+): Promise<{ error: Error | null }> {
+  const user = await getCurrentUser(client);
+  if (!user) return { error: new Error('not authenticated') };
+
+  // 1) Hide every message currently in the thread (delete-for-me, one row each).
+  const { data: msgs, error: selErr } = await client
+    .from('messages')
+    .select('id')
+    .eq('conversation_id', conversationId);
+  if (selErr) return { error: selErr };
+  if (msgs && msgs.length) {
+    const rows = msgs.map((m: any) => ({ user_id: user.id, message_id: m.id }));
+    const { error: hideErr } = await client.from('hidden_messages').upsert(rows);
+    if (hideErr) return { error: hideErr };
+  }
+
+  // 2) Remove the conversation from this user's list (reversible via "Show hidden").
+  const { error: convErr } = await client
+    .from('hidden_conversations')
+    .upsert({ user_id: user.id, conversation_id: conversationId });
+  return { error: convErr };
+}

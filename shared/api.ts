@@ -496,20 +496,79 @@ export function subscribeToMessages(
 // ── Presence (online/offline) ─────────────────────────────────────────────────
 
 // Join the global presence channel; onChange receives the set of online user ids.
+// Shared global-presence room. Multiple screens (chat list + open conversation)
+// all want "who's online", but Supabase forbids two subscriptions to the same
+// channel topic on one client — and adding an `.on('presence')` listener to an
+// already-subscribed channel throws ("cannot add presence callbacks ... after
+// subscribe()"), crashing the second screen to mount. So we keep ONE channel per
+// topic and fan out sync events to every subscriber, ref-counting so the channel
+// is torn down only when the last screen leaves.
+interface PresenceRoom {
+  channel: RealtimeChannel;
+  subscribers: Set<(onlineIds: Set<string>) => void>;
+  online: Set<string>;
+}
+const presenceRooms = new Map<string, PresenceRoom>();
+const PRESENCE_TOPIC = 'presence:global';
+
+/**
+ * Join the shared global presence room. `onChange` fires with the current set of
+ * online user ids on every sync. Returns a RealtimeChannel-shaped handle whose
+ * only meaningful method is the one `supabase.removeChannel()` needs — but callers
+ * should simply pass it back to removeChannel() on cleanup as before; this
+ * unsubscribes just THIS listener and tears the channel down when it's the last.
+ */
 export function joinPresence(
   client: SupabaseClient,
   userId: UUID,
   onChange: (onlineIds: Set<string>) => void,
 ): RealtimeChannel {
-  const channel = client.channel('presence:global', { config: { presence: { key: userId } } });
-  channel
-    .on('presence', { event: 'sync' }, () => {
-      onChange(new Set(Object.keys(channel.presenceState())));
-    })
-    .subscribe(async (status: string) => {
-      if (status === 'SUBSCRIBED') await channel.track({ online_at: new Date().toISOString() });
-    });
-  return channel;
+  let room = presenceRooms.get(PRESENCE_TOPIC);
+
+  if (!room) {
+    // First subscriber: create + subscribe the single shared channel.
+    const channel = client.channel(PRESENCE_TOPIC, { config: { presence: { key: userId } } });
+    const created: PresenceRoom = { channel, subscribers: new Set(), online: new Set() };
+    channel
+      .on('presence', { event: 'sync' }, () => {
+        created.online = new Set(Object.keys(channel.presenceState()));
+        created.subscribers.forEach((cb) => cb(created.online));
+      })
+      .subscribe(async (status: string) => {
+        if (status === 'SUBSCRIBED') await channel.track({ online_at: new Date().toISOString() });
+      });
+    presenceRooms.set(PRESENCE_TOPIC, created);
+    room = created;
+  }
+
+  room.subscribers.add(onChange);
+  // Hand the newcomer the state we already have so it paints immediately.
+  if (room.online.size) onChange(new Set(room.online));
+
+  // Return a proxy that removeChannel()-style cleanup understands: unhooking this
+  // listener, and only really removing the underlying channel when none remain.
+  const handle = room.channel as RealtimeChannel & { __unsubscribePresence?: () => void };
+  handle.__unsubscribePresence = () => {
+    const r = presenceRooms.get(PRESENCE_TOPIC);
+    if (!r) return;
+    r.subscribers.delete(onChange);
+    if (r.subscribers.size === 0) {
+      presenceRooms.delete(PRESENCE_TOPIC);
+      void client.removeChannel(r.channel);
+    }
+  };
+  return handle;
+}
+
+/**
+ * Leave the shared presence room for one subscriber. Prefer this over
+ * supabase.removeChannel(joinPresenceHandle) so the shared channel survives while
+ * other screens still need it. Safe to call with any channel; no-ops if it isn't
+ * a presence handle.
+ */
+export function leavePresence(channel: RealtimeChannel | null | undefined): void {
+  const handle = channel as (RealtimeChannel & { __unsubscribePresence?: () => void }) | null | undefined;
+  handle?.__unsubscribePresence?.();
 }
 
 // Stamp the user's last_seen (called on a heartbeat and on unload for "last seen").

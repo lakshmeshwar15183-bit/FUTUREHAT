@@ -44,6 +44,7 @@ import {
   subscribeToReactions,
   createTypingChannel,
   joinPresence,
+  leavePresence,
   getCurrentUser,
   getMyConversations,
   createPoll,
@@ -442,7 +443,7 @@ export default function ChatScreen() {
       supabase.removeChannel(msgChannel);
       supabase.removeChannel(rxChannel);
       supabase.removeChannel(rcChannel);
-      supabase.removeChannel(presenceChannel);
+      leavePresence(presenceChannel); // shared room: unhook this screen only
       supabase.removeChannel(tc.channel);
     };
   }, [uid, conversationId, setMsgs, applyReceipts]);
