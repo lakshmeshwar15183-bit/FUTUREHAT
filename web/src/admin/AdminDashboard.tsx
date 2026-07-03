@@ -7,9 +7,10 @@ import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { supabase } from '../supabase';
 import { getServerAdmin } from '@shared/premiumApi';
-import { getServerOwner } from '@shared/adminApi';
+import { getServerOwner, adminReportsPendingCount } from '@shared/adminApi';
 import { modalBackdrop, modalPanel } from '../motion';
 import { AdminUsers } from './AdminUsers';
+import { AdminReports } from './AdminReports';
 import {
   AdminCalls, AdminMessages, AdminFeatureFlags, AdminAppMgmt,
   AdminHealth, AdminAudit, AdminSearch,
@@ -25,10 +26,6 @@ interface Stats {
   statuses: number; premium_users: number; open_reports: number; open_tickets: number;
   online_users?: number; dau?: number; mau?: number; new_today?: number;
   banned_users?: number; total_calls?: number; failed_calls?: number; channels?: number;
-}
-interface ReportRow {
-  id: string; reporter_id: string; target_type: string; target_id: string;
-  reason: string; details: string | null; status: string; created_at: string;
 }
 interface TicketRow {
   id: string; user_id: string; kind: string; subject: string; body: string;
@@ -59,8 +56,8 @@ export function AdminDashboard({ onClose }: { onClose: () => void }) {
   const [isOwner, setIsOwner] = useState(false);
   const [tab, setTab] = useState<Tab>('overview');
   const [stats, setStats] = useState<Stats | null>(null);
-  const [reports, setReports] = useState<ReportRow[]>([]);
   const [tickets, setTickets] = useState<TicketRow[]>([]);
+  const [pendingReports, setPendingReports] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -76,20 +73,27 @@ export function AdminDashboard({ onClose }: { onClose: () => void }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
+  // Live badge: refresh the pending-report count whenever the reports table
+  // changes, from any tab (so a new report bumps the "Reports (N)" badge).
+  useEffect(() => {
+    if (!allowed) return;
+    const refresh = () => adminReportsPendingCount(supabase).then(setPendingReports).catch(() => {});
+    refresh();
+    const ch = supabase
+      .channel('admin-reports-badge')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'reports' }, refresh)
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [allowed]);
+
   async function loadAll() {
     const { data: statData, error: statErr } = await supabase.rpc('admin_stats');
     if (statErr) setError('Admin backend not provisioned yet (apply migrations 0009 + 0013).');
     else setStats(statData as Stats);
-    const { data: rep } = await supabase.from('reports').select('*').order('created_at', { ascending: false }).limit(100);
-    setReports((rep as ReportRow[]) ?? []);
     const { data: tic } = await supabase.from('support_tickets').select('*').order('created_at', { ascending: false }).limit(100);
     setTickets((tic as TicketRow[]) ?? []);
   }
 
-  async function setReportStatus(id: string, status: string) {
-    setReports((rs) => rs.map((r) => (r.id === id ? { ...r, status } : r)));
-    await supabase.from('reports').update({ status }).eq('id', id);
-  }
   async function setTicketStatus(id: string, status: string) {
     setTickets((ts) => ts.map((t) => (t.id === id ? { ...t, status } : t)));
     await supabase.from('support_tickets').update({ status }).eq('id', id);
@@ -98,7 +102,7 @@ export function AdminDashboard({ onClose }: { onClose: () => void }) {
   const TABS: { id: Tab; label: string; ownerOnly?: boolean }[] = [
     { id: 'overview', label: 'Analytics' },
     { id: 'users', label: 'Users' },
-    { id: 'reports', label: `Reports${stats ? ` (${stats.open_reports})` : ''}` },
+    { id: 'reports', label: `Reports${(pendingReports ?? stats?.open_reports) != null ? ` (${pendingReports ?? stats?.open_reports})` : ''}` },
     { id: 'tickets', label: `Tickets${stats ? ` (${stats.open_tickets})` : ''}` },
     { id: 'calls', label: 'Calls' },
     { id: 'messages', label: 'Messages' },
@@ -151,27 +155,7 @@ export function AdminDashboard({ onClose }: { onClose: () => void }) {
               {tab === 'app' && isOwner && <AdminAppMgmt />}
               {tab === 'audit' && isOwner && <AdminAudit />}
 
-              {tab === 'reports' && (
-                <div className="admin-list">
-                  {reports.length === 0 && <div className="admin-empty">No reports.</div>}
-                  {reports.map((r) => (
-                    <div key={r.id} className="admin-row">
-                      <div className="admin-row-head">
-                        <span className="admin-tag">{r.target_type}</span>
-                        <span className={`admin-status ${r.status}`}>{r.status}</span>
-                      </div>
-                      <div className="admin-row-title">{r.reason}</div>
-                      {r.details && <div className="admin-row-body">{r.details}</div>}
-                      <div className="admin-row-meta">target {r.target_id.slice(0, 8)} · {new Date(r.created_at).toLocaleString()}</div>
-                      <div className="admin-actions">
-                        <button onClick={() => setReportStatus(r.id, 'reviewing')}>Reviewing</button>
-                        <button onClick={() => setReportStatus(r.id, 'resolved')}>Resolve</button>
-                        <button onClick={() => setReportStatus(r.id, 'dismissed')}>Dismiss</button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+              {tab === 'reports' && <AdminReports onPending={setPendingReports} />}
 
               {tab === 'tickets' && (
                 <div className="admin-list">
