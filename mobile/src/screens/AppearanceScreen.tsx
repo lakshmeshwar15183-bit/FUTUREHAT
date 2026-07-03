@@ -10,10 +10,11 @@ import { useFocusEffect } from '@react-navigation/native';
 import { supabase } from '../lib/supabase';
 import {
   getPreferences,
-  updatePreferences,
   getSubscription,
   isSubscriptionActive,
 } from '../lib/shared';
+import { getCache, setCache } from '../lib/localCache';
+import { queueAction } from '../lib/sync';
 import {
   useTheme,
   palettes,
@@ -59,6 +60,8 @@ const APP_ICONS: { id: string; label: string; premium: boolean; glyph: string }[
   { id: 'ghost', label: 'Ghost', premium: true, glyph: '👻' },
 ];
 
+type AppearancePrefs = { font: string; bubble_style: string; app_icon: string };
+
 export default function AppearanceScreen() {
   const { preference, setPreference, colors, colorTheme, setColorTheme, wallpaper, setWallpaper } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
@@ -72,6 +75,15 @@ export default function AppearanceScreen() {
   useFocusEffect(
     useCallback(() => {
       let active = true;
+      // Instant: cached appearance prefs first (offline included), then refresh.
+      getCache<AppearancePrefs | null>('appearance', null).then((c) => {
+        if (active && c) {
+          setFontPref(c.font || 'system');
+          setBubblePref(c.bubble_style || 'rounded');
+          setIconPref(c.app_icon || 'classic');
+          setLoaded(true);
+        }
+      });
       (async () => {
         const [prefs, sub] = await Promise.all([
           getPreferences(supabase),
@@ -80,9 +92,15 @@ export default function AppearanceScreen() {
         if (!active) return;
         setPremium(isSubscriptionActive(sub));
         if (prefs) {
-          setFontPref(prefs.font || 'system');
-          setBubblePref(prefs.bubble_style || 'rounded');
-          setIconPref(prefs.app_icon || 'classic');
+          const next: AppearancePrefs = {
+            font: prefs.font || 'system',
+            bubble_style: prefs.bubble_style || 'rounded',
+            app_icon: prefs.app_icon || 'classic',
+          };
+          setFontPref(next.font);
+          setBubblePref(next.bubble_style);
+          setIconPref(next.app_icon);
+          setCache('appearance', next);
         }
         setLoaded(true);
       })();
@@ -92,18 +110,22 @@ export default function AppearanceScreen() {
 
   // Persist a single preference. Premium-locked values are ignored for free users
   // (matching the web `choose` gate) — the picker row shows a lock instead.
+  // Instant + offline-first: update local state + cache, then queue the sync
+  // (auto-retries on reconnect). No await, no revert-on-offline.
   const choose = useCallback(
-    async (
+    (
       field: 'font' | 'bubble_style' | 'app_icon',
       id: string,
       isPremiumOption: boolean,
       apply: (id: string) => void,
-      prev: string,
+      _prev: string,
     ) => {
       if (isPremiumOption && !premium) return;
       apply(id);
-      const { error } = await updatePreferences(supabase, { [field]: id });
-      if (error) apply(prev); // revert on failure
+      getCache<AppearancePrefs | null>('appearance', null).then((c) =>
+        setCache('appearance', { ...(c ?? {}), [field]: id } as AppearancePrefs),
+      );
+      queueAction('updatePreferences', { updates: { [field]: id } });
     },
     [premium],
   );
