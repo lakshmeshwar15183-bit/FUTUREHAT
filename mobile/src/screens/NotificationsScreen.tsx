@@ -7,8 +7,9 @@ import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-nat
 import { Ionicons } from '@expo/vector-icons';
 
 import { supabase } from '../lib/supabase';
-import { getPreferences, updatePreferences } from '../lib/shared';
+import { getPreferences } from '../lib/shared';
 import { getCache, setCache } from '../lib/localCache';
+import { queueAction } from '../lib/sync';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import InputModal from '../components/InputModal';
 
@@ -59,17 +60,15 @@ export default function NotificationsScreen() {
       .catch(() => {});
   }, []);
 
-  async function update(patch: Partial<NotifSettings>) {
+  function update(patch: Partial<NotifSettings>) {
     const next = { ...n, ...patch };
     setN(next);               // instant UI
     setCache('notifs', next); // instant local persistence (offline included)
-    // Merge into the existing prefs.extra (which also holds chat settings) so we
-    // never clobber sibling keys, then write. The UI already updated above, so a
-    // slow / failed network never blocks it.
-    const prefs: any = await getPreferences(supabase).catch(() => null);
-    if (!prefs) return; // couldn't read current extra — skip to avoid clobbering
-    const extra = (typeof prefs.extra === 'object' && prefs.extra) ? prefs.extra : {};
-    await updatePreferences(supabase, { extra: { ...extra, notifications: next } } as any).catch(() => {});
+    // Queue a conflict-safe partial write into prefs.extra.notifications. The
+    // handler re-reads the current server extra at flush time and deep-sets this
+    // one leaf, so it never clobbers sibling sections (e.g. extra.storage) even
+    // if several were edited offline. Auto-retries on reconnect; UI never waits.
+    queueAction('mergeExtra', { path: ['notifications'], value: next });
   }
 
   function saveWindow(values: Record<string, string>) {

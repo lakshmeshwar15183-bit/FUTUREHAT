@@ -31,6 +31,7 @@ import {
   deleteConversationForEveryone,
   updateMyProfile,
   updatePreferences,
+  getPreferences,
   setChatSettings,
   setPrivacy,
 } from './shared';
@@ -122,6 +123,32 @@ export async function flushOutbox(): Promise<void> {
 // so screens only ever call queueAction(kind, payload) — never the network
 // directly for these mutations.
 type ActionResult = { error?: unknown } | void;
+
+// Immutably set `value` at `path` within a plain object, creating intermediate
+// objects as needed. Used by the mergeExtra handler so a queued edit targets one
+// leaf of user_preferences.extra without carrying (and clobbering) its siblings.
+function deepSet(root: any, path: string[], value: unknown): any {
+  const base = root && typeof root === 'object' ? { ...root } : {};
+  if (path.length === 0) return value;
+  const [head, ...rest] = path;
+  base[head] = rest.length === 0 ? value : deepSet(base[head], rest, value);
+  return base;
+}
+
+// Conflict-safe merge into user_preferences.extra. The queued payload holds only
+// { path, value } — NOT a full extra snapshot — so two edits made offline to
+// different leaves (e.g. extra.notifications and extra.storage) both survive:
+// each is replayed against the CURRENT server extra, re-read here at flush time,
+// rather than against a stale snapshot captured when the toggle was tapped.
+// Scalable: any future extra.<section> setting reuses this one handler.
+async function mergeExtra(payload: { path: string[]; value: unknown }): Promise<ActionResult> {
+  const prefs: any = await getPreferences(supabase).catch(() => null);
+  if (!prefs) return { error: new Error('could not read preferences') }; // keep queued, retry
+  const extra = prefs.extra && typeof prefs.extra === 'object' ? prefs.extra : {};
+  const nextExtra = deepSet(extra, payload.path, payload.value);
+  return updatePreferences(supabase, { extra: nextExtra } as any);
+}
+
 const actionHandlers: Record<string, (payload: any) => Promise<ActionResult>> = {
   pin: (p) => pinConversation(supabase, p.conversationId),
   unpin: (p) => unpinConversation(supabase, p.conversationId),
@@ -143,6 +170,9 @@ const actionHandlers: Record<string, (payload: any) => Promise<ActionResult>> = 
   updatePreferences: (p) => updatePreferences(supabase, p.updates),
   updateChatSettings: (p) => setChatSettings(supabase, p.patch),
   updatePrivacy: (p) => setPrivacy(supabase, p.patch),
+  // Conflict-safe partial write into user_preferences.extra (notifications,
+  // storage, and any future extra.<section>). See mergeExtra() above.
+  mergeExtra: (p) => mergeExtra(p),
 };
 
 // Drop an action after this many failed attempts so a permanently-invalid write

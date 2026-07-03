@@ -10,7 +10,9 @@ import * as FileSystem from 'expo-file-system';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { supabase } from '../lib/supabase';
-import { getPreferences, updatePreferences } from '../lib/shared';
+import { getPreferences } from '../lib/shared';
+import { getCache, setCache } from '../lib/localCache';
+import { queueAction } from '../lib/sync';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 
 interface StorageSettings { dataSaverCalls: boolean; lowDataMode: boolean; autoDownloadWifiOnly: boolean }
@@ -69,16 +71,25 @@ export default function StorageDataScreen() {
   }, []);
 
   useEffect(() => {
-    getPreferences(supabase).then((p: any) => setS({ ...DEFAULTS, ...((p?.extra && p.extra.storage) ?? {}) })).catch(() => {});
+    // Instant: cached storage settings first (offline included), then refresh.
+    getCache<StorageSettings | null>('storage', null).then((c) => { if (c) setS({ ...DEFAULTS, ...c }); });
+    getPreferences(supabase)
+      .then((p: any) => {
+        const merged = { ...DEFAULTS, ...((p?.extra && p.extra.storage) ?? {}) };
+        setS(merged);
+        setCache('storage', merged);
+      })
+      .catch(() => {});
     measure();
   }, [measure]);
 
-  async function update(patch: Partial<StorageSettings>) {
+  function update(patch: Partial<StorageSettings>) {
     const next = { ...s, ...patch };
-    setS(next);
-    const prefs: any = await getPreferences(supabase).catch(() => ({}));
-    const extra = (prefs && typeof prefs.extra === 'object' && prefs.extra) ? prefs.extra : {};
-    await updatePreferences(supabase, { extra: { ...extra, storage: next } } as any);
+    setS(next);               // instant UI
+    setCache('storage', next); // instant local persistence (offline included)
+    // Conflict-safe partial write into prefs.extra.storage — see mergeExtra in
+    // sync.ts. Never clobbers extra.notifications; auto-retries on reconnect.
+    queueAction('mergeExtra', { path: ['storage'], value: next });
   }
 
   async function clearCache() {
