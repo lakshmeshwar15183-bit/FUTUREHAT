@@ -8,7 +8,8 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:release": "cd android && JAVA_HOME=/opt/homebrew/opt/openjdk@17 ./gradlew clean :app:bundleRelease :app:assembleRelease --no-daemon"
   },
   "dependencies": {
     "@config-plugins/react-native-webrtc": "^9.0.0",

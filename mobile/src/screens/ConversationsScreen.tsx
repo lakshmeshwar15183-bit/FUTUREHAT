@@ -3,13 +3,17 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
+  BackHandler,
   FlatList,
+  LayoutAnimation,
   Modal,
+  Platform,
   Pressable,
   RefreshControl,
   StyleSheet,
   Text,
   TextInput,
+  UIManager,
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -32,6 +36,7 @@ import {
   getHiddenIds,
   unhideConversation,
   archiveConversation,
+  markConversationRead,
   blockUser,
   submitReport,
   joinPresence,
@@ -48,6 +53,13 @@ import Avatar from '../components/Avatar';
 import type { RootStackParamList } from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
+
+// Enable smooth height/opacity transitions for the contextual selection bar on
+// Android (LayoutAnimation is opt-in there). No-op if already enabled.
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
+const animateSelection = () => LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
 
 export default function ConversationsScreen() {
   const navigation = useNavigation<Nav>();
@@ -67,7 +79,12 @@ export default function ConversationsScreen() {
   const [onlineIds, setOnlineIds] = useState<Set<string>>(new Set());
   const [premiumIds, setPremiumIds] = useState<Set<string>>(new Set());
   const [isPremium, setIsPremium] = useState(false);
-  const [menuFor, setMenuFor] = useState<ConversationSummary | null>(null);
+  // WhatsApp-style multi-select: a non-empty set puts the list in selection mode
+  // and swaps the top bar for a contextual action bar. `overflowOpen` toggles the
+  // "⋮" menu of less-common actions.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [overflowOpen, setOverflowOpen] = useState(false);
+  const selectionMode = selectedIds.size > 0;
 
   const q = query.trim().toLowerCase();
   const convById = useMemo(() => {
@@ -199,103 +216,187 @@ export default function ConversationsScreen() {
     return body;
   };
 
-  // ── Conversation row actions (long-press menu) ──────────────────────────────
-  const isPinned = menuFor ? pinnedIds.has(menuFor.conversation.id) : false;
-  const isMuted = menuFor ? mutedIds.has(menuFor.conversation.id) : false;
-  const isHidden = menuFor ? hiddenIds.has(menuFor.conversation.id) : false;
-  const menuIsDirect = menuFor?.conversation.type === 'direct';
-  const menuPeer = menuFor?.participants.find((p) => p.id !== uid) ?? null;
+  // ── Multi-select mode (WhatsApp-style) ──────────────────────────────────────
+  // Selection is a set of conversation ids. Entering/leaving it animates the
+  // contextual bar in/out. All batch actions call the SAME shared functions the
+  // web app uses, so state stays in sync across devices.
+  const toggleSelect = useCallback((id: string) => {
+    animateSelection();
+    setSelectedIds((prev) => {
+      const n = new Set(prev);
+      n.has(id) ? n.delete(id) : n.add(id);
+      return n;
+    });
+  }, []);
+  const enterSelection = useCallback((id: string) => {
+    Haptics.selectionAsync().catch(() => {});
+    animateSelection();
+    setSelectedIds(new Set([id]));
+  }, []);
+  const clearSelection = useCallback(() => {
+    animateSelection();
+    setSelectedIds(new Set());
+  }, []);
 
-  async function togglePin() {
-    if (!menuFor) return;
-    const id = menuFor.conversation.id;
-    const pinned = pinnedIds.has(id);
-    // Free tier caps the number of pinned chats (web parity via FREE_LIMITS).
-    if (!pinned && !isPremium && pinnedIds.size >= FREE_LIMITS.pinnedChats) {
-      setMenuFor(null);
-      Alert.alert(
-        'Pin limit reached',
-        `Free accounts can pin up to ${FREE_LIMITS.pinnedChats} chats. Upgrade to FUTUREHAT+ for unlimited pins.`,
-        [{ text: 'Not now', style: 'cancel' }, { text: 'Upgrade', onPress: () => navigation.navigate('Premium') }],
-      );
-      return;
+  // Hardware Back exits selection mode instead of leaving the tab (Android).
+  useEffect(() => {
+    if (!selectionMode) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      clearSelection();
+      return true;
+    });
+    return () => sub.remove();
+  }, [selectionMode, clearSelection]);
+
+  // Derived facts about the current selection that drive which actions show and
+  // whether they read as the "on" or "off" (toggle) variant.
+  const selConvs = useMemo(
+    () => [...selectedIds].map((id) => convById.get(id)).filter((c): c is ConversationSummary => !!c),
+    [selectedIds, convById],
+  );
+  const selCount = selectedIds.size;
+  const allPinned = selCount > 0 && selConvs.every((c) => pinnedIds.has(c.conversation.id));
+  const allMuted = selCount > 0 && selConvs.every((c) => mutedIds.has(c.conversation.id));
+  const allHidden = selCount > 0 && selConvs.every((c) => hiddenIds.has(c.conversation.id));
+  const anyUnread = selConvs.some((c) => c.unreadCount > 0);
+  const allVisibleSelected = filteredItems.length > 0 && selCount >= filteredItems.length;
+  const singleDirect = selCount === 1 && selConvs[0]?.conversation.type === 'direct';
+  const singleConv = selCount === 1 ? selConvs[0] : null;
+  const singlePeer = singleDirect ? singleConv?.participants.find((p) => p.id !== uid) ?? null : null;
+
+  // Pin / unpin the whole selection (mixed → pin all; all-pinned → unpin all).
+  async function batchPin() {
+    const ids = selConvs.map((c) => c.conversation.id);
+    const unpin = allPinned;
+    if (!unpin) {
+      const toPin = ids.filter((id) => !pinnedIds.has(id));
+      // Free tier caps pinned chats (web parity via FREE_LIMITS).
+      if (!isPremium && pinnedIds.size + toPin.length > FREE_LIMITS.pinnedChats) {
+        clearSelection();
+        Alert.alert(
+          'Pin limit reached',
+          `Free accounts can pin up to ${FREE_LIMITS.pinnedChats} chats. Upgrade to FUTUREHAT+ for unlimited pins.`,
+          [{ text: 'Not now', style: 'cancel' }, { text: 'Upgrade', onPress: () => navigation.navigate('Premium') }],
+        );
+        return;
+      }
     }
-    setMenuFor(null);
-    setPinnedIds((prev) => { const n = new Set(prev); pinned ? n.delete(id) : n.add(id); return n; });
-    const { error } = pinned ? await unpinConversation(supabase, id) : await pinConversation(supabase, id);
-    if (error) setPinnedIds((prev) => { const n = new Set(prev); pinned ? n.add(id) : n.delete(id); return n; });
+    clearSelection();
+    const prev = pinnedIds;
+    setPinnedIds((p) => { const n = new Set(p); ids.forEach((id) => unpin ? n.delete(id) : n.add(id)); return n; });
+    const results = await Promise.all(ids.map((id) => (unpin ? unpinConversation(supabase, id) : pinConversation(supabase, id))));
+    if (results.some((r) => r.error)) { setPinnedIds(prev); Alert.alert('Could not update pins'); }
   }
 
-  async function toggleMute() {
-    if (!menuFor) return;
-    const id = menuFor.conversation.id;
-    setMenuFor(null);
-    const muted = mutedIds.has(id);
-    setMutedIds((prev) => { const n = new Set(prev); muted ? n.delete(id) : n.add(id); return n; });
-    const { error } = muted ? await unmuteConversation(supabase, id) : await muteConversation(supabase, id);
-    if (error) setMutedIds((prev) => { const n = new Set(prev); muted ? n.add(id) : n.delete(id); return n; });
+  async function batchMute() {
+    const ids = selConvs.map((c) => c.conversation.id);
+    const unmute = allMuted;
+    clearSelection();
+    const prev = mutedIds;
+    setMutedIds((p) => { const n = new Set(p); ids.forEach((id) => unmute ? n.delete(id) : n.add(id)); return n; });
+    const results = await Promise.all(ids.map((id) => (unmute ? unmuteConversation(supabase, id) : muteConversation(supabase, id))));
+    if (results.some((r) => r.error)) { setMutedIds(prev); Alert.alert('Could not update mute'); }
   }
 
-  async function doHide() {
-    if (!menuFor) return;
-    const id = menuFor.conversation.id;
-    setMenuFor(null);
-    setHiddenIds((prev) => new Set(prev).add(id));
-    const { error } = await hideConversation(supabase, id);
-    if (error) { setHiddenIds((prev) => { const n = new Set(prev); n.delete(id); return n; }); Alert.alert('Could not hide', error.message); }
+  async function batchArchive() {
+    const ids = selConvs.map((c) => c.conversation.id);
+    clearSelection();
+    const prev = hiddenIds;
+    setHiddenIds((p) => { const n = new Set(p); ids.forEach((id) => n.add(id)); return n; }); // archived chats leave the main list
+    const results = await Promise.all(ids.map((id) => archiveConversation(supabase, id)));
+    if (results.some((r) => r.error)) { setHiddenIds(prev); Alert.alert('Could not archive'); }
   }
 
-  async function doUnhide() {
-    if (!menuFor) return;
-    const id = menuFor.conversation.id;
-    setMenuFor(null);
-    setHiddenIds((prev) => { const n = new Set(prev); n.delete(id); return n; });
-    const { error } = await unhideConversation(supabase, id);
-    if (error) { setHiddenIds((prev) => new Set(prev).add(id)); Alert.alert('Could not unhide', error.message); }
+  // "Delete" here = Hide (reversible via "Show hidden chats") — the app has no
+  // hard conversation delete. Destructive-styled confirmation before removing.
+  function batchDelete() {
+    const ids = selConvs.map((c) => c.conversation.id);
+    if (!ids.length) return;
+    Alert.alert(
+      ids.length > 1 ? `Delete ${ids.length} chats?` : 'Delete chat?',
+      'They will be removed from your list. You can restore them anytime from "Show hidden chats".',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            clearSelection();
+            const prev = hiddenIds;
+            setHiddenIds((p) => { const n = new Set(p); ids.forEach((id) => n.add(id)); return n; });
+            const results = await Promise.all(ids.map((id) => hideConversation(supabase, id)));
+            if (results.some((r) => r.error)) { setHiddenIds(prev); Alert.alert('Could not delete'); }
+          },
+        },
+      ],
+    );
   }
 
-  async function doArchive() {
-    if (!menuFor) return;
-    const id = menuFor.conversation.id;
-    setMenuFor(null);
-    setHiddenIds((prev) => new Set(prev).add(id)); // archived chats leave the main list
-    const { error } = await archiveConversation(supabase, id);
-    if (error) { setHiddenIds((prev) => { const n = new Set(prev); n.delete(id); return n; }); Alert.alert('Could not archive', error.message); }
+  async function batchUnhide() {
+    const ids = selConvs.map((c) => c.conversation.id);
+    clearSelection();
+    const prev = hiddenIds;
+    setHiddenIds((p) => { const n = new Set(p); ids.forEach((id) => n.delete(id)); return n; });
+    const results = await Promise.all(ids.map((id) => unhideConversation(supabase, id)));
+    if (results.some((r) => r.error)) { setHiddenIds(prev); Alert.alert('Could not unhide'); }
   }
 
-  function doBlock() {
-    const peer = menuPeer;
+  async function batchMarkRead() {
+    const ids = selConvs.filter((c) => c.unreadCount > 0).map((c) => c.conversation.id);
+    clearSelection();
+    if (!ids.length) return;
+    setItems((prev) => prev.map((c) => (ids.includes(c.conversation.id) ? { ...c, unreadCount: 0 } : c)));
+    await Promise.all(ids.map((id) => markConversationRead(supabase, id).catch(() => ({ error: null }))));
+    // A background load() reconciles the true count on next focus/refresh.
+  }
+
+  function batchBlock() {
+    const peer = singlePeer;
     if (!peer) return;
-    setMenuFor(null);
-    Alert.alert('Block contact', `Block ${peer.display_name ?? 'this user'}? They won't be able to message you.`, [
+    const name = peer.display_name ?? 'this user';
+    Alert.alert('Block contact', `Block ${name}? They won't be able to message you.`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Block',
         style: 'destructive',
         onPress: async () => {
+          clearSelection();
           const { error } = await blockUser(supabase, peer.id);
-          if (error) Alert.alert('Could not block', error.message);
-          else Alert.alert('Blocked', `${peer.display_name ?? 'User'} has been blocked.`);
+          Alert.alert(error ? 'Could not block' : 'Blocked', error ? error.message : `${name} has been blocked.`);
         },
       },
     ]);
   }
 
-  function doReport() {
-    const peer = menuPeer;
+  function batchReport() {
+    const peer = singlePeer;
     if (!peer) return;
-    setMenuFor(null);
     Alert.alert('Report contact', `Report ${peer.display_name ?? 'this user'} to the safety team?`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Report',
         style: 'destructive',
         onPress: async () => {
+          clearSelection();
           const { error } = await submitReport(supabase, 'user', peer.id, 'Reported from chat list');
           Alert.alert(error ? 'Could not report' : 'Reported', error ? error.message : 'Thanks — our team will review this.');
         },
       },
     ]);
+  }
+
+  function viewInfo() {
+    const peer = singlePeer;
+    const conv = singleConv;
+    if (!peer || !conv) return;
+    clearSelection();
+    navigation.navigate('Profile', { userId: peer.id, conversationId: conv.conversation.id });
+  }
+
+  function toggleSelectAll() {
+    animateSelection();
+    const visible = filteredItems.map((c) => c.conversation.id);
+    setSelectedIds((prev) => (prev.size >= visible.length ? new Set() : new Set(visible)));
   }
 
   // Stable separator so the list doesn't rebuild every separator each render.
@@ -306,21 +407,27 @@ export default function ConversationsScreen() {
     const peerOnline = !!peer && onlineIds.has(peer.id);
     const peerPremium = !!peer && premiumIds.has(peer.id);
     const isGroup = item.conversation.type === 'group';
+    const id = item.conversation.id;
+    const selected = selectedIds.has(id);
     return (
     <Pressable
-      style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
+      style={({ pressed }) => [styles.row, selected && styles.rowSelected, pressed && styles.rowPressed]}
       onPress={() =>
-        navigation.navigate('Chat', {
-          conversationId: item.conversation.id,
-          title: item.title,
-        })
+        selectionMode
+          ? toggleSelect(id)
+          : navigation.navigate('Chat', { conversationId: id, title: item.title })
       }
-      onLongPress={() => { Haptics.selectionAsync().catch(() => {}); setMenuFor(item); }}
+      onLongPress={() => (selectionMode ? toggleSelect(id) : enterSelection(id))}
       delayLongPress={280}
     >
       <View>
         <Avatar uri={item.avatarUrl} name={item.title} size={52} />
-        {peerOnline && <View style={styles.onlineDot} />}
+        {peerOnline && !selected && <View style={styles.onlineDot} />}
+        {selected && (
+          <View style={styles.checkOverlay}>
+            <Ionicons name="checkmark" size={16} color="#fff" />
+          </View>
+        )}
       </View>
       <View style={styles.rowBody}>
         <View style={styles.rowTop}>
@@ -372,6 +479,25 @@ export default function ConversationsScreen() {
           <Text style={styles.offlineText}>Offline — showing saved chats</Text>
         </View>
       )}
+
+      {/* WhatsApp-style contextual action bar — replaces the search bar while
+          one or more chats are selected. Icons adapt to the selection state. */}
+      {selectionMode && (
+        <View style={styles.selBar}>
+          <Pressable hitSlop={10} onPress={clearSelection}>
+            <Ionicons name="close" size={24} color={colors.text} />
+          </Pressable>
+          <Text style={styles.selCount}>{selCount}</Text>
+          <View style={styles.selActions}>
+            <SelIcon name={allPinned ? 'pin' : 'pin-outline'} onPress={batchPin} />
+            <SelIcon name={allMuted ? 'notifications' : 'notifications-off-outline'} onPress={batchMute} />
+            <SelIcon name="archive-outline" onPress={batchArchive} />
+            <SelIcon name="trash-outline" onPress={batchDelete} danger />
+            <SelIcon name="ellipsis-vertical" onPress={() => setOverflowOpen(true)} />
+          </View>
+        </View>
+      )}
+
       <FlatList
         data={filteredItems}
         keyExtractor={(c) => c.conversation.id}
@@ -381,7 +507,7 @@ export default function ConversationsScreen() {
         maxToRenderPerBatch={12}
         windowSize={11}
         ItemSeparatorComponent={Separator}
-        ListHeaderComponent={
+        ListHeaderComponent={selectionMode ? null : (
           <View>
             <View style={styles.searchBar}>
               <Ionicons name="search" size={16} color={colors.textMuted} />
@@ -432,7 +558,7 @@ export default function ConversationsScreen() {
               </View>
             )}
           </View>
-        }
+        )}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -464,29 +590,55 @@ export default function ConversationsScreen() {
         <Ionicons name="create-outline" size={26} color="#fff" />
       </Pressable>
 
-      {/* Conversation long-press action sheet */}
-      <Modal visible={!!menuFor} transparent animationType="fade" onRequestClose={() => setMenuFor(null)}>
-        <Pressable style={styles.backdrop} onPress={() => setMenuFor(null)}>
+      {/* Selection "⋮" overflow menu — less-common / context-specific actions.
+          Single direct chats additionally get View contact / Report / Block. */}
+      <Modal visible={overflowOpen} transparent animationType="fade" onRequestClose={() => setOverflowOpen(false)}>
+        <Pressable style={styles.backdrop} onPress={() => setOverflowOpen(false)}>
           <View style={styles.sheet}>
-            <Text style={styles.sheetTitle} numberOfLines={1}>{menuFor?.title}</Text>
-            <ConvAction icon={isPinned ? 'pin' : 'pin-outline'} label={isPinned ? 'Unpin' : 'Pin'} onPress={togglePin} />
-            <ConvAction icon={isMuted ? 'notifications' : 'notifications-off-outline'} label={isMuted ? 'Unmute' : 'Mute'} onPress={toggleMute} />
             <ConvAction
-              icon={isHidden ? 'eye-outline' : 'eye-off-outline'}
-              label={isHidden ? 'Unhide' : 'Hide'}
-              onPress={isHidden ? doUnhide : doHide}
+              icon={allVisibleSelected ? 'ellipse-outline' : 'checkmark-done-outline'}
+              label={allVisibleSelected ? 'Deselect all' : 'Select all'}
+              onPress={() => { setOverflowOpen(false); toggleSelectAll(); }}
             />
-            <ConvAction icon="archive-outline" label="Archive" onPress={doArchive} />
-            {menuIsDirect && (
+            {anyUnread && (
+              <ConvAction icon="mail-open-outline" label="Mark as read" onPress={() => { setOverflowOpen(false); batchMarkRead(); }} />
+            )}
+            {allHidden && (
+              <ConvAction icon="eye-outline" label={selCount > 1 ? 'Unhide chats' : 'Unhide'} onPress={() => { setOverflowOpen(false); batchUnhide(); }} />
+            )}
+            {singleDirect && (
               <>
-                <ConvAction icon="flag-outline" label="Report" onPress={doReport} />
-                <ConvAction icon="ban-outline" label="Block" danger onPress={doBlock} />
+                <ConvAction icon="person-circle-outline" label="View contact" onPress={() => { setOverflowOpen(false); viewInfo(); }} />
+                <ConvAction icon="flag-outline" label="Report" onPress={() => { setOverflowOpen(false); batchReport(); }} />
+                <ConvAction icon="ban-outline" label="Block" danger onPress={() => { setOverflowOpen(false); batchBlock(); }} />
               </>
             )}
           </View>
         </Pressable>
       </Modal>
     </View>
+  );
+}
+
+// A single icon button in the contextual selection bar.
+function SelIcon({
+  name,
+  onPress,
+  danger,
+}: {
+  name: keyof typeof Ionicons.glyphMap;
+  onPress: () => void;
+  danger?: boolean;
+}) {
+  const colors = useColors();
+  return (
+    <Pressable
+      hitSlop={6}
+      onPress={onPress}
+      style={({ pressed }) => [{ paddingHorizontal: spacing(2.5) }, pressed && { opacity: 0.5 }]}
+    >
+      <Ionicons name={name} size={22} color={danger ? colors.danger : colors.text} />
+    </Pressable>
   );
 }
 
@@ -543,6 +695,23 @@ const makeStyles = (colors: Palette) =>
       paddingVertical: spacing(3),
     },
     rowPressed: { backgroundColor: colors.surface },
+    rowSelected: { backgroundColor: colors.primary + '22' },
+    checkOverlay: {
+      position: 'absolute', right: -2, bottom: -2,
+      width: 20, height: 20, borderRadius: 10,
+      backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center',
+      borderWidth: 2, borderColor: colors.bg,
+    },
+    selBar: {
+      flexDirection: 'row', alignItems: 'center',
+      paddingHorizontal: spacing(4), height: 56,
+      backgroundColor: colors.surface,
+      borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border,
+      elevation: 4,
+      shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 4, shadowOffset: { width: 0, height: 2 },
+    },
+    selCount: { color: colors.text, fontSize: font.heading, fontWeight: '700', marginLeft: spacing(4), flex: 1 },
+    selActions: { flexDirection: 'row', alignItems: 'center' },
     rowBody: { flex: 1, marginLeft: spacing(3) },
     rowTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
     rowBottom: {

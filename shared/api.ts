@@ -431,6 +431,30 @@ export async function markMessageAsRead(
   return { error };
 }
 
+// Mark an ENTIRE conversation as read (WhatsApp "Mark as read"). Upserts a 'read'
+// receipt for every incoming message so the derived unread count (see
+// getMyConversations above) drops to zero. Shared by web + mobile, so read state
+// stays in sync across devices. No-op when there's nothing from others to read.
+export async function markConversationRead(
+  client: SupabaseClient,
+  conversationId: UUID,
+): Promise<{ error: Error | null }> {
+  const user = await getCurrentUser(client);
+  if (!user) return { error: new Error('not authenticated') };
+
+  const { data: msgs, error: selErr } = await client
+    .from('messages')
+    .select('id')
+    .eq('conversation_id', conversationId)
+    .neq('sender_id', user.id);
+  if (selErr) return { error: selErr };
+  if (!msgs || msgs.length === 0) return { error: null };
+
+  const rows = msgs.map((m) => ({ message_id: m.id, user_id: user.id, status: 'read' }));
+  const { error } = await client.from('message_receipts').upsert(rows);
+  return { error };
+}
+
 // Fetch all receipts for a set of messages (RLS scopes these to your conversations).
 export async function getReceipts(
   client: SupabaseClient,
