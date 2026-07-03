@@ -11,6 +11,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { supabase } from '../lib/supabase';
 import { getStarredMessages } from '../lib/shared';
 import type { StarredMessage } from '../lib/shared';
+import { getCache, setCache } from '../lib/localCache';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import Avatar from '../components/Avatar';
 import type { RootStackParamList } from '../navigation/types';
@@ -42,10 +43,16 @@ export default function StarredScreen() {
   useFocusEffect(
     useCallback(() => {
       let active = true;
+      // Instant: paint cached starred messages first (no spinner, works offline),
+      // then refresh from the network in the background and rewrite the cache.
+      getCache<StarredMessage[]>('starred', []).then((cached) => {
+        if (active && cached.length && items === null) setItems(cached);
+      });
       getStarredMessages(supabase)
-        .then((rows) => { if (active) setItems(rows); })
-        .catch(() => { if (active) setItems([]); });
+        .then((rows) => { if (active) { setItems(rows); setCache('starred', rows); } })
+        .catch(() => { if (active && items === null) setItems([]); });
       return () => { active = false; };
+      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []),
   );
 

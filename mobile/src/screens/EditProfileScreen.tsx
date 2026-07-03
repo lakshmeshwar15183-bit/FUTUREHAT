@@ -16,6 +16,9 @@ import { useNavigation } from '@react-navigation/native';
 
 import { supabase } from '../lib/supabase';
 import { getCurrentUser, getMyProfile, updateMyProfile } from '../lib/shared';
+import type { Profile } from '../lib/shared';
+import { getCachedProfile, cacheProfile } from '../lib/localCache';
+import { queueAction } from '../lib/sync';
 import { uploadAvatarFromUri } from '../lib/media';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import Avatar from '../components/Avatar';
@@ -36,15 +39,23 @@ export default function EditProfileScreen() {
 
   useEffect(() => {
     (async () => {
-      const user = await getCurrentUser(supabase);
-      setUid(user?.id ?? null);
-      const p = await getMyProfile(supabase);
-      if (p) {
+      const apply = (p: Profile) => {
         setDisplayName(p.display_name ?? '');
         setUsername(p.username ?? '');
         setAbout(p.about ?? '');
         setAvatarUrl(p.avatar_url);
+      };
+      const user = await getCurrentUser(supabase); // local session read — instant
+      const id = user?.id ?? null;
+      setUid(id);
+      // Instant: fill the form from the cached profile first (offline included).
+      if (id) {
+        const cached = await getCachedProfile(id);
+        if (cached) { apply(cached); setLoading(false); }
       }
+      // Then refresh from the network in the background and update the cache.
+      const p = await getMyProfile(supabase).catch(() => null);
+      if (p) { apply(p); cacheProfile(p); }
       setLoading(false);
     })();
   }, []);
@@ -75,17 +86,18 @@ export default function EditProfileScreen() {
       Alert.alert('Name required', 'Please enter a display name.');
       return;
     }
-    setSaving(true);
-    const { error } = await updateMyProfile(supabase, {
+    const updates = {
       display_name: displayName.trim(),
       username: username.trim() || null,
       about: about.trim() || null,
-    });
-    setSaving(false);
-    if (error) {
-      Alert.alert('Could not save', error.message);
-      return;
+    };
+    // Instant: write the new profile to the local cache and queue the server
+    // sync (auto-retries on reconnect), then leave immediately. No network wait.
+    if (uid) {
+      const cached = await getCachedProfile(uid);
+      cacheProfile({ ...(cached ?? ({ id: uid } as Profile)), ...updates } as Profile);
     }
+    queueAction('updateProfile', { updates });
     navigation.goBack();
   }
 

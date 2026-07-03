@@ -8,6 +8,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { supabase } from '../lib/supabase';
 import { getMyCommunities, joinCommunity } from '../lib/shared';
 import type { Community } from '../lib/shared';
+import { getCache, setCache } from '../lib/localCache';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import Avatar from '../components/Avatar';
 import type { RootStackParamList } from '../navigation/types';
@@ -24,7 +25,16 @@ export default function CommunitiesScreen() {
   const [joining, setJoining] = useState(false);
 
   const load = useCallback(async () => {
-    setItems(await getMyCommunities(supabase));
+    // Instant: show cached communities immediately (offline included), then
+    // refresh from the network and rewrite the cache in the background.
+    getCache<Community[]>('communities', []).then((cached) => {
+      if (cached.length) { setItems((cur) => (cur.length ? cur : cached)); setLoading(false); }
+    });
+    try {
+      const fresh = await getMyCommunities(supabase);
+      setItems(fresh);
+      setCache('communities', fresh);
+    } catch { /* offline — keep cached */ }
     setLoading(false);
   }, []);
   useFocusEffect(useCallback(() => { load(); }, [load]));

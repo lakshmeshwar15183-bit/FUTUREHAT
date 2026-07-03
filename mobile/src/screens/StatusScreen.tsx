@@ -36,6 +36,7 @@ import {
   getProfile,
 } from '../lib/shared';
 import type { Status, StatusViewer, Profile } from '../lib/shared';
+import { getCache, setCache } from '../lib/localCache';
 import { uploadMediaFromUri } from '../lib/media';
 import { formatLastSeen } from '../lib/time';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
@@ -70,13 +71,30 @@ export default function StatusScreen() {
   const [viewing, setViewing] = useState<Group | null>(null);
 
   const load = useCallback(async () => {
+    // Instant: paint the cached status tray first (offline included), then
+    // rebuild from the network below and rewrite the cache.
+    getCache<{ mine: Group | null; groups: Group[] }>('status:tray', { mine: null, groups: [] })
+      .then((cached) => {
+        if (cached.groups.length || cached.mine) {
+          setMine(cached.mine);
+          setGroups(cached.groups);
+          setLoading(false);
+        }
+      });
+
     const user = await getCurrentUser(supabase);
     const myId = user?.id ?? '';
     setUid(user?.id ?? null);
-    const [all, viewed] = await Promise.all([
-      getActiveStatuses(supabase),
-      getMyViewedStatusIds(supabase),
-    ]);
+    let all: Status[]; let viewed: Set<string>;
+    try {
+      [all, viewed] = await Promise.all([
+        getActiveStatuses(supabase),
+        getMyViewedStatusIds(supabase),
+      ]);
+    } catch {
+      setLoading(false); // offline — keep the cached tray already on screen
+      return;
+    }
 
     const byUser = new Map<string, Status[]>();
     for (const s of all) {
@@ -100,7 +118,8 @@ export default function StatusScreen() {
     };
 
     const mineList = byUser.get(myId);
-    setMine(mineList && mineList.length ? await buildGroup(myId, mineList) : null);
+    const mineGroup = mineList && mineList.length ? await buildGroup(myId, mineList) : null;
+    setMine(mineGroup);
     byUser.delete(myId);
 
     const built: Group[] = [];
@@ -113,6 +132,7 @@ export default function StatusScreen() {
     });
     setGroups(built);
     setLoading(false);
+    setCache('status:tray', { mine: mineGroup, groups: built });
   }, []);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));

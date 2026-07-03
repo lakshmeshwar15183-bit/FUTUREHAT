@@ -79,7 +79,7 @@ import {
   setDraft,
   uuidv4,
 } from '../lib/localCache';
-import { flushOutbox, onOutboxSent } from '../lib/sync';
+import { flushOutbox, onOutboxSent, queueAction } from '../lib/sync';
 import { uploadMediaFromUri } from '../lib/media';
 import { formatLastSeen, formatDaySeparator, formatTime } from '../lib/time';
 import { useColors, useTheme, spacing, radius, font, type Palette } from '../theme';
@@ -831,17 +831,9 @@ function ChatScreenInner() {
       if (isStarred) next.delete(target.id); else next.add(target.id);
       return next;
     });
-    const { error } = isStarred
-      ? await unstarMessage(supabase, target.id)
-      : await starMessage(supabase, target.id);
-    if (error) {
-      // revert on failure
-      setStarredIds((prev) => {
-        const next = new Set(prev);
-        if (isStarred) next.add(target.id); else next.delete(target.id);
-        return next;
-      });
-    }
+    // Instant + durable: queue the (un)star so it syncs in the background and
+    // auto-retries on reconnect — never blocks the UI, never reverts on offline.
+    queueAction(isStarred ? 'unstar' : 'star', { messageId: target.id });
   }
 
   // Delete-for-me: hide a single message locally for this user only (unlike
@@ -851,15 +843,8 @@ function ChatScreenInner() {
     const target = selected;
     setSelected(null);
     setHiddenIds((prev) => new Set(prev).add(target.id));
-    const { error } = await hideMessageForMe(supabase, target.id);
-    if (error) {
-      setHiddenIds((prev) => {
-        const next = new Set(prev);
-        next.delete(target.id);
-        return next;
-      });
-      Alert.alert('Could not delete', error.message);
-    }
+    // Instant + durable: hide locally now, queue the server write (auto-retries).
+    queueAction('hideMessage', { messageId: target.id });
   }
 
   // Message info — delivery/read status + timestamps, mirroring web's info view.

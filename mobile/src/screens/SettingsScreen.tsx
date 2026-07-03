@@ -9,6 +9,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { supabase } from '../lib/supabase';
 import { getCurrentUser, getMyProfile, signOut, getSubscription, isSubscriptionActive, getServerAdmin } from '../lib/shared';
 import type { Profile } from '../lib/shared';
+import { getCachedProfile, cacheProfile, getCache, setCache } from '../lib/localCache';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import { APP_NAME, APP_VERSION, CREDIT } from '../branding';
 import Avatar from '../components/Avatar';
@@ -28,13 +29,30 @@ export default function SettingsScreen() {
 
   useFocusEffect(
     React.useCallback(() => {
+      let alive = true;
       (async () => {
-        const user = await getCurrentUser(supabase);
-        setUid(user?.id ?? null);
-        setProfile(await getMyProfile(supabase));
-        setPremium(isSubscriptionActive(await getSubscription(supabase)));
-        setAdmin(await getServerAdmin(supabase).catch(() => false));
+        const user = await getCurrentUser(supabase); // local session — instant
+        const id = user?.id ?? null;
+        if (!alive) return;
+        setUid(id);
+        // Instant: cached profile + premium/admin flags so the header + gated
+        // rows render immediately, offline included.
+        if (id) { const cached = await getCachedProfile(id); if (alive && cached) setProfile(cached); }
+        const [cp, ca] = await Promise.all([
+          getCache<boolean>('me:premium', false),
+          getCache<boolean>('me:admin', false),
+        ]);
+        if (alive) { setPremium(cp); setAdmin(ca); }
+        // Background refresh + cache rewrite (kept even if offline throws).
+        const p = await getMyProfile(supabase).catch(() => null);
+        if (alive && p) { setProfile(p); cacheProfile(p); }
+        const sub = await getSubscription(supabase).catch(() => null);
+        const prem = isSubscriptionActive(sub);
+        if (alive) { setPremium(prem); setCache('me:premium', prem); }
+        const adm = await getServerAdmin(supabase).catch(() => false);
+        if (alive) { setAdmin(adm); setCache('me:admin', adm); }
       })();
+      return () => { alive = false; };
     }, []),
   );
 
