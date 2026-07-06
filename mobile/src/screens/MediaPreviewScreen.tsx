@@ -24,6 +24,12 @@ import type { RootStackParamList } from '../navigation/types';
 import type { PickedAsset } from './MediaPickerScreen';
 import { submitMedia, type OutgoingMedia } from '../media/mediaSendBridge';
 import { estimateBytes, formatBytes, type Quality } from '../media/qualityEstimate';
+import CropTool from '../media/tools/CropTool';
+import DrawTool from '../media/tools/DrawTool';
+import OverlayEditor, { type OverlayResult } from '../media/tools/OverlayEditor';
+import VideoEditor, { type VideoEditResult } from '../media/tools/VideoEditor';
+import { flattenOverlays } from '../media/tools/mediaFlatten';
+import type { Overlay } from '../media/tools/overlays';
 import type { MediaMeta } from '../lib/shared';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'MediaPreview'>;
@@ -36,7 +42,19 @@ interface EditState {
   caption: string;
   quality: Quality;
   viewOnce: boolean;
+  /** Working image URI after crop/draw (baked); undefined = use the original. */
+  editedUri?: string;
+  editedW?: number;
+  editedH?: number;
+  /** Text/sticker overlays flattened at send time. */
+  overlays?: Overlay[];
+  overlayStage?: { w: number; h: number };
+  edited?: boolean;
+  /** Video edit intent (Phase C). */
+  video?: VideoEditResult;
 }
+
+type ActiveTool = null | 'crop' | 'draw' | 'text' | 'sticker' | 'video';
 
 export default function MediaPreviewScreen() {
   const navigation = useNavigation<Nav>();
@@ -53,10 +71,16 @@ export default function MediaPreviewScreen() {
   );
   const [sending, setSending] = useState(false);
   const [showVO, setShowVO] = useState(false);   // View-Once onboarding dialog
+  const [tool, setTool] = useState<ActiveTool>(null);
   const pagerRef = useRef<FlatList<PickedAsset>>(null);
 
   const cur = assets[index];
   const curEdit = edits[index];
+  // Current working image for the active asset (edited if crop/draw applied).
+  const curUri = curEdit.editedUri ?? cur.uri;
+  const curW = curEdit.editedW ?? cur.width;
+  const curH = curEdit.editedH ?? cur.height;
+  const isVideo = cur.type === 'video';
 
   function patch(p: Partial<EditState>) {
     setEdits((prev) => prev.map((e, i) => (i === index ? { ...e, ...p } : e)));
@@ -95,28 +119,41 @@ export default function MediaPreviewScreen() {
   }
 
   // ── Send everything ─────────────────────────────────────────────────────────
-  function send() {
+  async function send() {
     if (sending) return;
     setSending(true);
-    const items: OutgoingMedia[] = assets.map((a, i) => {
+    const items: OutgoingMedia[] = [];
+    for (let i = 0; i < assets.length; i++) {
+      const a = assets[i];
       const e = edits[i];
+      let uri = e.editedUri ?? a.uri;
+      let w = e.editedW ?? a.width, h = e.editedH ?? a.height;
+      // Bake text/sticker overlays into the image (images only).
+      if (a.type !== 'video' && e.overlays && e.overlays.length && e.overlayStage) {
+        // eslint-disable-next-line no-await-in-loop
+        uri = await flattenOverlays(uri, e.overlays, e.overlayStage.w, e.overlayStage.h, w, h);
+      }
       const meta: MediaMeta = {
-        quality: e.quality,
-        hd: e.quality !== 'standard',
+        quality: e.video?.quality ?? e.quality,
+        hd: (e.video?.quality ?? e.quality) !== 'standard',
         viewOnce: e.viewOnce || undefined,
-        width: a.width,
-        height: a.height,
+        width: w,
+        height: h,
         durationMs: a.durationMs,
+        edited: e.edited || (e.video ? true : undefined),
+        // Video trim/mute intent (applied by the native transcoder when enabled).
+        trimStartMs: e.video && e.video.startMs > 0 ? e.video.startMs : undefined,
+        trimEndMs: e.video && a.durationMs && e.video.endMs < a.durationMs ? e.video.endMs : undefined,
+        muted: e.video?.muted || undefined,
       };
-      return {
-        uri: a.uri,
+      items.push({
+        uri,
         fileName: a.fileName,
-        // videos ride as 'file' (schema has no 'video' type; matches current app)
         type: a.type === 'video' ? 'file' : 'image',
         caption: e.caption || undefined,
         mediaMeta: meta,
-      };
-    });
+      });
+    }
     const ok = submitMedia({ conversationId, items });
     if (!ok) {
       setSending(false);
@@ -131,22 +168,41 @@ export default function MediaPreviewScreen() {
     else navigation.goBack();
   }
 
+  // Editor tools are for images only (video editing is the VideoEditor / Phase C).
   const tools: { icon: keyof typeof Ionicons.glyphMap; label: string; enabled: boolean; onPress?: () => void }[] = [
-    { icon: 'crop-outline', label: 'Crop', enabled: false },
-    { icon: 'happy-outline', label: 'Sticker', enabled: false },
-    { icon: 'text-outline', label: 'Text', enabled: false },
-    { icon: 'brush-outline', label: 'Draw', enabled: false },
+    { icon: 'crop-outline', label: 'Crop', enabled: !isVideo, onPress: () => setTool('crop') },
+    { icon: 'happy-outline', label: 'Sticker', enabled: !isVideo, onPress: () => setTool('sticker') },
+    { icon: 'text-outline', label: 'Text', enabled: !isVideo, onPress: () => setTool('text') },
+    { icon: 'brush-outline', label: 'Draw', enabled: !isVideo, onPress: () => setTool('draw') },
   ];
 
-  const renderPage = ({ item }: { item: PickedAsset }) => (
-    <View style={{ width, alignItems: 'center', justifyContent: 'center' }}>
-      {item.type === 'video' ? (
-        <Video source={{ uri: item.uri }} style={styles.media} resizeMode={ResizeMode.CONTAIN} useNativeControls shouldPlay={false} isLooping />
-      ) : (
-        <Image source={{ uri: item.uri }} style={styles.media} contentFit="contain" transition={120} />
-      )}
-    </View>
-  );
+  // Apply a crop/draw result: replaces the working image for this asset.
+  function applyImageEdit(uri: string, w: number, h: number) {
+    patch({ editedUri: uri, editedW: w, editedH: h, edited: true });
+    setTool(null);
+  }
+  // Apply overlay (text/sticker) result: stored, flattened at send.
+  function applyOverlays(r: OverlayResult) {
+    patch({ overlays: r.overlays, overlayStage: { w: r.stageW, h: r.stageH }, edited: r.overlays.length > 0 || curEdit.edited });
+    setTool(null);
+  }
+
+  const renderPage = ({ item, index: i }: { item: PickedAsset; index: number }) => {
+    const shownUri = edits[i]?.editedUri ?? item.uri;   // reflect crop/draw edits
+    return (
+      <View style={{ width, alignItems: 'center', justifyContent: 'center' }}>
+        {item.type === 'video' ? (
+          <Video source={{ uri: item.uri }} style={styles.media} resizeMode={ResizeMode.CONTAIN} useNativeControls shouldPlay={false} isLooping />
+        ) : (
+          <Image source={{ uri: shownUri }} style={styles.media} contentFit="contain" transition={120} />
+        )}
+        {/* overlay preview badge (baked at send) */}
+        {edits[i]?.overlays && edits[i].overlays!.length > 0 && (
+          <View style={styles.editBadge}><Ionicons name="layers" size={12} color="#fff" /><Text style={styles.editBadgeText}>{edits[i].overlays!.length}</Text></View>
+        )}
+      </View>
+    );
+  };
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -160,10 +216,14 @@ export default function MediaPreviewScreen() {
           <Pressable style={[styles.hdChip, curEdit.quality !== 'standard' && styles.hdChipOn]} onPress={() => patch({ quality: curEdit.quality === 'standard' ? 'hd' : 'standard' })}>
             <Text style={[styles.hdText, curEdit.quality !== 'standard' && styles.hdTextOn]}>HD</Text>
           </Pressable>
-          {tools.map((t) => (
-            <TopIcon key={t.label} name={t.icon} disabled={!t.enabled}
-              onPress={t.enabled ? t.onPress : () => Alert.alert(t.label, `${t.label} arrives in the next app build (native editor).`)} />
-          ))}
+          {isVideo ? (
+            <TopIcon name="cut-outline" onPress={() => setTool('video')} />
+          ) : (
+            tools.map((t) => (
+              <TopIcon key={t.label} name={t.icon} disabled={!t.enabled}
+                onPress={t.enabled ? t.onPress : undefined} />
+            ))
+          )}
         </View>
       </View>
 
@@ -249,6 +309,28 @@ export default function MediaPreviewScreen() {
           </View>
         </View>
       )}
+
+      {/* Editor tools (Phase B) — full-screen layers over the preview. Images only. */}
+      {tool === 'crop' && (
+        <CropTool uri={curUri} width={curW} height={curH}
+          onCancel={() => setTool(null)}
+          onDone={(r) => applyImageEdit(r.uri, r.width, r.height)} />
+      )}
+      {tool === 'draw' && (
+        <DrawTool uri={curUri} width={curW} height={curH}
+          onCancel={() => setTool(null)}
+          onDone={(r) => applyImageEdit(r.uri, r.width, r.height)} />
+      )}
+      {(tool === 'text' || tool === 'sticker') && (
+        <OverlayEditor uri={curUri} mode={tool} initial={curEdit.overlays}
+          onCancel={() => setTool(null)}
+          onDone={applyOverlays} />
+      )}
+      {tool === 'video' && (
+        <VideoEditor uri={cur.uri} width={cur.width} height={cur.height} durationMs={cur.durationMs}
+          onCancel={() => setTool(null)}
+          onDone={(r) => { patch({ video: r }); setTool(null); }} />
+      )}
     </View>
   );
 }
@@ -271,6 +353,8 @@ const makeStyles = (colors: Palette) =>
     hdText: { color: '#fff', fontSize: 12, fontWeight: '800' },
     hdTextOn: { color: '#1a1a1a' },
     media: { width: '100%', height: '100%' },
+    editBadge: { position: 'absolute', top: 10, left: 12, flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 },
+    editBadgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
     qualityRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: spacing(4), paddingVertical: spacing(2) },
     qChip: { borderRadius: 999, paddingHorizontal: 12, paddingVertical: 5, backgroundColor: 'rgba(255,255,255,0.12)' },
     qChipOn: { backgroundColor: colors.primary },

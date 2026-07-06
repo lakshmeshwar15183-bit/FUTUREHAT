@@ -80,6 +80,12 @@ export interface MediaMeta {
   durationMs?: number;
   /** True if the image was edited (crop/draw/text/stickers) before sending. */
   edited?: boolean;
+  /** Video trim intent (ms). Recorded by the video editor; the actual cut is applied
+   *  by a native transcoder when enabled (Phase C). */
+  trimStartMs?: number;
+  trimEndMs?: number;
+  /** Video audio muted (intent; applied by the transcoder). */
+  muted?: boolean;
 }
 
 /** Result of mark_view_once_seen() / view_once_state() (0030). */
