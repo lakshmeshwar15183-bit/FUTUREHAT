@@ -59,6 +59,9 @@ interface Props {
   selectionMode?: boolean;
   /** Show a small star in the meta row when this message is bookmarked. */
   starred?: boolean;
+  /** View-Once (0030): this View-Once message has already been consumed by the
+   *  current user — render an opened/locked state instead of the image. */
+  viewOnceSpent?: boolean;
 }
 
 /** Split text into <Text> runs, wrapping case-insensitive matches of `term`. */
@@ -109,6 +112,7 @@ function MessageBubble({
   activeMatch = false,
   selectionMode = false,
   starred = false,
+  viewOnceSpent = false,
 }: Props) {
   const colors = useColors();
   const styles = useMemo(() => makeStyles(colors), [colors]);
@@ -169,25 +173,40 @@ function MessageBubble({
           </Pressable>
         )}
 
-        {message.type === 'image' && message.media_url && (
-          <Pressable
-            onPress={() => onOpenImage?.(message.media_url!)}
-          >
-            <Image
-              source={message.media_url}
-              style={styles.image}
-              cachePolicy="memory-disk"
-              contentFit="cover"
-              recyclingKey={message.media_url}
-            />
-            {message.media_meta?.viewOnce && (
-              <View style={styles.viewOnceTag}>
-                <Ionicons name="eye" size={12} color="#fff" />
-                <Text style={styles.viewOnceText}>View once</Text>
-              </View>
-            )}
-          </Pressable>
-        )}
+        {message.type === 'image' && message.media_url && (() => {
+          const isVO = !!message.media_meta?.viewOnce;
+          const spent = isVO && !mine && viewOnceSpent;
+          // Recipient's unopened View-Once shows a locked tile (no thumbnail leak);
+          // a spent one shows an "opened" state and can't be reopened. Sender always
+          // sees their own thumbnail. Non-View-Once behaves exactly as before.
+          if (isVO && !mine) {
+            return (
+              <Pressable style={styles.voTile} onPress={() => !spent && onOpenImage?.(message.media_url!)}>
+                <Ionicons name={spent ? 'eye-off-outline' : 'eye-outline'} size={30} color={spent ? colors.textFaint : colors.primary} />
+                <Text style={[styles.voTileText, spent && { color: colors.textFaint }]}>
+                  {spent ? 'Opened' : 'View once — tap to view'}
+                </Text>
+              </Pressable>
+            );
+          }
+          return (
+            <Pressable onPress={() => onOpenImage?.(message.media_url!)}>
+              <Image
+                source={message.media_url}
+                style={styles.image}
+                cachePolicy="memory-disk"
+                contentFit="cover"
+                recyclingKey={message.media_url}
+              />
+              {isVO && (
+                <View style={styles.viewOnceTag}>
+                  <Ionicons name="eye" size={12} color="#fff" />
+                  <Text style={styles.viewOnceText}>View once</Text>
+                </View>
+              )}
+            </Pressable>
+          );
+        })()}
 
         {message.type === 'audio' && message.media_url && (
           <AudioMessage
@@ -278,7 +297,8 @@ function areEqual(a: Props, b: Props): boolean {
     a.activeMatch !== b.activeMatch ||
     a.highlight !== b.highlight ||
     a.senderName !== b.senderName ||
-    a.starred !== b.starred
+    a.starred !== b.starred ||
+    a.viewOnceSpent !== b.viewOnceSpent
   ) return false;
   const m = a.message, n = b.message;
   if (
@@ -321,6 +341,8 @@ const makeStyles = (colors: Palette) =>
     image: { width: 220, height: 220, borderRadius: radius.md, marginBottom: 2 },
     viewOnceTag: { position: 'absolute', left: 8, top: 8, flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 },
     viewOnceText: { color: '#fff', fontSize: 11, fontWeight: '600' },
+    voTile: { width: 220, height: 120, borderRadius: radius.md, marginBottom: 2, alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: colors.surfaceAlt, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border },
+    voTileText: { color: colors.text, fontSize: font.small, fontWeight: '600' },
     file: { flexDirection: 'row', alignItems: 'center', paddingVertical: 4, minWidth: 180 },
     fileName: { fontSize: font.body, marginLeft: 8, flex: 1 },
     videoTile: {

@@ -74,6 +74,8 @@ import {
   FREE_LIMITS,
   PREMIUM_LIMITS,
   sendPush,
+  markViewOnceSeen,
+  getViewOnceState,
 } from '../lib/shared';
 import type { Message, MessageReaction, Profile, ConversationSummary, Poll, PollVote, SearchKind, ChatSettings, ReportReason } from '../lib/shared';
 import {
@@ -241,6 +243,10 @@ function ChatScreenInner() {
   const [stickersOpen, setStickersOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [viewerUrl, setViewerUrl] = useState<string | null>(null);
+  // View-Once (0030): ids of View-Once messages the current user has already
+  // consumed (server-authoritative). Once spent, the bubble shows an opened state
+  // and can't be re-opened. Hydrated on load for messages sent TO me.
+  const [voSpent, setVoSpent] = useState<Set<string>>(new Set());
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [searchKind, setSearchKind] = useState<SearchKind>('all');
@@ -832,6 +838,51 @@ function ChatScreenInner() {
     }
   }
 
+  // Open a media message, enforcing View Once (0030). For a View-Once item the
+  // RECIPIENT may open exactly once (server-authoritative via mark_view_once_seen);
+  // the SENDER can re-see their own. A spent item shows an alert and never reopens.
+  const openMedia = useCallback(async (msg: Message) => {
+    const url = msg.media_url;
+    if (!url) return;
+    const vo = msg.media_meta?.viewOnce;
+    if (!vo) { setViewerUrl(url); return; }          // normal media
+    const mine = msg.sender_id === uid;
+    if (mine) { setViewerUrl(url); return; }         // sender may re-see their own
+    if (voSpent.has(msg.id)) {
+      Alert.alert('View Once', 'You’ve already viewed this once. It can’t be opened again.');
+      return;
+    }
+    // Consume server-side FIRST (one open, authoritative), then reveal.
+    const res = await markViewOnceSeen(supabase, msg.id);
+    setVoSpent((prev) => new Set(prev).add(msg.id));  // lock locally regardless
+    if (res && res.first_view === false && res.consumed) {
+      Alert.alert('View Once', 'You’ve already viewed this once. It can’t be opened again.');
+      return;
+    }
+    setViewerUrl(url);
+  }, [uid, voSpent]);
+
+  // Hydrate which View-Once messages I've already consumed, so a reopened chat shows
+  // them as spent (not re-openable). Only checks View-Once items sent TO me.
+  useEffect(() => {
+    if (!uid) return;
+    const pending = messages.filter(
+      (m) => m.media_meta?.viewOnce && m.sender_id !== uid && !voSpent.has(m.id),
+    );
+    if (!pending.length) return;
+    let alive = true;
+    (async () => {
+      const spent: string[] = [];
+      for (const m of pending) {
+        // eslint-disable-next-line no-await-in-loop
+        const st = await getViewOnceState(supabase, m.id).catch(() => null);
+        if (st && st.seen) spent.push(m.id);
+      }
+      if (alive && spent.length) setVoSpent((prev) => new Set([...prev, ...spent]));
+    })();
+    return () => { alive = false; };
+  }, [messages, uid]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Scheduled messages (premium) — persist the current draft to send later
   // (web parity: ChatView.handleSchedule). Future-time validation lives in the
   // modal; on success we clear the composer.
@@ -1249,7 +1300,8 @@ function ChatScreenInner() {
           selected={selectionMode && selectedIds.has(msg.id)}
           selectionMode={selectionMode}
           onPress={selectionMode ? () => toggleSelect(msg) : undefined}
-          onOpenImage={(url) => (selectionMode ? toggleSelect(msg) : setViewerUrl(url))}
+          onOpenImage={() => (selectionMode ? toggleSelect(msg) : void openMedia(msg))}
+          viewOnceSpent={voSpent.has(msg.id)}
           highlight={searchActive ? search : ''}
           activeMatch={msg.id === activeMatchId}
         />
