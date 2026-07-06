@@ -8,6 +8,7 @@ import { motion } from 'framer-motion';
 import { supabase } from '../supabase';
 import { getServerAdmin } from '@shared/premiumApi';
 import { getServerOwner, adminReportsPendingCount, moderatorAuditLog } from '@shared/adminApi';
+import { getStreakAudit } from '@shared/streakApi';
 import type { ModeratorAuditEntry } from '@shared/types';
 import { modalBackdrop, modalPanel } from '../motion';
 import { AdminUsers } from './AdminUsers';
@@ -20,7 +21,7 @@ import './AdminDashboard.css';
 
 type Tab =
   | 'overview' | 'users' | 'reports' | 'tickets' | 'calls' | 'messages'
-  | 'search' | 'flags' | 'app' | 'health' | 'audit' | 'modaudit';
+  | 'search' | 'flags' | 'app' | 'health' | 'audit' | 'modaudit' | 'streaks';
 
 interface Stats {
   users: number; messages: number; conversations: number; communities: number;
@@ -110,6 +111,7 @@ export function AdminDashboard({ onClose }: { onClose: () => void }) {
     { id: 'search', label: 'Search' },
     { id: 'health', label: 'Database' },
     { id: 'modaudit', label: 'Mod Audit' },
+    { id: 'streaks', label: 'Streaks' },
     { id: 'flags', label: 'Feature Flags', ownerOnly: true },
     { id: 'app', label: 'App', ownerOnly: true },
     { id: 'audit', label: 'Audit Log', ownerOnly: true },
@@ -154,6 +156,7 @@ export function AdminDashboard({ onClose }: { onClose: () => void }) {
               {tab === 'search' && <AdminSearch />}
               {tab === 'health' && <AdminHealth />}
               {tab === 'modaudit' && <ModeratorAudit />}
+              {tab === 'streaks' && <StreakAudit />}
               {tab === 'flags' && isOwner && <AdminFeatureFlags />}
               {tab === 'app' && isOwner && <AdminAppMgmt />}
               {tab === 'audit' && isOwner && <AdminAudit />}
@@ -210,6 +213,73 @@ function ModeratorAudit() {
                 <td><span className="admin-tag">{r.action}</span></td>
                 <td><code>{r.target ? String(r.target).slice(0, 12) : '—'}</code></td>
                 <td className="admin-meta-cell">{r.meta ? JSON.stringify(r.meta) : ''}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+// Read-only streak audit (admin-gated via admin_streak_audit). Surfaces milestone
+// & reward history, moderator rewards, and Hall of Legends. Intentionally has NO
+// score controls — streak scores are server-authoritative and not admin-editable.
+function StreakAudit() {
+  const [data, setData] = useState<{ milestones: any[]; mod_grants: any[]; hall_of_legends: any[]; recent_events: any[] } | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => { getStreakAudit(supabase, 200).then(setData).catch((e) => setErr(e.message)); }, []);
+  if (err) return <div className="admin-warn">{err}</div>;
+  if (!data) return <div className="admin-empty">Loading…</div>;
+  const kind = (k: string) => k === 'diamond' ? '💎 Diamond' : k === 'hall_of_legends' ? '🏆 Hall of Legends' : '🛡 Mod milestone';
+  return (
+    <div className="admin-audit">
+      <div className="admin-hint">Streak scores are computed and enforced entirely on the server. This is a read-only audit — there are no score controls.</div>
+
+      <h4>Milestones &amp; rewards ({data.milestones.length})</h4>
+      {data.milestones.length === 0 ? <div className="admin-empty">None yet.</div> : (
+        <table className="admin-table">
+          <thead><tr><th>When</th><th>Milestone</th><th>Score</th><th>Now</th><th>Reward</th></tr></thead>
+          <tbody>
+            {data.milestones.map((m, i) => (
+              <tr key={i}>
+                <td>{new Date(m.achieved_at).toLocaleString()}</td>
+                <td><span className="admin-tag">{kind(m.kind)}</span></td>
+                <td>{m.achieved_score}</td>
+                <td>{m.current_score}</td>
+                <td>{m.reward_granted ? '✓ granted' : '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      <h4>Moderator rewards ({data.mod_grants.length})</h4>
+      {data.mod_grants.length === 0 ? <div className="admin-empty">None yet.</div> : (
+        <table className="admin-table">
+          <thead><tr><th>When</th><th>Moderator</th><th>Details</th></tr></thead>
+          <tbody>
+            {data.mod_grants.map((g, i) => (
+              <tr key={i}>
+                <td>{new Date(g.created_at).toLocaleString()}</td>
+                <td><code>{String(g.moderator_id).slice(0, 12)}</code></td>
+                <td className="admin-meta-cell">{g.meta ? JSON.stringify(g.meta) : ''}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      <h4>Hall of Legends ({data.hall_of_legends.length})</h4>
+      {data.hall_of_legends.length === 0 ? <div className="admin-empty">None yet.</div> : (
+        <table className="admin-table">
+          <thead><tr><th>Since</th><th>Pair</th><th>Now</th></tr></thead>
+          <tbody>
+            {data.hall_of_legends.map((h, i) => (
+              <tr key={i}>
+                <td>{new Date(h.achieved_at).toLocaleString()}</td>
+                <td><code>{String(h.user_lo).slice(0, 8)}</code> &amp; <code>{String(h.user_hi).slice(0, 8)}</code></td>
+                <td>{h.current_score}</td>
               </tr>
             ))}
           </tbody>

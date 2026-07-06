@@ -16,6 +16,7 @@ export * from '../../../shared/accountApi';
 export * from '../../../shared/privacyApi';
 export * from '../../../shared/notificationsApi';
 export * from '../../../shared/pushApi';
+export * from '../../../shared/streakApi';
 export * from '../../../shared/premium/plans';
 export * from '../../../shared/premium/features';
 export { createFutureHatClient } from '../../../shared/client';

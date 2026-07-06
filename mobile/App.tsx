@@ -55,6 +55,10 @@ import AdminDashboardScreen from './src/screens/admin/AdminDashboardScreen';
 import AdminUserDetailScreen from './src/screens/admin/AdminUserDetailScreen';
 import ModeratorDashboardScreen from './src/screens/ModeratorDashboardScreen';
 import MailboxScreen from './src/screens/MailboxScreen';
+import StreaksScreen from './src/screens/StreaksScreen';
+import StreakDetailScreen from './src/screens/StreakDetailScreen';
+import StreakInfoScreen, { STREAK_INFO_TITLES } from './src/screens/StreakInfoScreen';
+import HallOfLegendsScreen from './src/screens/HallOfLegendsScreen';
 import AdminGate from './src/components/AdminGate';
 import NotificationsBridge from './src/components/NotificationsBridge';
 
@@ -186,6 +190,10 @@ function RootNavigator() {
               <Stack.Screen name="CallDetail" component={CallDetailScreen} options={{ title: '' }} />
               <Stack.Screen name="ScheduledCalls" component={ScheduledCallsScreen} options={{ title: 'Scheduled calls' }} />
               <Stack.Screen name="CallSettings" component={CallSettingsScreen} options={{ title: 'Call settings' }} />
+              <Stack.Screen name="Streaks" component={StreaksScreen} options={{ title: 'Streaks' }} />
+              <Stack.Screen name="StreakDetail" component={StreakDetailScreen} options={({ route }) => ({ title: route.params?.title || 'Streak' })} />
+              <Stack.Screen name="StreakInfo" component={StreakInfoScreen} options={({ route }) => ({ title: STREAK_INFO_TITLES[route.params?.page ?? 'how'] })} />
+              <Stack.Screen name="HallOfLegends" component={HallOfLegendsScreen} options={{ title: 'Hall of Legends' }} />
             </>
           ) : (
             <Stack.Screen name="Auth" component={AuthScreen} options={{ headerShown: false }} />

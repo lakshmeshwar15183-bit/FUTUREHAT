@@ -34,6 +34,7 @@ import {
   subscribeToCallStatus,
   onAuthChange,
   sendPush,
+  recordStreakActivity,
   type Call,
   type CallType,
   type Profile,
@@ -158,8 +159,13 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
 
   const endActive = useCallback(async () => {
     if (!active) return;
+    const conv = active.conversationId;
     await updateCallStatus(supabase, active.callId, 'ended');
     setActive(null);
+    // Live streak signal (fire-and-forget). The server checks the real call's
+    // connected duration (>15s, answered) itself — a short/unanswered call simply
+    // won't qualify. Never sets a score; the daily job is authoritative.
+    recordStreakActivity(supabase, conv).catch(() => {});
   }, [active]);
 
   return (

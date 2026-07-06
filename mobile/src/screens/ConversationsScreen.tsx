@@ -46,8 +46,12 @@ import {
   getPremiumUserIds,
   getServerPremium,
   FREE_LIMITS,
+  getMyStreaks,
+  processMyStreaks,
+  subscribeStreakChanges,
+  indexStreaksByConversation,
 } from '../lib/shared';
-import type { ConversationSummary, MessageSearchHit } from '../lib/shared';
+import type { ConversationSummary, MessageSearchHit, StreakSummary } from '../lib/shared';
 import {
   getCachedConversations, cacheConversations, getCache, setCache,
   pendingConversationEffects, reconcileIds, mergeEffects,
@@ -91,6 +95,9 @@ export default function ConversationsScreen() {
   const [onlineIds, setOnlineIds] = useState<Set<string>>(new Set());
   const [premiumIds, setPremiumIds] = useState<Set<string>>(new Set());
   const [isPremium, setIsPremium] = useState(false);
+  // Streak emoji per conversation (server-authoritative score → tier). Hydrated
+  // from local cache first (instant/offline), then refreshed in the background.
+  const [streaks, setStreaks] = useState<Record<string, StreakSummary>>({});
   // WhatsApp-style multi-select: a non-empty set puts the list in selection mode
   // and swaps the top bar for a contextual action bar. `overflowOpen` toggles the
   // "⋮" menu of less-common actions.
@@ -180,16 +187,18 @@ export default function ConversationsScreen() {
             // Instant hydrate: list + the pin/mute/hidden flag sets, all from
             // local cache, so the chats AND their badges/order appear offline
             // with zero network wait. The background load() reconciles later.
-            const [cached, pinned, muted, hidden] = await Promise.all([
+            const [cached, pinned, muted, hidden, cachedStreaks] = await Promise.all([
               getCachedConversations(id),
               getCache<string[]>(`${FLAG_KEY.pinned}:${id}`, []),
               getCache<string[]>(`${FLAG_KEY.muted}:${id}`, []),
               getCache<string[]>(`${FLAG_KEY.hidden}:${id}`, []),
+              getCache<StreakSummary[]>(`streaks:${id}`, []),
             ]);
             if (!alive) return;
             if (pinned.length) setPinnedIds(new Set(pinned));
             if (muted.length) setMutedIds(new Set(muted));
             if (hidden.length) setHiddenIds(new Set(hidden));
+            if (cachedStreaks.length) setStreaks(indexStreaksByConversation(cachedStreaks));
             if (cached.length) {
               setItems(cached);
               setLoading(false); // we have something to show — never block on the network
@@ -260,6 +269,16 @@ export default function ConversationsScreen() {
         .catch(() => {});
       getPremiumUserIds(supabase).then((ids) => setPremiumIds(new Set(ids))).catch(() => {});
       getServerPremium(supabase).then(setIsPremium).catch(() => {});
+      // Streaks: finalise any of the caller's pending days (idempotent server-side
+      // catch-up — never computes points on-device), then refresh the authoritative
+      // summaries and rewrite the local cache so the emoji is instant next launch.
+      (async () => {
+        await processMyStreaks(supabase).catch(() => 0);
+        const list = await getMyStreaks(supabase).catch(() => [] as StreakSummary[]);
+        setStreaks(indexStreaksByConversation(list));
+        const u2 = await getCurrentUser(supabase).catch(() => null);
+        if (u2?.id) setCache(`streaks:${u2.id}`, list).catch(() => {});
+      })();
     } catch {
       // keep last known (cached) list on transient errors / offline
     } finally {
@@ -316,6 +335,19 @@ export default function ConversationsScreen() {
     const ch = subscribeToConversationRemovals(supabase, uid, (cid) => dropConversationsLocally([cid]));
     return () => { supabase.removeChannel(ch); };
   }, [uid, dropConversationsLocally]);
+
+  // Realtime: when the authoritative streak score changes (award/penalty/milestone),
+  // refresh the summaries + cache so the chat-list emoji updates without a manual
+  // reload. One debounced channel; cleaned up on unmount (no duplicate subscriptions).
+  useEffect(() => {
+    if (!uid) return;
+    const sub = subscribeStreakChanges(supabase, async () => {
+      const list = await getMyStreaks(supabase).catch(() => [] as StreakSummary[]);
+      setStreaks(indexStreaksByConversation(list));
+      setCache(`streaks:${uid}`, list).catch(() => {});
+    });
+    return () => sub.unsubscribe();
+  }, [uid]);
 
   const lastPreview = (c: ConversationSummary): string => {
     const m = c.lastMessage;
@@ -548,6 +580,9 @@ export default function ConversationsScreen() {
     const selected = selectedIds.has(id);
     const disappearing = (item.conversation.disappear_seconds ?? 0) > 0;
     const locked = chatLock.isLocked(id);
+    // Server-authoritative streak emoji for this pair (empty string when no streak
+    // or score 0). Direct chats only — group chats have no pair streak.
+    const streakEmoji = !isGroup ? (streaks[id]?.tier ?? '') : '';
     return (
     <Pressable
       style={({ pressed }) => [styles.row, selected && styles.rowSelected, pressed && styles.rowPressed]}
@@ -596,6 +631,17 @@ export default function ConversationsScreen() {
             {lastPreview(item)}
           </Text>
           <View style={styles.rowIcons}>
+            {/* Streak tier emoji (server-authoritative). Sits with the right-side
+                indicator cluster, adjacent to the unread badge. Real data only. */}
+            {streakEmoji !== '' && (
+              <Text
+                style={styles.streakEmoji}
+                allowFontScaling={false}
+                accessibilityLabel={`Streak ${streaks[id]?.score ?? ''}`}
+              >
+                {streakEmoji}
+              </Text>
+            )}
             {locked && (
               <Ionicons name="lock-closed" size={13} color={colors.textFaint} style={{ marginLeft: spacing(1) }} />
             )}
@@ -948,6 +994,7 @@ const makeStyles = (colors: Palette) =>
     },
     fabPressed: { backgroundColor: colors.primaryDark },
     rowIcons: { flexDirection: 'row', alignItems: 'center' },
+    streakEmoji: { fontSize: 15, marginLeft: spacing(1) },
     backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
     sheet: {
       backgroundColor: colors.surface,

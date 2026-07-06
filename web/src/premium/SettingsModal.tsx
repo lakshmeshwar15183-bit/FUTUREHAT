@@ -27,8 +27,9 @@ const LegalModal = lazy(() => import('../legal/LegalModal').then((m) => ({ defau
 const DiagnosticsModal = lazy(() => import('../diagnostics/DiagnosticsModal').then((m) => ({ default: m.DiagnosticsModal })));
 const DataExportModal = lazy(() => import('../account/DataExportModal').then((m) => ({ default: m.DataExportModal })));
 const InviteModal = lazy(() => import('../invite/InviteModal').then((m) => ({ default: m.InviteModal })));
+const StreaksPanel = lazy(() => import('../settings/StreaksPanel').then((m) => ({ default: m.StreaksPanel })));
 
-type SubPanel = 'privacy' | 'chats' | 'account' | 'notifications' | 'storage' | 'archived' | 'legal' | 'diagnostics' | 'export' | 'invite';
+type SubPanel = 'privacy' | 'chats' | 'account' | 'notifications' | 'storage' | 'archived' | 'legal' | 'diagnostics' | 'export' | 'invite' | 'streaks';
 
 export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin, onModerator, onMailbox }: {
   onClose: () => void;
@@ -220,6 +221,7 @@ export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin, onModer
         <section className="settings-section">
           <h3>💬 Chats &amp; data</h3>
           <button className="settings-link" onClick={() => setSub('chats')}>Chat settings →</button>
+          <button className="settings-link" onClick={() => setSub('streaks')}>🎏 Streaks →</button>
           <button className="settings-link" onClick={() => setSub('archived')}>Archived chats →</button>
           <button className="settings-link" onClick={() => setSub('storage')}>Storage &amp; data →</button>
           <button className="settings-link" onClick={() => setSub('export')}>Export my data →</button>
@@ -273,6 +275,7 @@ export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin, onModer
         {sub === 'notifications' && <NotificationSettingsModal onClose={() => setSub(null)} />}
         {sub === 'storage' && <StorageSettingsModal onClose={() => setSub(null)} />}
         {sub === 'archived' && <ArchivedChatsModal onClose={() => setSub(null)} />}
+        {sub === 'streaks' && <StreaksPanel onClose={() => setSub(null)} />}
         {sub === 'legal' && <LegalModal onClose={() => setSub(null)} />}
         {sub === 'diagnostics' && <DiagnosticsModal onClose={() => setSub(null)} />}
         {sub === 'export' && <DataExportModal onClose={() => setSub(null)} />}

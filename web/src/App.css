@@ -236,6 +236,10 @@
 .conv-menu button.danger { color: #ef4444; }
 .conv-menu button.danger:hover { background: rgba(239, 68, 68, 0.12); }
 .mute-mark { font-size: 11px; opacity: 0.7; }
+/* Streak tier emoji on the chat row — sits just before the unread badge. When
+   there is no unread badge, margin-left:auto pushes it to the right edge. */
+.streak-mark { font-size: 14px; flex-shrink: 0; margin-left: auto; }
+.streak-mark + .unread-badge { margin-left: 6px; }
 
 .upgrade-pill {
   color: #1a1206 !important;

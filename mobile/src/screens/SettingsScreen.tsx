@@ -10,6 +10,7 @@ import { supabase } from '../lib/supabase';
 import { getCurrentUser, getMyProfile, signOut, getSubscription, isSubscriptionActive, getServerAdmin, getServerModerator, getServerOwner, getMailboxUnseenCount } from '../lib/shared';
 import type { Profile } from '../lib/shared';
 import { getCachedProfile, cacheProfile, getCache, setCache } from '../lib/localCache';
+import { unregisterForPush } from '../lib/notifications';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import { APP_NAME, APP_VERSION, CREDIT } from '../branding';
 import Avatar from '../components/Avatar';
@@ -74,7 +75,9 @@ export default function SettingsScreen() {
       {
         text: 'Sign out',
         style: 'destructive',
-        onPress: () => signOut(supabase),
+        // Drop this device's push token first so the next user on this phone doesn't
+        // inherit the previous user's notifications, then sign out.
+        onPress: async () => { await unregisterForPush().catch(() => {}); await signOut(supabase); },
       },
     ]);
   }
@@ -150,6 +153,7 @@ export default function SettingsScreen() {
       <Group>
         <Row icon="color-palette-outline" label="Appearance & Themes" onPress={() => navigation.navigate('Appearance')} />
         <Row icon="chatbubble-ellipses-outline" label="Chats" onPress={() => navigation.navigate('ChatSettings')} />
+        <Row icon="flame-outline" label="Streaks" onPress={() => navigation.navigate('Streaks')} />
         <Row icon="star-outline" label="Starred messages" onPress={() => navigation.navigate('Starred')} />
         <Row icon="folder-outline" label="Storage & Data" onPress={() => navigation.navigate('StorageData')} />
         <Row icon="archive-outline" label="Archived chats" onPress={() => navigation.navigate('ArchivedChats')} />

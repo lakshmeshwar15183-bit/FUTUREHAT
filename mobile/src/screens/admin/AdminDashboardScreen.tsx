@@ -18,7 +18,7 @@ import {
   adminGlobalSearch, adminAuditLog, adminDeleteMessage, adminDeleteCommunity,
   getFeatureFlags, adminSetFeatureFlag, adminSetAppEnabled,
   getActiveAnnouncements, adminSendAnnouncement, adminRemoveCurrentAnnouncement,
-  adminSetReportStatus,
+  adminSetReportStatus, getStreakAudit,
 } from '../../lib/shared';
 import type {
   AdminUserSummary, AdminStats, AdminCallStats, AdminMessageStats, AdminDbHealth,
@@ -31,7 +31,7 @@ import type { RootStackParamList } from '../../navigation/types';
 type Nav = NativeStackNavigationProp<RootStackParamList, 'Admin'>;
 type Tab =
   | 'overview' | 'users' | 'reports' | 'tickets' | 'calls' | 'messages'
-  | 'search' | 'health' | 'flags' | 'app' | 'audit';
+  | 'search' | 'health' | 'flags' | 'app' | 'audit' | 'streaks';
 
 interface ReportRow { id: string; reporter_id: string; target_type: string; target_id: string; reason: string; details: string | null; status: string; created_at: string; }
 interface TicketRow { id: string; user_id: string; kind: string; subject: string; body: string; status: string; created_at: string; device_info: string | null; }
@@ -118,6 +118,7 @@ export default function AdminDashboardScreen() {
     { id: 'flags', label: 'Feature Flags', ownerOnly: true },
     { id: 'app', label: 'App', ownerOnly: true },
     { id: 'audit', label: 'Audit Log', ownerOnly: true },
+    { id: 'streaks', label: 'Streaks' },
   ];
 
   if (allowed === null) return <View style={styles.center}><ActivityIndicator color={colors.primary} /></View>;
@@ -158,6 +159,7 @@ export default function AdminDashboardScreen() {
       {tab === 'flags' && isOwner && <FlagsTab colors={colors} styles={styles} />}
       {tab === 'app' && isOwner && <AppTab colors={colors} styles={styles} />}
       {tab === 'audit' && isOwner && <AuditTab colors={colors} styles={styles} />}
+      {tab === 'streaks' && <StreakAuditTab colors={colors} styles={styles} />}
 
       {tab === 'reports' && (
         <FlatList
@@ -564,6 +566,58 @@ function AuditTab({ colors, styles }: { colors: Palette; styles: Styles }) {
         </View>
       )}
     />
+  );
+}
+
+// ── Streak audit tab (admin, READ-ONLY) ───────────────────────────────────────
+// Surfaces milestone/reward history, moderator rewards, and Hall of Legends via the
+// admin-gated admin_streak_audit() RPC. Intentionally has NO score-write controls —
+// streak scores are server-authoritative and not admin-editable.
+function StreakAuditTab({ colors, styles }: { colors: Palette; styles: Styles }) {
+  const [data, setData] = useState<{ milestones: any[]; mod_grants: any[]; hall_of_legends: any[]; recent_events: any[] } | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => { getStreakAudit(supabase, 200).then(setData).catch((e) => setErr(e.message)); }, []);
+  if (err) return <Text style={styles.warn}>{err}</Text>;
+  if (!data) return <View style={styles.center}><ActivityIndicator color={colors.primary} /></View>;
+  const kindLabel = (k: string) => k === 'diamond' ? '💎 Diamond' : k === 'hall_of_legends' ? '🏆 Hall of Legends' : '🛡 Mod milestone';
+  return (
+    <ScrollView contentContainerStyle={styles.listPad}>
+      <Text style={styles.subhead}>Milestones & rewards ({data.milestones.length})</Text>
+      {data.milestones.length === 0 && <Text style={styles.empty}>None yet.</Text>}
+      {data.milestones.map((m, i) => (
+        <View key={i} style={styles.compactRow}>
+          <Text style={styles.tag}>{kindLabel(m.kind)}</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.rowBody} numberOfLines={1}>score {m.achieved_score} · now {m.current_score}{m.reward_granted ? ' · rewarded' : ''}</Text>
+            <Text style={styles.rowMeta}>{new Date(m.achieved_at).toLocaleString()}</Text>
+          </View>
+        </View>
+      ))}
+
+      <Text style={styles.subhead}>Moderator rewards ({data.mod_grants.length})</Text>
+      {data.mod_grants.length === 0 && <Text style={styles.empty}>None yet.</Text>}
+      {data.mod_grants.map((g, i) => (
+        <View key={i} style={styles.compactRow}>
+          <Text style={styles.tag}>🛡</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.rowBody} numberOfLines={1}>moderator {String(g.moderator_id).slice(0, 8)}</Text>
+            <Text style={styles.rowMeta}>{new Date(g.created_at).toLocaleString()}</Text>
+          </View>
+        </View>
+      ))}
+
+      <Text style={styles.subhead}>Hall of Legends ({data.hall_of_legends.length})</Text>
+      {data.hall_of_legends.length === 0 && <Text style={styles.empty}>None yet.</Text>}
+      {data.hall_of_legends.map((h, i) => (
+        <View key={i} style={styles.compactRow}>
+          <Text style={styles.tag}>🏆</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.rowBody} numberOfLines={1}>{String(h.user_lo).slice(0, 8)} & {String(h.user_hi).slice(0, 8)} · now {h.current_score}</Text>
+            <Text style={styles.rowMeta}>{new Date(h.achieved_at).toLocaleString()}</Text>
+          </View>
+        </View>
+      ))}
+    </ScrollView>
   );
 }
 

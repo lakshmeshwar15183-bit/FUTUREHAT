@@ -1,5 +1,5 @@
 // FUTUREHAT mobile — navigation param list shared across screens.
-import type { UUID } from '../lib/shared';
+import type { UUID, CallHistoryItem } from '../lib/shared';
 
 export type RootStackParamList = {
   Auth: undefined;
@@ -31,7 +31,16 @@ export type RootStackParamList = {
   AdminUserDetail: { userId: string; isOwner: boolean };
   Moderator: undefined;
   Mailbox: undefined;
-  CallDetail: { conversationId: UUID; peerId?: UUID; title: string; username?: string; avatarUrl?: string | null };
+  // `calls` carries the specific call records for the tapped history row so the
+  // detail screen renders that call's real metadata instantly (offline-first)
+  // instead of generic contact info. Optional so deep-links still work (the
+  // screen re-fetches by conversation when it's absent).
+  CallDetail: { conversationId: UUID; peerId?: UUID; title: string; username?: string; avatarUrl?: string | null; calls?: CallHistoryItem[] };
   ScheduledCalls: undefined;
   CallSettings: undefined;
+  // Streaks (0029): the hub, one pair's detail, the info pages, and Hall of Legends.
+  Streaks: undefined;
+  StreakDetail: { conversationId: UUID; title: string };
+  StreakInfo: { page: 'how' | 'qualifying' | 'levels' | 'rewards' | 'penalties' | 'restrictions' | 'moderator' };
+  HallOfLegends: undefined;
 };

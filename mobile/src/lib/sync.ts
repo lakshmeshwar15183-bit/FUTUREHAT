@@ -35,6 +35,7 @@ import {
   setChatSettings,
   setPrivacy,
   removeRecentContact,
+  recordStreakActivity,
 } from './shared';
 import {
   getOutbox,
@@ -105,6 +106,11 @@ export async function flushOutbox(): Promise<void> {
           if (message) await upsertCachedMessage(item.conversationId, message);
           await removeFromOutbox(item.tempId);
           sentListeners.forEach((l) => l(item, message?.id ?? item.tempId));
+          // Live streak signal (fire-and-forget): the SERVER re-derives whether this
+          // actually qualifies from the real message tables — this never sets a
+          // score, it only keeps the "waiting on peer / done today" UI fresh. The
+          // authoritative +1 is finalised by the daily job regardless of this call.
+          recordStreakActivity(supabase, item.conversationId).catch(() => {});
         } else {
           await updateOutboxItem(item.tempId, { attempts: (item.attempts ?? 0) + 1 });
         }

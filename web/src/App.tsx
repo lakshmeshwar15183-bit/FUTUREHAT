@@ -21,7 +21,8 @@ import {
   getBlockedIds, blockUser, unblockUser, submitReport,
 } from '@shared/supportApi';
 import { FREE_LIMITS } from '@shared/premium/features';
-import type { ConversationSummary, Profile } from '@shared/types';
+import { getMyStreaks, processMyStreaks, subscribeStreakChanges, indexStreaksByConversation } from '@shared/streakApi';
+import type { ConversationSummary, Profile, StreakSummary } from '@shared/types';
 import { ChatView } from './ChatView';
 import { StatusStrip } from './status/StatusStrip';
 import { WebNotifications } from './lib/WebNotificationsBridge';
@@ -95,6 +96,8 @@ function AppInner() {
   const [showMenu, setShowMenu] = useState(false); // sidebar "⋮ More" overflow menu
   const [mutedIds, setMutedIds] = useState<Set<string>>(new Set());
   const [blockedIds, setBlockedIds] = useState<Set<string>>(new Set());
+  // Server-authoritative streak summary per conversation → chat-row emoji.
+  const [streaks, setStreaks] = useState<Record<string, StreakSummary>>({});
 
   const mountedRef = useRef(true);
   useEffect(() => {
@@ -105,7 +108,25 @@ function AppInner() {
     getChatLockSettings(supabase).then((s) => { if (mountedRef.current) setLockSettings(s); }).catch(() => {});
     getMutedIds(supabase).then((ids) => { if (mountedRef.current) setMutedIds(new Set(ids)); }).catch(() => {});
     getBlockedIds(supabase).then((ids) => { if (mountedRef.current) setBlockedIds(new Set(ids)); }).catch(() => {});
+    // Streaks: finalise any pending days (idempotent server-side; never computes
+    // points on the client), then load the authoritative summaries for the emoji.
+    (async () => {
+      await processMyStreaks(supabase).catch(() => 0);
+      const list = await getMyStreaks(supabase).catch(() => [] as StreakSummary[]);
+      if (mountedRef.current) setStreaks(indexStreaksByConversation(list));
+    })();
     return () => { mountedRef.current = false; };
+  }, []);
+
+  // Realtime: refresh the streak emoji when the authoritative score changes
+  // (award/penalty/milestone). One debounced channel, cleaned up on unmount.
+  useEffect(() => {
+    const sub = subscribeStreakChanges(supabase, () => {
+      getMyStreaks(supabase)
+        .then((list) => { if (mountedRef.current) setStreaks(indexStreaksByConversation(list)); })
+        .catch(() => {});
+    });
+    return () => sub.unsubscribe();
   }, []);
 
   async function loadConversations() {
@@ -548,6 +569,11 @@ function AppInner() {
                     </div>
                     <div className="conversation-bottom">
                       <div className="conversation-preview">{previewText(conv)}</div>
+                      {/* Server-authoritative streak emoji (direct chats only), next
+                          to the unread badge. Real data — empty when there's no streak. */}
+                      {conv.conversation.type !== 'group' && streaks[id]?.tier && (
+                        <span className="streak-mark" title={`Streak ${streaks[id].score}`}>{streaks[id].tier}</span>
+                      )}
                       {conv.unreadCount > 0 && <span className="unread-badge">{conv.unreadCount > 99 ? '99+' : conv.unreadCount}</span>}
                     </div>
                   </div>

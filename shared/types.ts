@@ -510,3 +510,70 @@ export interface AdminConversationView {
     is_deleted: boolean; created_at: string; edited_at: string | null;
   }>;
 }
+
+// ── Streaks (0029) ──────────────────────────────────────────────────────────
+// Relationship streaks between the two users of a direct conversation. Scores,
+// rewards, roles and milestones are SERVER-AUTHORITATIVE (see supabase/migrations/
+// 0029_streaks.sql); the client only ever READS these and mirrors streak_tier().
+
+export type StreakMilestoneKind = 'diamond' | 'mod_eligible' | 'hall_of_legends';
+
+// One of the caller's streaks, from get_my_streaks(). Drives the chat-list emoji.
+export interface StreakSummary {
+  streak_id: UUID;
+  conversation_id: UUID;
+  score: number;
+  tier: string;                 // emoji derived from score by the DB (mirror below)
+  successful_days: number;
+  peer_id: UUID;
+  peer_username: string | null;
+  peer_name: string | null;
+  peer_avatar: string | null;
+  completed_today: boolean;
+  i_qualified_today: boolean;
+  peer_qualified_today: boolean;
+}
+
+// One score-change ledger row (streak_events) — the Streak History.
+export interface StreakEvent {
+  day: string | null;
+  delta: number;
+  old_score: number;
+  new_score: number;
+  reason: string;               // 'daily_award' | 'missed_penalty' | 'milestone'
+  created_at: string;
+}
+
+export interface StreakMilestoneRow {
+  kind: StreakMilestoneKind;
+  achieved_at: string;
+  achieved_score: number;
+  reward_granted: boolean;
+  meta: Record<string, unknown>;
+}
+
+// get_streak() detail payload for one pair.
+export interface StreakDetail {
+  streak: {
+    streak_id: UUID;
+    conversation_id: UUID;
+    score: number;
+    tier: string;
+    successful_days: number;
+    last_awarded_day: string | null;
+    created_at: string;
+  } | null;
+  milestones: StreakMilestoneRow[];
+  events: StreakEvent[];
+}
+
+// One legendary pair from get_hall_of_legends().
+export interface HallOfLegendsEntry {
+  streak_id: UUID;
+  achieved_at: string;
+  achieved_score: number;
+  current_score: number;
+  current_tier: string;
+  user_a_id: UUID; user_a_username: string | null; user_a_name: string | null; user_a_avatar: string | null;
+  user_b_id: UUID; user_b_username: string | null; user_b_name: string | null; user_b_avatar: string | null;
+}
