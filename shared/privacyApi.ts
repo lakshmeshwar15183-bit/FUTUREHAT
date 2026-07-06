@@ -4,6 +4,7 @@
 // enforcement of cross-user visibility (e.g. hiding last-seen from others) is a
 // follow-up RLS/view task noted in the security review.
 import type { SupabaseClient } from '@supabase/supabase-js';
+import type { StatusAudience, UUID } from './types.js';
 import { getPreferences, updatePreferences } from './premiumApi.js';
 
 export type Visibility = 'everyone' | 'contacts' | 'nobody';
@@ -54,6 +55,34 @@ export async function setPrivacy(client: SupabaseClient, patch: Partial<PrivacyS
   const prefs = await getPreferences(client);
   const extra = extraOf(prefs);
   const next = { ...extra, privacy: { ...DEFAULT_PRIVACY, ...(extra.privacy ?? {}), ...patch } };
+  return updatePreferences(client, { extra: next } as any);
+}
+
+// ── Status audience (WhatsApp-style privacy default) ─────────────────────────
+// The user's default audience for new statuses + the member list for the
+// Except / Only-Share-With modes. Persisted in the existing user_preferences
+// .extra jsonb bag (namespaced `statusAudience`), so no new table is needed.
+// Per-post enforcement is snapshotted server-side into public.status_audience.
+export interface StatusAudiencePref {
+  audience: StatusAudience;
+  memberIds: UUID[];
+}
+
+export const DEFAULT_STATUS_AUDIENCE: StatusAudiencePref = { audience: 'everyone', memberIds: [] };
+
+export async function getStatusAudiencePref(client: SupabaseClient): Promise<StatusAudiencePref> {
+  const prefs = await getPreferences(client);
+  const saved = extraOf(prefs).statusAudience ?? {};
+  return { ...DEFAULT_STATUS_AUDIENCE, ...saved };
+}
+
+export async function setStatusAudiencePref(client: SupabaseClient, patch: Partial<StatusAudiencePref>) {
+  const prefs = await getPreferences(client);
+  const extra = extraOf(prefs);
+  const next = {
+    ...extra,
+    statusAudience: { ...DEFAULT_STATUS_AUDIENCE, ...(extra.statusAudience ?? {}), ...patch },
+  };
   return updatePreferences(client, { extra: next } as any);
 }
 

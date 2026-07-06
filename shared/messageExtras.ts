@@ -50,8 +50,8 @@ export async function hideMessageForMe(client: SupabaseClient, messageId: UUID):
 }
 
 /** Conversation ids this user has "deleted for me" (removed from their list).
- *  Free for everyone — backed by deleted_conversations (0016), NOT the premium
- *  hidden_conversations table. Degrades to [] if the migration isn't applied. */
+ *  Free for everyone — backed by deleted_conversations (0016).
+ *  Degrades to [] if the migration isn't applied. */
 export async function getDeletedConversationIds(client: SupabaseClient): Promise<UUID[]> {
   const { data } = await client.from('deleted_conversations').select('conversation_id');
   return (data ?? []).map((r: any) => r.conversation_id);
@@ -64,10 +64,6 @@ export async function getDeletedConversationIds(client: SupabaseClient): Promise
  * conversation from the list via deleted_conversations. The other participant
  * keeps their full copy. Idempotent; upserts tolerate re-running. Returns the
  * first error encountered, if any.
- *
- * NOTE: this deliberately uses deleted_conversations (ungated), NOT the premium
- * hidden_conversations table — "Delete for me" is a basic action, whereas "Hide
- * chat" is a separate premium privacy feature.
  */
 export async function deleteConversationForMe(
   client: SupabaseClient,

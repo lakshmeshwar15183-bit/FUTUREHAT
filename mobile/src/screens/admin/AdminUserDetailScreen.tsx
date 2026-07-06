@@ -17,6 +17,7 @@ import {
   adminBanUser, adminSuspendUser, adminRestoreUser, adminDisableUser, adminLockUser,
   adminVerifyUser, adminForceLogout, adminDeleteAccount, adminSetRole,
   adminGrantPremium, adminRevokePremium, adminRemoveDevice,
+  assignModerator, removeModerator,
 } from '../../lib/shared';
 import type { AdminUserDetail, PremiumDuration } from '../../lib/shared';
 import InputModal from '../../components/InputModal';
@@ -82,7 +83,13 @@ export default function AdminUserDetailScreen() {
     );
   }
 
-  const protectedOwner = !!u.owner && !isOwner; // admins cannot touch an owner
+  // The permanent OWNER account is absolutely protected: no one (not even the
+  // Owner viewing their own account) may ban/suspend/disable/lock/force-logout/
+  // delete/demote/un-verify/manage it. When the target is an owner we replace all
+  // management controls with a clean read-only "Owner account — protected" state.
+  // The server (0013 _guard_owner_target + 0026 _guard_protect_owner) enforces the
+  // same rule regardless of what the client sends.
+  const protectedOwner = !!u.owner;
   const disabled = busy || protectedOwner;
 
   return (
@@ -96,6 +103,7 @@ export default function AdminUserDetailScreen() {
               <Text style={styles.name} numberOfLines={1}>{u.display_name || 'Unnamed'}</Text>
               {u.verified && <Ionicons name="checkmark-circle" size={16} color={colors.primary} />}
               {u.owner && <Text style={styles.ownerBadge}>OWNER</Text>}
+              {u.role === 'moderator' && <Text style={styles.modBadge}>🛡 MOD</Text>}
               {u.premium && <Text style={styles.premiumBadge}>FUTUREHAT+</Text>}
             </View>
             <Text style={styles.sub}>@{u.username || '—'} · {u.role}</Text>
@@ -103,7 +111,18 @@ export default function AdminUserDetailScreen() {
           <Text style={[styles.status, statusStyle(u.account_status, colors)]}>{u.account_status}</Text>
         </View>
 
-        {protectedOwner && <Text style={styles.warn}>This is an Owner account — only the Owner can modify it.</Text>}
+        {protectedOwner && (
+          <View style={styles.protectedCard}>
+            <Ionicons name="shield-checkmark" size={20} color={colors.primary} />
+            <View style={{ flex: 1, marginLeft: spacing(2.5) }}>
+              <Text style={styles.protectedTitle}>Owner account — protected</Text>
+              <Text style={styles.protectedBody}>
+                This is the permanent FUTUREHAT Owner. It cannot be banned, suspended, disabled,
+                locked, logged out, deleted, demoted, un-verified, or otherwise modified.
+              </Text>
+            </View>
+          </View>
+        )}
         {msg && <Text style={styles.toast}>{msg}</Text>}
 
         {/* Key/value facts */}
@@ -118,6 +137,8 @@ export default function AdminUserDetailScreen() {
           {u.suspended_until ? <KV label="Suspended until" value={fmt(u.suspended_until)} colors={colors} /> : null}
         </View>
 
+        {/* Management controls — hidden entirely for the protected Owner account. */}
+        {!protectedOwner && (<>
         {/* Account actions */}
         <Group title="Account" colors={colors}>
           <ActionBtn label="Ban" danger disabled={disabled} onPress={() => setPrompt('ban')} colors={colors} />
@@ -160,17 +181,32 @@ export default function AdminUserDetailScreen() {
         {/* Role */}
         <Group title="Role" colors={colors}>
           <ActionBtn label="Demote to User" disabled={disabled} onPress={() => act(() => adminSetRole(supabase, u.id, 'user'), 'Set: User')} colors={colors} />
-          <ActionBtn label="Assign Moderator" disabled={disabled} onPress={() => act(() => adminSetRole(supabase, u.id, 'moderator'), 'Set: Moderator')} colors={colors} />
-          <ActionBtn
-            label="Assign Admin"
-            disabled={disabled || !isOwner}
-            onPress={() => act(() => adminSetRole(supabase, u.id, 'admin'), 'Set: Admin')}
-            colors={colors}
-          />
-          {!isOwner && <Text style={styles.hint}>Only the Owner can manage Admins.</Text>}
+          {u.role === 'moderator' ? (
+            <ActionBtn
+              label="Remove Moderator" danger disabled={disabled}
+              onPress={() => confirmThen(
+                'Remove Moderator?',
+                `${u.display_name || 'This user'} will be notified and lose the Moderator Dashboard.`,
+                () => removeModerator(supabase, u.id), 'Moderator removed', true,
+              )}
+              colors={colors}
+            />
+          ) : (
+            <ActionBtn
+              label="Assign Moderator" disabled={disabled}
+              onPress={() => confirmThen(
+                'Assign Moderator?',
+                `Appoint ${u.display_name || 'this user'} as an official FUTUREHAT Moderator? They will be notified and gain the Moderator Dashboard.`,
+                () => assignModerator(supabase, u.id), 'Moderator assigned',
+              )}
+              colors={colors}
+            />
+          )}
+          {/* Admin is permanent (single hardcoded owner/admin) — never assignable via the app. */}
         </Group>
+        </>)}
 
-        {/* Devices */}
+        {/* Devices (read-only for the protected Owner — the Remove button is disabled) */}
         <Group title={`Devices (${u.devices.length})`} colors={colors} column>
           {u.devices.length === 0 && <Text style={styles.hint}>No registered devices.</Text>}
           {u.devices.map((d) => (
@@ -314,9 +350,13 @@ const makeStyles = (colors: Palette) =>
     name: { color: colors.text, fontSize: font.heading, fontWeight: '700' },
     sub: { color: colors.textMuted, fontSize: font.small, marginTop: 2 },
     ownerBadge: { color: colors.accentPlusText, fontSize: font.tiny, fontWeight: '800' },
+    modBadge: { color: '#fff', backgroundColor: '#3b82f6', fontSize: 9, fontWeight: '800', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4, overflow: 'hidden' },
     premiumBadge: { color: colors.accentPlusText, fontSize: font.tiny, fontWeight: '700' },
     status: { fontSize: font.small, fontWeight: '700', textTransform: 'capitalize' },
     warn: { color: colors.danger, fontSize: font.small, paddingHorizontal: spacing(4), paddingTop: spacing(3) },
+    protectedCard: { flexDirection: 'row', alignItems: 'flex-start', marginHorizontal: spacing(4), marginTop: spacing(3), padding: spacing(3.5), borderRadius: radius.md, backgroundColor: colors.primary + '14', borderWidth: StyleSheet.hairlineWidth, borderColor: colors.primary + '55' },
+    protectedTitle: { color: colors.text, fontSize: font.body, fontWeight: '800' },
+    protectedBody: { color: colors.textMuted, fontSize: font.small, marginTop: 2, lineHeight: 18 },
     toast: { color: colors.textMuted, fontSize: font.small, paddingHorizontal: spacing(4), paddingTop: spacing(2) },
     kv: { backgroundColor: colors.surface, marginTop: spacing(3), paddingHorizontal: spacing(4), paddingVertical: spacing(2) },
     hint: { color: colors.textFaint, fontSize: font.tiny, marginTop: spacing(1) },

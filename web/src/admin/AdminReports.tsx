@@ -39,10 +39,23 @@ export function AdminReports({ onPending }: { onPending?: (n: number) => void })
   const [convo, setConvo] = useState<AdminConversationView | null>(null);
   const [jumpTo, setJumpTo] = useState<string | null>(null);
 
+  // The "All" tab is the admin's ACTIVE work queue (open + reviewing), NOT a dump
+  // of every historical report — otherwise a report just Resolved/Dismissed stays
+  // mixed in with the ones still needing action (the reported bug). Completed
+  // reports are seen only under their own dedicated Resolved / Dismissed tabs.
+  const showsStatus = useCallback(
+    (status: ReportStatus): boolean =>
+      filter === 'all' ? status === 'open' || status === 'reviewing' : status === filter,
+    [filter],
+  );
+
   const load = useCallback(async () => {
     try {
       const rows = await adminListReports(supabase, filter === 'all' ? undefined : filter, 300);
-      setReports(rows);
+      const visible = filter === 'all'
+        ? rows.filter((r) => r.status === 'open' || r.status === 'reviewing')
+        : rows;
+      setReports(visible);
       setError(null);
     } catch (e: any) {
       setError(e?.message ?? 'Failed to load reports. Apply migration 0017.');
@@ -64,6 +77,8 @@ export function AdminReports({ onPending }: { onPending?: (n: number) => void })
     return () => { supabase.removeChannel(ch); };
   }, [load]);
 
+  // Non-status operations (delete message, warn, open conversation) — these don't
+  // move the report through its lifecycle, so a plain run + refetch is fine.
   async function act(id: string, fn: () => Promise<void>) {
     setBusy(id);
     try { await fn(); await load(); }
@@ -71,13 +86,41 @@ export function AdminReports({ onPending }: { onPending?: (n: number) => void })
     finally { setBusy(null); }
   }
 
+  // Optimistically move a report to `newStatus`: update it in place, or drop it
+  // from the active queue immediately if it no longer belongs under the current
+  // filter (Dismiss → dismissed, Resolve/Ban → resolved both leave the queue).
+  // Persist via the audited RPC; roll back + surface the error on failure. The UI
+  // updates instantly — no refetch round-trip, and the report never lingers.
+  const applyStatus = useCallback(
+    async (r: AdminReport, newStatus: ReportStatus, run: () => Promise<void>) => {
+      const snapshot = reports;
+      setBusy(r.report_id); setError(null);
+      setReports((list) =>
+        showsStatus(newStatus)
+          ? list.map((x) => (x.report_id === r.report_id ? { ...x, status: newStatus } : x))
+          : list.filter((x) => x.report_id !== r.report_id),
+      );
+      try {
+        await run();
+        try { onPending?.(await adminReportsPendingCount(supabase)); } catch { /* badge best-effort */ }
+      } catch (e: any) {
+        setReports(snapshot);           // rollback the optimistic change
+        setError(e?.message ?? 'Action failed');
+      } finally {
+        setBusy(null);
+      }
+    },
+    [reports, showsStatus, onPending],
+  );
+
   const setStatus = (r: AdminReport, status: ReportStatus) =>
-    act(r.report_id, () => adminSetReportStatus(supabase, r.report_id, status));
+    applyStatus(r, status, () => adminSetReportStatus(supabase, r.report_id, status));
 
   const banUser = (r: AdminReport) => {
     if (!r.reported_user_id) return;
     if (!window.confirm(`Ban ${personLabel(r.reported_name, r.reported_username, r.reported_user_id)}?`)) return;
-    act(r.report_id, async () => {
+    // Banning resolves the report → it leaves the active queue immediately.
+    applyStatus(r, 'resolved', async () => {
       await adminSetAccountStatus(supabase, r.reported_user_id!, 'banned', `report ${r.report_id}`);
       await adminSetReportStatus(supabase, r.report_id, 'resolved');
     });

@@ -18,4 +18,19 @@ function sendMessage(client, conversationId, content, type, mediaUrl, replyTo, i
 sendMessage.__calls = calls;
 sendMessage.__setNextResult = (r) => { nextResult = r; };
 sendMessage.__reset = () => { calls.length = 0; nextResult = null; };
-module.exports = { sendMessage };
+
+// Recent-contacts removal boundary. The action-queue handler in sync.ts calls
+// this shared fn; we record calls so a test can prove "remove syncs exactly once
+// on reconnect" and — crucially — that it never routes through a message/
+// conversation deletion path (those spies stay at zero).
+const removeRecentCalls = [];
+let removeRecentResult = { error: null };
+function removeRecentContact(client, contactId) {
+  removeRecentCalls.push({ contactId, at: removeRecentCalls.length });
+  return Promise.resolve(removeRecentResult);
+}
+removeRecentContact.__calls = removeRecentCalls;
+removeRecentContact.__setNextResult = (r) => { removeRecentResult = r; };
+removeRecentContact.__reset = () => { removeRecentCalls.length = 0; removeRecentResult = { error: null }; };
+
+module.exports = { sendMessage, removeRecentContact };

@@ -37,7 +37,12 @@
 .chat-title {
   font-weight: 600;
   font-size: 16px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
+/* Disappearing-messages timer indicator in the chat header (WhatsApp parity). */
+.chat-disappear-mark { font-size: 13px; opacity: 0.85; }
 
 .chat-subtitle {
   font-size: 13px;
@@ -77,6 +82,15 @@
 }
 /* New sender / new group gets a gap above; continuations stack tightly (WhatsApp). */
 .message:not(.grouped) { margin-top: 10px; }
+
+/* System notice (0027): centered WhatsApp-style info pill (disappearing timer). */
+.system-notice { display: flex; justify-content: center; margin: 12px 0; padding: 0 24px; }
+.system-notice-pill {
+  background: var(--fh-panel); color: var(--fh-muted);
+  font-size: 12px; line-height: 1.4; text-align: center;
+  padding: 6px 14px; border-radius: 10px; box-shadow: var(--fh-shadow-soft);
+  max-width: 80%;
+}
 
 /* Day separator pill (Today / Yesterday / weekday). */
 .day-sep { display: flex; justify-content: center; margin: 16px 0 10px; }

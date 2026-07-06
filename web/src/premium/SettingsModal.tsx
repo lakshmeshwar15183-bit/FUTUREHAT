@@ -1,12 +1,15 @@
 // FUTUREHAT — Settings: appearance, privacy, subscription, and app info.
 // Premium-only options are gated inline; selecting one while free opens upgrade.
 
-import { useState, useCallback, lazy, Suspense } from 'react';
+import { useState, useCallback, useEffect, lazy, Suspense } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../AuthContext';
 import { usePremium } from '../PremiumContext';
 import { useUpgrade } from './UpgradeProvider';
 import { PremiumBadge } from './PremiumBadge';
+import { supabase } from '../supabase';
+import { getServerModerator, getMailboxUnseenCount } from '@shared/adminApi';
+import '../moderator/ModeratorDashboard.css';
 import { THEMES, FONTS, BUBBLES, WALLPAPERS, APP_ICONS } from '../theme/themes';
 import { modalBackdrop, modalPanel } from '../motion';
 import { APP_VERSION, OWNER } from '../branding';
@@ -27,16 +30,25 @@ const InviteModal = lazy(() => import('../invite/InviteModal').then((m) => ({ de
 
 type SubPanel = 'privacy' | 'chats' | 'account' | 'notifications' | 'storage' | 'archived' | 'legal' | 'diagnostics' | 'export' | 'invite';
 
-export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin }: {
+export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin, onModerator, onMailbox }: {
   onClose: () => void;
   onEditProfile: () => void;
   onHelp: () => void;
   onAdmin?: () => void;
+  onModerator?: () => void;
+  onMailbox?: () => void;
 }) {
   const { profile } = useAuth();
-  const { isPremium, isAdmin, preferences, setPreference } = usePremium();
+  const { isPremium, isAdmin, isOwner, preferences, setPreference } = usePremium();
   const { open: openUpgrade } = useUpgrade();
   const [sub, setSub] = useState<SubPanel | null>(null);
+  const [isModerator, setIsModerator] = useState(false);
+  const [unseenMail, setUnseenMail] = useState(0);
+
+  useEffect(() => {
+    getServerModerator(supabase).then(setIsModerator).catch(() => {});
+    getMailboxUnseenCount(supabase).then(setUnseenMail).catch(() => {});
+  }, []);
   // Escape closes the open sub-panel first, then the Settings modal itself.
   useEscapeToClose(useCallback(() => (sub ? setSub(null) : onClose()), [sub, onClose]));
 
@@ -73,6 +85,7 @@ export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin }: {
               <div className="settings-profile-name">
                 {profile?.display_name || 'FUTUREHAT user'}
                 {isPremium && <PremiumBadge compact />}
+                {isModerator && !isAdmin && <span className="mod-badge" title="FUTUREHAT Moderator">🛡 MOD</span>}
                 {isAdmin && <span className="dev-badge">DEV</span>}
               </div>
               {profile?.username && <div className="settings-profile-handle">@{profile.username}</div>}
@@ -221,7 +234,20 @@ export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin }: {
           </button>
           <button className="settings-link" onClick={() => setSub('legal')}>Terms · Privacy · Guidelines →</button>
           <button className="settings-link" onClick={() => setSub('diagnostics')}>Diagnostics &amp; app info →</button>
-          {isAdmin && onAdmin && (
+          {onMailbox && (
+            <button className="settings-link" onClick={() => { onClose(); onMailbox(); }}>
+              📬 Mailbox
+              {unseenMail > 0 && <span className="mailbox-count">{unseenMail}</span>} →
+            </button>
+          )}
+          {/* Moderator dashboard: OWNER + moderators (getServerModerator is true for
+              the owner too). Admin dashboard: OWNER only (the single permanent owner). */}
+          {isModerator && onModerator && (
+            <button className="settings-link" onClick={() => { onClose(); onModerator(); }}>
+              🛡️ Moderator dashboard →
+            </button>
+          )}
+          {isOwner && onAdmin && (
             <button className="settings-link" onClick={() => { onClose(); onAdmin(); }}>
               🛡️ Admin dashboard →
             </button>

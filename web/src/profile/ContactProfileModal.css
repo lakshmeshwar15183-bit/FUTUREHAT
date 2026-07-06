@@ -41,6 +41,12 @@
   position: absolute; bottom: 8px; right: 8px; width: 18px; height: 18px;
   border-radius: 50%; background: #22c55e; border: 3px solid var(--fh-panel);
 }
+/* Disappearing-messages badge on the avatar (WhatsApp parity) — subtle clock. */
+.contact-disappear-badge {
+  position: absolute; bottom: 4px; left: 6px; width: 26px; height: 26px;
+  border-radius: 50%; background: var(--fh-accent); border: 3px solid var(--fh-panel);
+  display: grid; place-items: center; font-size: 13px;
+}
 .contact-name { font-size: 22px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
 .contact-badge { color: #f5a623; font-size: 16px; }
 .contact-presence { font-size: 14px; color: var(--fh-muted); margin-top: 4px; }
@@ -58,6 +64,33 @@
 .contact-field { padding: 12px 14px; border-radius: 12px; background: var(--fh-elevated); margin-bottom: 8px; }
 .contact-field-val { font-size: 15px; }
 .contact-field-label { font-size: 12px; color: var(--fh-muted); margin-top: 2px; }
+
+/* ── Disappearing messages (0022) ────────────────────────────────────────── */
+.contact-disappear { padding: 4px 16px 8px; }
+.contact-disappear-head {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 14px; border-radius: 12px; background: var(--fh-elevated);
+}
+.contact-disappear-icon { font-size: 20px; }
+.contact-disappear-text { flex: 1; min-width: 0; }
+.contact-disappear-title { font-size: 15px; }
+.contact-disappear-hint { font-size: 12px; color: var(--fh-muted); margin-top: 2px; }
+.contact-disappear-select {
+  background: var(--fh-panel); color: var(--fh-text);
+  border: 1px solid var(--fh-border); border-radius: 10px;
+  padding: 7px 10px; font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.contact-disappear-select:focus { outline: none; border-color: var(--fh-accent); }
+
+/* ── Chat lock (0027) button ─────────────────────────────────────────────── */
+.contact-lock-btn {
+  background: var(--fh-panel); color: var(--fh-text);
+  border: 1px solid var(--fh-border); border-radius: 10px;
+  padding: 7px 14px; font-size: 13px; font-weight: 600; cursor: pointer; flex-shrink: 0;
+}
+.contact-lock-btn:hover:not(:disabled) { border-color: var(--fh-accent); }
+.contact-lock-btn.on { background: var(--fh-accent); color: #04130d; border-color: var(--fh-accent); }
+.contact-lock-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .contact-blocked-note { margin: 8px 16px 0; font-size: 13px; color: #ef4444; text-align: center; }
 .contact-toast {

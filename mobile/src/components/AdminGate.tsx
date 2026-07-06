@@ -96,6 +96,22 @@ export default function AdminGate() {
     return () => { active = false; };
   }, []);
 
+  // Realtime: drop the banner the instant the active announcement is removed
+  // (or replaced) — no restart or manual refresh needed. Reuses the existing
+  // getActiveAnnouncements read path + the supabase_realtime publication on the
+  // announcements table (added in 0020). Fail-safe: errors are ignored.
+  useEffect(() => {
+    const ch = supabase
+      .channel('admin-announcements')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'announcements' }, () => {
+        getActiveAnnouncements(supabase)
+          .then((anns) => { setAnnouncement(anns.length ? anns[0] : null); })
+          .catch(() => { /* ignore — never block the app */ });
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, []);
+
   if (blocked) {
     return <Overlay title="Account unavailable" body={`Your account has been ${blocked}. Contact support if you believe this is a mistake.`} colors={colors} />;
   }

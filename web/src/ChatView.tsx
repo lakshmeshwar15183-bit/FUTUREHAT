@@ -1,7 +1,7 @@
 // FUTUREHAT web — Chat view: messages, realtime, media, reactions, typing,
 // presence, reply/forward/edit/delete, premium ghost mode, scheduling, AI, stickers.
 
-import { useState, useEffect, useRef, useMemo, type FormEvent, type ChangeEvent, type ReactNode } from 'react';
+import { useState, useEffect, useRef, useMemo, type FormEvent, type ChangeEvent, type ReactNode, type MouseEvent as ReactMouseEvent } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from './AuthContext';
 import { usePremium } from './PremiumContext';
@@ -14,7 +14,7 @@ import {
   getMessages, sendMessage, subscribeToMessages, markMessageAsRead, uploadMedia,
   getReceipts, subscribeToReceipts, getReactions, toggleReaction, subscribeToReactions,
   createTypingChannel, editMessage, deleteMessage, forwardMessage, getMyConversations,
-  messageMatchesKind, type SearchKind,
+  messageMatchesKind, messageExpired, nextMessageExpiry, purgeExpiredMessages, getDisappearing, type SearchKind,
 } from '@shared/api';
 import { scheduleMessage, getScheduledMessages, dispatchDueMessages } from '@shared/premiumApi';
 import { createPoll, getPolls } from '@shared/communitiesApi';
@@ -124,6 +124,12 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
   // starred + per-user hidden ("delete for me") messages
   const [starredIds, setStarredIds] = useState<Set<string>>(new Set());
   const [hiddenMsgIds, setHiddenMsgIds] = useState<Set<string>>(new Set());
+  // Disappearing messages (0022): a tick advanced to the next-soonest `expires_at`
+  // so expired messages drop from the view live, with no polling.
+  const [now, setNow] = useState<number>(() => Date.now());
+  // Current disappearing timer for this chat (0 = off) — drives the header badge.
+  // Seeded from the conversation summary, refreshed on the 'system' notice below.
+  const [disappearSecs, setDisappearSecs] = useState<number>(conversation.conversation.disappear_seconds ?? 0);
 
   // polls
   const [polls, setPolls] = useState<Poll[]>([]);
@@ -135,6 +141,21 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+  // Touch long-press → open the message action menu (WhatsApp parity on touch
+  // devices). Desktop keeps hover tools + right-click. ~300ms hold; a normal tap
+  // (shorter) or a scroll (move) cancels it so image/link taps still work.
+  const longPressRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearLongPress = () => { if (longPressRef.current) { clearTimeout(longPressRef.current); longPressRef.current = null; } };
+  const bubbleHoldHandlers = (msgId: string, deleted: boolean) => (deleted ? {} : {
+    onContextMenu: (e: ReactMouseEvent) => { e.preventDefault(); setPickerFor(null); setActionFor(msgId); },
+    onTouchStart: () => {
+      clearLongPress();
+      longPressRef.current = setTimeout(() => { setPickerFor(null); setActionFor(msgId); }, 300);
+    },
+    onTouchEnd: clearLongPress,
+    onTouchMove: clearLongPress,
+    onTouchCancel: clearLongPress,
+  });
   const [showJump, setShowJump] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -168,15 +189,24 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
       if (!ghostRef.current) msgs.forEach((m) => { if (m.sender_id !== profile?.id) void markMessageAsRead(supabase, m.id).catch(() => {}); });
     })().catch(() => {});
 
+    // Disappearing messages (0022): opportunistic physical cleanup of expired
+    // messages in my conversations. Fire-and-forget; query + client filter hide
+    // expired ones regardless.
+    void purgeExpiredMessages(supabase).catch(() => {});
+
     getScheduledMessages(supabase, convId).then((s) => setScheduledCount(s.length)).catch(() => {});
     getPolls(supabase, convId).then((p) => { if (active) setPolls(p); }).catch(() => {});
     getStarredIds(supabase).then((ids) => { if (active) setStarredIds(new Set(ids)); }).catch(() => {});
     getHiddenMessageIds(supabase).then((ids) => { if (active) setHiddenMsgIds(new Set(ids)); }).catch(() => {});
+    // Disappearing-messages timer for the header badge (kept live via the system notice below).
+    getDisappearing(supabase, convId).then((s) => { if (active) setDisappearSecs(s); }).catch(() => {});
 
     const msgChannel = subscribeToMessages(
       supabase, convId,
       (newMsg) => {
         setMessages((prev) => (prev.some((m) => m.id === newMsg.id) ? prev : [...prev, newMsg]));
+        // A 'system' notice means the disappearing timer was just changed — refresh it.
+        if (newMsg.type === 'system') getDisappearing(supabase, convId).then((s) => { if (active) setDisappearSecs(s); }).catch(() => {});
         if (!ghostRef.current && newMsg.sender_id !== profile?.id) void markMessageAsRead(supabase, newMsg.id).catch(() => {});
       },
       (updated) => setMessages((prev) => prev.map((m) => (m.id === updated.id ? updated : m))),
@@ -484,7 +514,15 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
   // WhatsApp-style search: keep the whole thread visible and jump between
   // matches rather than filtering. A kind filter (media/links/docs/voice) can
   // narrow the set, with or without a text query.
-  const displayMessages = useMemo(() => messages.filter((m) => !hiddenMsgIds.has(m.id)), [messages, hiddenMsgIds]);
+  // Unsend (Instagram-style): an unsent message (`is_deleted`) vanishes entirely
+  // for everyone — no "deleted" tombstone. It's filtered out here, so the existing
+  // realtime UPDATE (is_deleted → true) makes it disappear live on all clients.
+  // messageExpired: a disappearing message (0022) past its expiry is hidden
+  // instantly; the `now` tick re-runs this filter as each one expires.
+  const displayMessages = useMemo(
+    () => messages.filter((m) => !hiddenMsgIds.has(m.id) && !m.is_deleted && !messageExpired(m, now)),
+    [messages, hiddenMsgIds, now],
+  );
   const searchActive = searchOpen && (!!search || searchKind !== 'all');
   const matchIds = useMemo(() => {
     if (!searchActive) return [] as string[];
@@ -493,6 +531,15 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
       .map((m) => m.id);
   }, [displayMessages, search, searchKind, searchActive]);
   const activeMatchId = matchIds[activeMatch];
+
+  // Disappearing messages (0022): schedule ONE self-rescheduling timer to the
+  // next-soonest expiry so expired messages drop live, with no polling.
+  useEffect(() => {
+    const next = nextMessageExpiry(messages, now);
+    if (next === null) return;
+    const id = setTimeout(() => setNow(Date.now()), Math.max(0, next - now) + 250);
+    return () => clearTimeout(id);
+  }, [messages, now]);
 
   function scrollToMatch(idx: number) {
     const id = matchIds[idx];
@@ -558,7 +605,10 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
           style={{ cursor: !isGroup && otherUser ? 'pointer' : 'default' }}
           onClick={() => { if (!isGroup && otherUser) setShowContact(true); }}
         >
-          <div className="chat-title">{conversation.title}{isOtherPremium && <PremiumBadge compact />}</div>
+          <div className="chat-title">
+            {conversation.title}{isOtherPremium && <PremiumBadge compact />}
+            {disappearSecs > 0 && <span className="chat-disappear-mark" title="Disappearing messages on">⏳</span>}
+          </div>
           <div className={`chat-subtitle ${typingNames.length ? 'typing' : ''}`}>{subtitle}</div>
         </div>
         {!isGroup && (
@@ -634,6 +684,15 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
         </div>
         <AnimatePresence initial={false}>
           {displayMessages.map((msg, i) => {
+            // System notices (0027): centered WhatsApp-style info pill (disappearing
+            // timer on/off/changed). Not selectable, replyable, editable or deletable.
+            if (msg.type === 'system') {
+              return (
+                <div key={msg.id} className="system-notice">
+                  <span className="system-notice-pill">⏳ {msg.content}</span>
+                </div>
+              );
+            }
             const isMine = msg.sender_id === profile?.id;
             const sender = conversation.participants.find((p) => p.id === msg.sender_id);
             const msgReactions = reactionsByMessage[msg.id] || [];
@@ -652,7 +711,7 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
                 className={`message ${isMine ? 'mine' : 'theirs'} ${grouped ? 'grouped' : ''} ${isMatch ? 'search-match' : ''} ${isActiveMatch ? 'search-match-active' : ''}`}>
                 {!isMine && isGroup && !msg.is_deleted && !grouped && <div className="message-sender">{sender?.display_name || 'Unknown'}</div>}
                 <div className="message-row">
-                  <div className={`message-bubble ${msg.is_deleted ? 'deleted' : ''}`}>
+                  <div className={`message-bubble ${msg.is_deleted ? 'deleted' : ''}`} {...bubbleHoldHandlers(msg.id, !!msg.is_deleted)}>
                     {msg.is_deleted ? (
                       <div className="message-text deleted-text">🚫 This message was deleted</div>
                     ) : (
@@ -728,7 +787,7 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
                         {msg.content && <button onClick={() => copyText(msg)}><CopyIcon size={16} /> Copy</button>}
                         {isMine && msg.type === 'text' && <button onClick={() => startEdit(msg)}><EditIcon size={16} /> Edit</button>}
                         <button onClick={() => deleteForMe(msg)}><TrashIcon size={16} /> Delete for me</button>
-                        {isMine && <button className="danger" onClick={() => doDelete(msg)}><TrashIcon size={16} /> Delete for everyone</button>}
+                        {isMine && <button className="danger" onClick={() => doDelete(msg)}><TrashIcon size={16} /> Unsend</button>}
                       </motion.div>
                     )}
                   </AnimatePresence>

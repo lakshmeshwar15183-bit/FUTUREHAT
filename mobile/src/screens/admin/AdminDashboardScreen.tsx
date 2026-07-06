@@ -17,7 +17,8 @@ import {
   adminSearchUsers, adminStats, adminCallStats, adminMessageStats, adminDbHealth,
   adminGlobalSearch, adminAuditLog, adminDeleteMessage, adminDeleteCommunity,
   getFeatureFlags, adminSetFeatureFlag, adminSetAppEnabled,
-  getActiveAnnouncements, adminSendAnnouncement,
+  getActiveAnnouncements, adminSendAnnouncement, adminRemoveCurrentAnnouncement,
+  adminSetReportStatus,
 } from '../../lib/shared';
 import type {
   AdminUserSummary, AdminStats, AdminCallStats, AdminMessageStats, AdminDbHealth,
@@ -75,15 +76,30 @@ export default function AdminDashboardScreen() {
   async function loadAll() {
     try { setStats(await adminStats(supabase)); }
     catch { setError('Admin backend not provisioned yet (apply migrations 0009 + 0013).'); }
-    const { data: rep } = await supabase.from('reports').select('*').order('created_at', { ascending: false }).limit(100);
+    // Active queue only: reports still needing admin attention (open + reviewing).
+    // Resolved / dismissed reports are completed and must not sit mixed in with
+    // actionable ones, and must not resurface here after a refresh or restart.
+    const { data: rep } = await supabase.from('reports').select('*')
+      .in('status', ['open', 'reviewing'])
+      .order('created_at', { ascending: false }).limit(100);
     setReports((rep as ReportRow[]) ?? []);
     const { data: tic } = await supabase.from('support_tickets').select('*').order('created_at', { ascending: false }).limit(100);
     setTickets((tic as TicketRow[]) ?? []);
   }
 
   async function setReportStatus(id: string, status: string) {
-    setReports((rs) => rs.map((r) => (r.id === id ? { ...r, status } : r)));
-    await supabase.from('reports').update({ status }).eq('id', id);
+    const snapshot = reports;
+    // Resolve / Dismiss complete the report → remove it from the active queue
+    // immediately. Reviewing keeps it (still being worked) but updates the label.
+    setReports((rs) =>
+      status === 'resolved' || status === 'dismissed'
+        ? rs.filter((r) => r.id !== id)
+        : rs.map((r) => (r.id === id ? { ...r, status } : r)),
+    );
+    // Route through the audited RPC (0017) rather than a direct table write, so
+    // every status change stamps reviewer + time and lands in the audit log.
+    try { await adminSetReportStatus(supabase, id, status as any); }
+    catch { setReports(snapshot); /* rollback the optimistic removal on failure */ }
   }
   async function setTicketStatus(id: string, status: string) {
     setTickets((ts) => ts.map((t) => (t.id === id ? { ...t, status } : t)));
@@ -448,6 +464,7 @@ function AppTab({ colors, styles }: { colors: Palette; styles: Styles }) {
   const [body, setBody] = useState('');
   const [list, setList] = useState<Announcement[]>([]);
   const [busy, setBusy] = useState(false);
+  const [removing, setRemoving] = useState(false);
   const load = useCallback(() => { getActiveAnnouncements(supabase).then(setList); }, []);
   useEffect(() => { load(); }, [load]);
   const KINDS: AnnouncementKind[] = ['announcement', 'maintenance', 'update', 'force_update'];
@@ -456,6 +473,26 @@ function AppTab({ colors, styles }: { colors: Palette; styles: Styles }) {
     setBusy(true);
     try { await adminSendAnnouncement(supabase, kind, title.trim(), body.trim() || undefined); setTitle(''); setBody(''); load(); }
     catch (e: any) { Alert.alert('Error', e.message); } finally { setBusy(false); }
+  }
+  async function removeCurrent() {
+    if (!list.length) return;
+    Alert.alert(
+      'Remove Current Announcement?',
+      'Are you sure you want to remove the current announcement?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            setRemoving(true);
+            try { await adminRemoveCurrentAnnouncement(supabase); load(); }
+            catch (e: any) { Alert.alert('Error', e.message); }
+            finally { setRemoving(false); }
+          },
+        },
+      ],
+    );
   }
   function setApp(enabled: boolean) {
     Alert.alert(enabled ? 'Enable app?' : 'Disable the app for ALL users?', '', [
@@ -477,6 +514,13 @@ function AppTab({ colors, styles }: { colors: Palette; styles: Styles }) {
       <TextInput style={[styles.field, styles.fieldMulti]} value={body} onChangeText={setBody} placeholder="Message (optional)" placeholderTextColor={colors.textFaint} multiline />
       <Pressable style={[styles.searchBtn, { alignSelf: 'flex-start', opacity: title.trim() && !busy ? 1 : 0.5 }]} onPress={send} disabled={!title.trim() || busy}>
         <Text style={styles.searchBtnText}>Send</Text>
+      </Pressable>
+      <Pressable
+        style={[styles.searchBtn, { alignSelf: 'flex-start', marginTop: 10, backgroundColor: colors.danger, opacity: !list.length || removing ? 0.5 : 1 }]}
+        onPress={removeCurrent}
+        disabled={!list.length || removing}
+      >
+        <Text style={styles.searchBtnText}>{removing ? 'Removing…' : list.length ? 'Remove Current Announcement' : 'No active announcement'}</Text>
       </Pressable>
 
       <Text style={styles.subhead}>App availability</Text>

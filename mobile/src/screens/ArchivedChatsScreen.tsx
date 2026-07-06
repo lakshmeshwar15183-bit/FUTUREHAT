@@ -7,7 +7,10 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { supabase } from '../lib/supabase';
 import { getMyConversations, getArchivedIds, getCurrentUser, type ConversationSummary } from '../lib/shared';
-import { getCachedConversations, getCache, setCache } from '../lib/localCache';
+import {
+  getCachedConversations, getCache, setCache,
+  pendingConversationEffects, reconcileIds, mergeEffects,
+} from '../lib/localCache';
 import { queueAction } from '../lib/sync';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import Avatar from '../components/Avatar';
@@ -25,8 +28,17 @@ export default function ArchivedChatsScreen() {
 
   useEffect(() => {
     let active = true;
-    const filterArchived = (convs: ConversationSummary[], ids: string[]) => {
-      const set = new Set(ids);
+    // The archived set is the server/cached id list reconciled with any archive /
+    // unarchive still queued (not yet synced). This makes a chat the user just
+    // archived from the main list appear here INSTANTLY and offline (local-first,
+    // Issue 4), and a just-unarchived chat disappear — without waiting on a
+    // successful server read, and without a stale read dropping a pending archive.
+    const filterArchived = (
+      convs: ConversationSummary[],
+      ids: Iterable<string>,
+      eff: { adds: Set<string>; removes: Set<string> },
+    ) => {
+      const set = reconcileIds(ids, eff);
       return convs.filter((c) => set.has(c.conversation.id));
     };
     (async () => {
@@ -35,23 +47,33 @@ export default function ArchivedChatsScreen() {
       const id = u?.id ?? null;
       setUid(id);
       // Instant: paint from cached conversations + cached archived ids (offline
-      // included). No spinner when a cache exists.
+      // included), folding in pending archive/unarchive. No spinner when cached.
       if (id) {
-        const [cachedConvs, cachedIds] = await Promise.all([
+        const [cachedConvs, cachedIds, eff] = await Promise.all([
           getCachedConversations(id),
           getCache<string[]>(`archivedIds:${id}`, []),
+          pendingConversationEffects(['archive'], ['unarchive']),
         ]);
-        if (active && cachedConvs.length) { setItems(filterArchived(cachedConvs, cachedIds)); setLoading(false); }
+        if (active && cachedConvs.length) { setItems(filterArchived(cachedConvs, cachedIds, eff)); setLoading(false); }
       }
-      // Background refresh + re-cache.
-      const [convs, ids] = await Promise.all([
-        getMyConversations(supabase).catch(() => [] as ConversationSummary[]),
-        getArchivedIds(supabase).catch(() => [] as string[]),
-      ]);
-      if (!active) return;
-      setItems(filterArchived(convs, ids));
-      setLoading(false);
-      if (id) setCache(`archivedIds:${id}`, ids).catch(() => {});
+      // Background refresh + re-cache. Capture pending effects before and after the
+      // reads so an archive/unarchive that syncs (and dequeues) mid-read still
+      // counts. If EITHER read fails (offline / transient), keep the cached paint
+      // instead of blanking the list — the cache is still the best truth we have.
+      try {
+        const effBefore = await pendingConversationEffects(['archive'], ['unarchive']);
+        const [convs, ids] = await Promise.all([
+          getMyConversations(supabase),
+          getArchivedIds(supabase),
+        ]);
+        const effAfter = await pendingConversationEffects(['archive'], ['unarchive']);
+        if (!active) return;
+        setItems(filterArchived(convs, ids, mergeEffects(effBefore, effAfter)));
+        if (id) setCache(`archivedIds:${id}`, ids).catch(() => {});
+      } catch {
+        /* keep cached paint */
+      }
+      if (active) setLoading(false);
     })();
     return () => { active = false; };
   }, []);

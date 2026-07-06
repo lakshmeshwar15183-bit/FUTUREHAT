@@ -9,7 +9,10 @@
 // add a TURN server (e.g. self-hosted coturn, or a managed provider). Pass its
 // config via ICE_SERVERS below / the app's env.
 import type { SupabaseClient, RealtimeChannel } from '@supabase/supabase-js';
-import type { Call, CallType, CallStatus, UUID } from './types.js';
+import type {
+  Call, CallType, CallStatus, UUID,
+  CallHistoryItem, CallGroup, ScheduledCall,
+} from './types.js';
 
 export interface IceServer {
   urls: string | string[];
@@ -110,6 +113,133 @@ export async function getCallHistory(client: SupabaseClient, limit = 100): Promi
     .order('started_at', { ascending: false })
     .limit(limit);
   return data ?? [];
+}
+
+// ── Call history v2 — enriched + per-user delete + schedule (0024) ────────────
+// Enriched, viewer-relative history via get_call_history(): each row already
+// carries the correct peer (the OTHER 1:1 participant, not the caller) and the
+// direction, and per-user-deleted rows are excluded server-side. `before` powers
+// keyset pagination (pass the oldest loaded call's started_at to load older).
+export async function getCallHistoryV2(
+  client: SupabaseClient,
+  opts: { limit?: number; before?: string | null } = {},
+): Promise<CallHistoryItem[]> {
+  const { data, error } = await client.rpc('get_call_history', {
+    p_limit: opts.limit ?? 100,
+    p_before: opts.before ?? null,
+  });
+  if (error) throw error;
+  return (data as CallHistoryItem[]) ?? [];
+}
+
+// Delete-for-me: hide specific call logs for the current user only.
+export async function deleteCallLogs(client: SupabaseClient, ids: UUID[]): Promise<void> {
+  if (!ids.length) return;
+  const { error } = await client.rpc('delete_call_logs', { p_ids: ids });
+  if (error) throw error;
+}
+
+// Clear the current user's entire call history (peer keeps theirs).
+export async function clearCallLog(client: SupabaseClient): Promise<void> {
+  const { error } = await client.rpc('clear_call_log');
+  if (error) throw error;
+}
+
+// One debounced realtime channel over the tables that change call history
+// (`calls` + this user's `call_log_deletions`) → invokes onChange to reload.
+export function subscribeCallChanges(
+  client: SupabaseClient,
+  onChange: () => void,
+): { unsubscribe: () => void } {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const fire = () => { if (timer) clearTimeout(timer); timer = setTimeout(onChange, 250); };
+  const channel = client
+    .channel('calls-history-changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'calls' }, fire)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'call_log_deletions' }, fire)
+    .subscribe();
+  return {
+    unsubscribe: () => { if (timer) clearTimeout(timer); client.removeChannel(channel); },
+  };
+}
+
+// Collapse consecutive same-conversation calls into WhatsApp-style groups
+// ("Name (n)"). Assumes `items` is already newest-first (as get_call_history
+// returns). Never merges across a different peer/conversation.
+export function groupCalls(items: CallHistoryItem[]): CallGroup[] {
+  const groups: CallGroup[] = [];
+  for (const it of items) {
+    const title = it.peer_name || it.conversation_name
+      || (it.peer_username ? `@${it.peer_username}` : 'FUTUREHAT user');
+    const last = groups[groups.length - 1];
+    const missed = it.status === 'missed' || it.status === 'declined';
+    if (last && last.conversation_id === it.conversation_id) {
+      last.count += 1;
+      last.callIds.push(it.id);
+      last.anyMissed = last.anyMissed || missed;
+    } else {
+      groups.push({
+        key: it.conversation_id,
+        conversation_id: it.conversation_id,
+        peer_id: it.peer_id,
+        title,
+        peer_username: it.peer_username,
+        peer_avatar: it.peer_avatar,
+        latest: it,
+        count: 1,
+        callIds: [it.id],
+        anyMissed: missed,
+      });
+    }
+  }
+  return groups;
+}
+
+// ── Scheduled calls (0024) ────────────────────────────────────────────────────
+export async function scheduleCall(
+  client: SupabaseClient,
+  conversationId: UUID,
+  calleeId: UUID | null,
+  type: CallType,
+  scheduledAt: string,
+  title?: string,
+): Promise<{ error: Error | null }> {
+  const { data: auth } = await client.auth.getUser();
+  if (!auth.user) return { error: new Error('not authenticated') };
+  const { error } = await client.from('scheduled_calls').insert({
+    conversation_id: conversationId,
+    organizer_id: auth.user.id,
+    callee_id: calleeId,
+    type,
+    scheduled_at: scheduledAt,
+    title: title ?? null,
+  });
+  return { error: error ? new Error(error.message) : null };
+}
+
+export async function getScheduledCalls(client: SupabaseClient): Promise<ScheduledCall[]> {
+  const { data } = await client
+    .from('scheduled_calls')
+    .select('*')
+    .eq('status', 'scheduled')
+    .order('scheduled_at', { ascending: true });
+  return (data as ScheduledCall[]) ?? [];
+}
+
+export async function cancelScheduledCall(client: SupabaseClient, id: UUID): Promise<void> {
+  const { error } = await client.from('scheduled_calls').update({ status: 'cancelled' }).eq('id', id);
+  if (error) throw error;
+}
+
+export function subscribeScheduledCalls(
+  client: SupabaseClient,
+  onChange: () => void,
+): { unsubscribe: () => void } {
+  const channel = client
+    .channel('scheduled-calls-changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'scheduled_calls' }, () => onChange())
+    .subscribe();
+  return { unsubscribe: () => client.removeChannel(channel) };
 }
 
 /**

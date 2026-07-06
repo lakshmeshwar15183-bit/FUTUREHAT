@@ -1,134 +1,120 @@
-// FUTUREHAT mobile — Notification settings: per-category toggles, preview, sound,
-// and quiet hours with a custom From/To time window. Standalone; stored in
-// user_preferences.extra.notifications.
-// (Push delivery needs FCM — see report; these control in-app behaviour.)
-import React, { useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+// FUTUREHAT mobile — Notification settings (WhatsApp layout). Grouped MESSAGE /
+// CALLS / STATUS / GROUPS sections stored in user_preferences.extra.notifications
+// (synced to the profile → restore on any device). Notification tone / ringtone
+// use the DEVICE SYSTEM DEFAULT sound; the tone rows open Android's per-channel
+// settings for native customization (no bundled sounds, no in-app picker).
+import React, { useCallback, useMemo, useState } from 'react';
+import { Alert, Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 
 import { supabase } from '../lib/supabase';
-import { getPreferences } from '../lib/shared';
+import {
+  getNotificationSettings, setNotificationSettings, toneLabel,
+  DEFAULT_NOTIFICATION_SETTINGS,
+} from '../lib/shared';
+import type { NotificationSettings } from '../lib/shared';
+import { CHANNELS } from '../lib/notifications';
 import { getCache, setCache } from '../lib/localCache';
-import { queueAction } from '../lib/sync';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
-import InputModal from '../components/InputModal';
 
-interface NotifSettings {
-  messages: boolean; groups: boolean; calls: boolean; reactions: boolean;
-  preview: boolean; sound: boolean;
-  quietHours: boolean; quietFrom: string; quietTo: string;
-}
-const DEFAULTS: NotifSettings = {
-  messages: true, groups: true, calls: true, reactions: true,
-  preview: true, sound: true, quietHours: false, quietFrom: '22:00', quietTo: '07:00',
-};
-
-const TOGGLE_ROWS: { key: keyof NotifSettings; label: string; group: string }[] = [
-  { key: 'messages', label: 'Direct messages', group: 'NOTIFY ME ABOUT' },
-  { key: 'groups', label: 'Group messages', group: 'NOTIFY ME ABOUT' },
-  { key: 'calls', label: 'Calls', group: 'NOTIFY ME ABOUT' },
-  { key: 'reactions', label: 'Reactions', group: 'NOTIFY ME ABOUT' },
-  { key: 'preview', label: 'Message preview', group: 'STYLE' },
-  { key: 'sound', label: 'In-app sound', group: 'STYLE' },
-];
-
-// Normalise free-form input to a 24h HH:MM string, or null if unparseable.
-function normalizeTime(raw: string): string | null {
-  const m = raw.trim().match(/^(\d{1,2}):?(\d{2})$/);
-  if (!m) return null;
-  const h = Number(m[1]);
-  const min = Number(m[2]);
-  if (h > 23 || min > 59) return null;
-  return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+// Open Android's per-channel notification settings (native sound/vibration/LED).
+// iOS has no notification channels, so fall through to the app's system settings
+// (where Notifications live) rather than dead-ending on the tone row.
+async function openChannelSettings(channelId: string) {
+  if (Platform.OS !== 'android') {
+    try { await Linking.openSettings(); } catch { /* ignore */ }
+    return;
+  }
+  try {
+    await Linking.sendIntent('android.settings.CHANNEL_NOTIFICATION_SETTINGS', [
+      { key: 'android.provider.extra.APP_PACKAGE', value: 'dev.lakshmeshwar.futurehat' },
+      { key: 'android.provider.extra.CHANNEL_ID', value: channelId },
+    ]);
+  } catch {
+    try { await Linking.openSettings(); } catch { /* ignore */ }
+  }
 }
 
 export default function NotificationsScreen() {
   const colors = useColors();
   const styles = useMemo(() => makeStyles(colors), [colors]);
-  const [n, setN] = useState<NotifSettings>(DEFAULTS);
-  const [editWindow, setEditWindow] = useState(false);
+  const [n, setN] = useState<NotificationSettings>(DEFAULT_NOTIFICATION_SETTINGS);
 
-  useEffect(() => {
-    // Instant: cached notification settings first (offline included), then refresh.
-    getCache<NotifSettings | null>('notifs', null).then((c) => { if (c) setN({ ...DEFAULTS, ...c }); });
-    getPreferences(supabase)
-      .then((p: any) => {
-        const merged = { ...DEFAULTS, ...((p?.extra && p.extra.notifications) ?? {}) };
-        setN(merged);
-        setCache('notifs', merged);
-      })
-      .catch(() => {});
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      getCache<NotificationSettings | null>('notifsV2', null).then((c) => { if (c) setN({ ...DEFAULT_NOTIFICATION_SETTINGS, ...c }); });
+      getNotificationSettings(supabase).then((s) => { setN(s); setCache('notifsV2', s); }).catch(() => {});
+    }, []),
+  );
 
-  function update(patch: Partial<NotifSettings>) {
+  function update(patch: Partial<NotificationSettings>) {
     const next = { ...n, ...patch };
-    setN(next);               // instant UI
-    setCache('notifs', next); // instant local persistence (offline included)
-    // Queue a conflict-safe partial write into prefs.extra.notifications. The
-    // handler re-reads the current server extra at flush time and deep-sets this
-    // one leaf, so it never clobbers sibling sections (e.g. extra.storage) even
-    // if several were edited offline. Auto-retries on reconnect; UI never waits.
-    queueAction('mergeExtra', { path: ['notifications'], value: next });
+    setN(next);
+    setCache('notifsV2', next);
+    setNotificationSettings(supabase, patch).catch(() => {});
   }
 
-  function saveWindow(values: Record<string, string>) {
-    const from = normalizeTime(values.from ?? '');
-    const to = normalizeTime(values.to ?? '');
-    setEditWindow(false);
-    const patch: Partial<NotifSettings> = {};
-    if (from) patch.quietFrom = from;
-    if (to) patch.quietTo = to;
-    if (Object.keys(patch).length) update(patch);
-  }
+  const Toggle = ({ label, desc, value, onChange }: { label: string; desc?: string; value: boolean; onChange: (v: boolean) => void }) => (
+    <View style={styles.row}>
+      <View style={{ flex: 1, marginRight: spacing(3) }}>
+        <Text style={styles.rowLabel}>{label}</Text>
+        {desc ? <Text style={styles.rowDesc}>{desc}</Text> : null}
+      </View>
+      <Switch value={value} onValueChange={onChange} trackColor={{ true: colors.primary, false: colors.border }} />
+    </View>
+  );
 
-  const groups = ['NOTIFY ME ABOUT', 'STYLE'];
+  const ToneRow = ({ label, value, channel }: { label: string; value: string; channel: string }) => (
+    <Pressable style={styles.row} onPress={() => openChannelSettings(channel)}>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.rowLabel}>{label}</Text>
+        <Text style={styles.rowDesc}>{toneLabel(value)}</Text>
+      </View>
+      <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
+    </Pressable>
+  );
 
   return (
     <ScrollView style={styles.container}>
-      {groups.map((g) => (
-        <View key={g}>
-          <Text style={styles.sectionLabel}>{g}</Text>
-          <View style={styles.group}>
-            {TOGGLE_ROWS.filter((r) => r.group === g).map((r) => (
-              <View key={r.key} style={styles.row}>
-                <Text style={styles.rowLabel}>{r.label}</Text>
-                <Switch value={!!n[r.key]} onValueChange={(v) => update({ [r.key]: v } as Partial<NotifSettings>)} trackColor={{ true: colors.primary, false: colors.border }} />
-              </View>
-            ))}
-          </View>
-        </View>
-      ))}
-
-      <Text style={styles.sectionLabel}>QUIET HOURS</Text>
+      {/* MESSAGE */}
+      <Text style={styles.sectionLabel}>MESSAGE</Text>
       <View style={styles.group}>
-        <View style={styles.row}>
-          <View style={{ flex: 1, marginRight: spacing(3) }}>
-            <Text style={styles.rowLabel}>Enable quiet hours</Text>
-            <Text style={styles.rowDesc}>Mute notifications during a time window</Text>
-          </View>
-          <Switch value={n.quietHours} onValueChange={(v) => update({ quietHours: v })} trackColor={{ true: colors.primary, false: colors.border }} />
-        </View>
-        {n.quietHours && (
-          <Pressable style={[styles.row, styles.rowLast]} onPress={() => setEditWindow(true)}>
-            <Text style={styles.rowLabel}>From / to</Text>
-            <Text style={styles.rowValue}>{n.quietFrom} – {n.quietTo}</Text>
-            <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
-          </Pressable>
-        )}
+        <Toggle label="Mute" desc="Silence direct-message notifications" value={n.messageMute} onChange={(v) => update({ messageMute: v })} />
+        <ToneRow label="Notification tone" value={n.messageTone} channel={CHANNELS.messages} />
+        <Toggle label="Vibrate" value={n.messageVibrate} onChange={(v) => update({ messageVibrate: v })} />
+        <Toggle label="Popup" desc="Show a heads-up banner" value={n.messagePopup} onChange={(v) => update({ messagePopup: v })} />
+        <Toggle label="High priority" desc="Show previews at the top of the screen" value={n.messageHighPriority} onChange={(v) => update({ messageHighPriority: v })} />
+        <Toggle label="Notification preview" desc="Show message text in the notification" value={n.messagePreview} onChange={(v) => update({ messagePreview: v })} />
       </View>
 
-      <InputModal
-        visible={editWindow}
-        title="Quiet hours window"
-        submitLabel="Save"
-        fields={[
-          { key: 'from', placeholder: 'From (HH:MM, e.g. 22:00)', initial: n.quietFrom },
-          { key: 'to', placeholder: 'To (HH:MM, e.g. 07:00)', initial: n.quietTo },
-        ]}
-        onCancel={() => setEditWindow(false)}
-        onSubmit={saveWindow}
-      />
+      {/* CALLS */}
+      <Text style={styles.sectionLabel}>CALLS</Text>
+      <View style={styles.group}>
+        <ToneRow label="Ringtone" value={n.callRingtone} channel={CHANNELS.calls} />
+        <Toggle label="Vibrate" value={n.callVibrate} onChange={(v) => update({ callVibrate: v })} />
+        <Toggle label="Full screen incoming calls" desc="Show a full-screen ringing UI" value={n.callFullScreen} onChange={(v) => update({ callFullScreen: v })} />
+        <Toggle label="Flash screen" desc="Flash on incoming call (optional)" value={n.callFlash} onChange={(v) => update({ callFlash: v })} />
+      </View>
 
+      {/* STATUS */}
+      <Text style={styles.sectionLabel}>STATUS</Text>
+      <View style={styles.group}>
+        <Toggle label="Mute status notifications" value={n.statusMute} onChange={(v) => update({ statusMute: v })} />
+      </View>
+
+      {/* GROUPS */}
+      <Text style={styles.sectionLabel}>GROUPS</Text>
+      <View style={styles.group}>
+        <Toggle label="Mute" desc="Silence group-message notifications" value={n.groupMute} onChange={(v) => update({ groupMute: v })} />
+        <ToneRow label="Notification tone" value={n.groupTone} channel={CHANNELS.groups} />
+        <Toggle label="Vibrate" value={n.groupVibrate} onChange={(v) => update({ groupVibrate: v })} />
+      </View>
+
+      <Text style={styles.footnote}>
+        Notification tones use your device’s default sound. Tap a tone to customize its sound,
+        vibration and light in Android settings. Preferences sync to your account.
+      </Text>
       <View style={{ height: spacing(8) }} />
     </ScrollView>
   );
@@ -140,8 +126,7 @@ const makeStyles = (colors: Palette) =>
     sectionLabel: { color: colors.textMuted, fontSize: font.tiny, fontWeight: '700', marginTop: spacing(5), marginBottom: spacing(2), marginHorizontal: spacing(4), letterSpacing: 0.5 },
     group: { backgroundColor: colors.surface, marginHorizontal: spacing(3), borderRadius: radius.md, overflow: 'hidden' },
     row: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing(4), paddingVertical: spacing(3), borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
-    rowLast: { borderBottomWidth: 0 },
     rowLabel: { flex: 1, color: colors.text, fontSize: font.body },
     rowDesc: { color: colors.textMuted, fontSize: font.small, marginTop: 2 },
-    rowValue: { color: colors.textMuted, fontSize: font.small, marginRight: spacing(2) },
+    footnote: { color: colors.textFaint, fontSize: font.tiny, marginHorizontal: spacing(4), marginTop: spacing(4), lineHeight: 16 },
   });

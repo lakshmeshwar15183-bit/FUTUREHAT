@@ -152,3 +152,49 @@ test('#9 corrupt cache entry degrades to empty (no crash), still no network', as
   assert.deepEqual(got, []);
   assert.equal(SHARED.sendMessage.__calls.length, 0);
 });
+
+// ── Recent contacts (New Chat persistent "previously chatted users") ────────────
+
+test('#10 recent contacts: cached list renders after "restart" with exact key, no network', async () => {
+  reset();
+  const list = [
+    { contact: { id: 'b', display_name: 'User B', username: 'userb' }, first_interaction_at: '1', last_interaction_at: '2' },
+  ];
+  await LC.cacheRecentContacts(UID, list);
+  AS.__log.length = 0; // isolate the READ (as a fresh New Chat open / app restart would do)
+  const got = await LC.getCachedRecentContacts(UID);
+  console.log('  key read:', keysTouched()[0], '| contacts:', got.length, '| network:', SHARED.sendMessage.__calls.length);
+  assert.equal(keysTouched()[0], `getItem fh:cache:recent:${UID}`);
+  assert.equal(got[0].contact.id, 'b');
+  assert.equal(SHARED.sendMessage.__calls.length, 0, 'no network to render cached recent contacts');
+});
+
+test('#11 remove recent contact: queued offline, syncs exactly once on reconnect, dequeues, and never deletes messages/conversation', async () => {
+  reset();
+  SHARED.removeRecentContact.__reset();
+
+  const stop = SYNC.startSync();
+  NET.__emit({ isConnected: false, isInternetReachable: false }); // go offline
+  await new Promise((r) => setTimeout(r, 10));
+
+  // The New Chat screen removes from UI+cache immediately, then queues the sync.
+  await LC.cacheRecentContacts(UID, []); // optimistic local removal already applied by the screen
+  await SYNC.queueAction('removeRecentContact', { contactId: 'b' });
+
+  console.log('  removeRecentContact calls while offline:', SHARED.removeRecentContact.__calls.length);
+  assert.equal(SHARED.removeRecentContact.__calls.length, 0, 'no sync while offline');
+  assert.equal((await LC.getActionQueue()).length, 1, 'removal persisted in durable queue');
+
+  NET.__emit({ isConnected: true, isInternetReachable: true }); // reconnect → auto-flush
+  await new Promise((r) => setTimeout(r, 30));
+
+  console.log('  removeRecentContact calls after reconnect:', SHARED.removeRecentContact.__calls.length,
+    '| contactId:', SHARED.removeRecentContact.__calls[0]?.contactId,
+    '| sendMessage calls:', SHARED.sendMessage.__calls.length);
+  assert.equal(SHARED.removeRecentContact.__calls.length, 1, 'removal synced exactly once');
+  assert.equal(SHARED.removeRecentContact.__calls[0].contactId, 'b');
+  assert.equal((await LC.getActionQueue()).length, 0, 'dequeued after success');
+  // Removal-only: it must NOT go anywhere near message/conversation deletion.
+  assert.equal(SHARED.sendMessage.__calls.length, 0, 'removing a recent contact sends/deletes no messages');
+  stop();
+});

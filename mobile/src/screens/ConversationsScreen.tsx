@@ -32,9 +32,7 @@ import {
   getMutedIds,
   muteConversation,
   unmuteConversation,
-  hideConversation,
-  getHiddenIds,
-  unhideConversation,
+  getArchivedIds,
   deleteConversationForMe,
   deleteConversationForEveryone,
   getDeletedConversationIds,
@@ -50,11 +48,16 @@ import {
   FREE_LIMITS,
 } from '../lib/shared';
 import type { ConversationSummary, MessageSearchHit } from '../lib/shared';
-import { getCachedConversations, cacheConversations, getCache, setCache } from '../lib/localCache';
+import {
+  getCachedConversations, cacheConversations, getCache, setCache,
+  pendingConversationEffects, reconcileIds, mergeEffects,
+} from '../lib/localCache';
 import { onConnectivity, queueAction } from '../lib/sync';
 import { formatListTimestamp } from '../lib/time';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import Avatar from '../components/Avatar';
+import StatusStrip from '../components/status/StatusStrip';
+import { useChatLock } from '../security/ChatLock';
 import type { RootStackParamList } from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -74,6 +77,7 @@ export default function ConversationsScreen() {
   const navigation = useNavigation<Nav>();
   const colors = useColors();
   const styles = useMemo(() => makeStyles(colors), [colors]);
+  const chatLock = useChatLock();
 
   const [items, setItems] = useState<ConversationSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -84,7 +88,6 @@ export default function ConversationsScreen() {
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
   const [mutedIds, setMutedIds] = useState<Set<string>>(new Set());
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
-  const [showHidden, setShowHidden] = useState(false);
   const [onlineIds, setOnlineIds] = useState<Set<string>>(new Set());
   const [premiumIds, setPremiumIds] = useState<Set<string>>(new Set());
   const [isPremium, setIsPremium] = useState(false);
@@ -101,9 +104,20 @@ export default function ConversationsScreen() {
     items.forEach((c) => m.set(c.conversation.id, c));
     return m;
   }, [items]);
+  // Locked chats (0027) present in the list — hidden until the Locked area is
+  // authenticated this session (chatLock.unlocked). Counted for the header entry.
+  const lockedCount = useMemo(
+    () => items.filter((c) => chatLock.isLocked(c.conversation.id)).length,
+    [items, chatLock],
+  );
+
   const filteredItems = useMemo(() => {
-    // Hidden chats are excluded unless the user reveals them (web parity).
-    const base = showHidden ? items : items.filter((c) => !hiddenIds.has(c.conversation.id));
+    // Archived / deleted-for-me chats never appear on the main list (they live in
+    // Settings › Archived chats); a chat is un-hidden by unarchiving or a new msg.
+    const base0 = items.filter((c) => !hiddenIds.has(c.conversation.id));
+    // Locked chats stay hidden (no preview, not openable) until the Locked area is
+    // unlocked with device authentication this session.
+    const base = chatLock.unlocked ? base0 : base0.filter((c) => !chatLock.isLocked(c.conversation.id));
     const searched = q ? base.filter((c) => c.title.toLowerCase().includes(q)) : base;
     // Pinned conversations float to the top (WhatsApp-style), otherwise the
     // getMyConversations order (most-recent first) is preserved.
@@ -112,7 +126,7 @@ export default function ConversationsScreen() {
       const pb = pinnedIds.has(b.conversation.id) ? 1 : 0;
       return pb - pa;
     });
-  }, [items, q, hiddenIds, pinnedIds, showHidden]);
+  }, [items, q, hiddenIds, pinnedIds, chatLock]);
 
   // Per-conversation peer helpers for direct chats (presence dot + premium badge).
   const peerOf = useCallback(
@@ -197,25 +211,50 @@ export default function ConversationsScreen() {
       if (u?.id) cacheConversations(u.id, data).catch(() => {});
       // Per-user conversation flags (pin/mute/hidden) + premium wiring. Hidden
       // must be loaded here so hidden chats stay hidden across reloads (web parity).
+      // Capture in-flight pin/mute/archive effects BEFORE the server reads, so an
+      // action that syncs (and leaves the queue) mid-read is still honoured.
+      const effBefore = await Promise.all([
+        pendingConversationEffects(['pin'], ['unpin']),
+        pendingConversationEffects(['mute'], ['unmute']),
+        pendingConversationEffects(['archive'], ['unarchive']),
+      ]);
       Promise.all([
         getPinnedIds(supabase),
         getMutedIds(supabase),
-        getHiddenIds(supabase),
+        getArchivedIds(supabase),
         getDeletedConversationIds(supabase),
       ])
-        .then(([pinned, muted, hidden, deleted]) => {
-          setPinnedIds(new Set(pinned));
-          setMutedIds(new Set(muted));
-          // "Delete for me" chats leave the list just like hidden ones. Merging
-          // them into the same set keeps the filter + "Show hidden" reveal simple;
-          // a chat revived by a new message is restored by clearing its row.
-          const hiddenMerged = [...new Set([...hidden, ...deleted])];
-          setHiddenIds(new Set(hiddenMerged));
-          // Refresh the flag caches so the next cold/offline open is accurate.
+        .then(async ([pinned, muted, archived, deleted]) => {
+          // Fold in optimistic pin/mute/archive/unarchive still queued (not yet
+          // synced) so this background server read never reverts a flag the user
+          // just toggled — the "archived chat pops back into the list" race. The
+          // queue is the source of truth for in-flight changes; the server is the
+          // source of truth for everything else. Merge the before/after queue
+          // snapshots so the change survives even if its sync landed (and dequeued)
+          // in the window between the two awaits.
+          const [pinEffA, muteEffA, arcEffA] = await Promise.all([
+            pendingConversationEffects(['pin'], ['unpin']),
+            pendingConversationEffects(['mute'], ['unmute']),
+            pendingConversationEffects(['archive'], ['unarchive']),
+          ]);
+          const pinEff = mergeEffects(effBefore[0], pinEffA);
+          const muteEff = mergeEffects(effBefore[1], muteEffA);
+          const arcEff = mergeEffects(effBefore[2], arcEffA);
+          const pinnedSet = reconcileIds(pinned, pinEff);
+          const mutedSet = reconcileIds(muted, muteEff);
+          setPinnedIds(pinnedSet);
+          setMutedIds(mutedSet);
+          // Archived + "Delete for me" chats leave the main list. Merge them into
+          // one hidden set, then apply pending archive/unarchive on top; a chat
+          // revived by a new message is restored by clearing its row.
+          const hiddenSet = reconcileIds([...archived, ...deleted], arcEff);
+          setHiddenIds(hiddenSet);
+          // Refresh the flag caches (reconciled values) so the next cold/offline
+          // open is accurate and still reflects the pending changes.
           if (uid) {
-            setCache(`${FLAG_KEY.pinned}:${uid}`, pinned).catch(() => {});
-            setCache(`${FLAG_KEY.muted}:${uid}`, muted).catch(() => {});
-            setCache(`${FLAG_KEY.hidden}:${uid}`, hiddenMerged).catch(() => {});
+            setCache(`${FLAG_KEY.pinned}:${uid}`, [...pinnedSet]).catch(() => {});
+            setCache(`${FLAG_KEY.muted}:${uid}`, [...mutedSet]).catch(() => {});
+            setCache(`${FLAG_KEY.hidden}:${uid}`, [...hiddenSet]).catch(() => {});
           }
         })
         .catch(() => {});
@@ -232,7 +271,8 @@ export default function ConversationsScreen() {
   useFocusEffect(
     useCallback(() => {
       load();
-    }, [load]),
+      chatLock.refresh();
+    }, [load, chatLock.refresh]),
   );
 
   // Instantly drop conversations from the visible list AND the offline cache.
@@ -281,6 +321,8 @@ export default function ConversationsScreen() {
     const m = c.lastMessage;
     if (!m) return 'Tap to start chatting';
     if (m.is_deleted) return 'This message was deleted';
+    // System notices (disappearing-messages on/off) show verbatim, no "You:" prefix.
+    if (m.type === 'system') return m.content ?? '';
     const body =
       m.type === 'image' ? '📷 Photo' :
       m.type === 'audio' ? '🎤 Voice message' :
@@ -432,7 +474,7 @@ export default function ConversationsScreen() {
     const ids = selConvs.map((c) => c.conversation.id);
     clearSelection();
     setFlagSet(setHiddenIds, FLAG_KEY.hidden, ids, false);
-    ids.forEach((id) => queueAction('unhide', { conversationId: id }));
+    ids.forEach((id) => queueAction('unarchive', { conversationId: id }));
   }
 
   async function batchMarkRead() {
@@ -504,6 +546,8 @@ export default function ConversationsScreen() {
     const isGroup = item.conversation.type === 'group';
     const id = item.conversation.id;
     const selected = selectedIds.has(id);
+    const disappearing = (item.conversation.disappear_seconds ?? 0) > 0;
+    const locked = chatLock.isLocked(id);
     return (
     <Pressable
       style={({ pressed }) => [styles.row, selected && styles.rowSelected, pressed && styles.rowPressed]}
@@ -518,6 +562,12 @@ export default function ConversationsScreen() {
       <View>
         <Avatar uri={item.avatarUrl} name={item.title} size={52} />
         {peerOnline && !selected && <View style={styles.onlineDot} />}
+        {/* Disappearing-messages timer indicator (WhatsApp parity) — subtle clock. */}
+        {disappearing && !selected && (
+          <View style={styles.disappearBadge}>
+            <Ionicons name="timer-outline" size={11} color="#fff" />
+          </View>
+        )}
         {selected && (
           <View style={styles.checkOverlay}>
             <Ionicons name="checkmark" size={16} color="#fff" />
@@ -546,6 +596,9 @@ export default function ConversationsScreen() {
             {lastPreview(item)}
           </Text>
           <View style={styles.rowIcons}>
+            {locked && (
+              <Ionicons name="lock-closed" size={13} color={colors.textFaint} style={{ marginLeft: spacing(1) }} />
+            )}
             {mutedIds.has(item.conversation.id) && (
               <Ionicons name="notifications-off" size={14} color={colors.textFaint} style={{ marginLeft: spacing(1) }} />
             )}
@@ -604,6 +657,8 @@ export default function ConversationsScreen() {
         ItemSeparatorComponent={Separator}
         ListHeaderComponent={selectionMode ? null : (
           <View>
+            {/* Status strip (WhatsApp home parity) — hidden while searching. */}
+            {q === '' && <StatusStrip />}
             <View style={styles.searchBar}>
               <Ionicons name="search" size={16} color={colors.textMuted} />
               <TextInput
@@ -620,14 +675,23 @@ export default function ConversationsScreen() {
                 </Pressable>
               )}
             </View>
-            {hiddenIds.size > 0 && (
-              <Pressable style={styles.hiddenToggle} onPress={() => setShowHidden((v) => !v)}>
-                <Ionicons name={showHidden ? 'eye-off' : 'eye'} size={15} color={colors.primary} />
+            {/* Locked chats (0027): hidden until authenticated with device auth. */}
+            {lockedCount > 0 && q === '' && (
+              <Pressable
+                style={styles.hiddenToggle}
+                onPress={async () => {
+                  if (chatLock.unlocked) { chatLock.relock(); return; }
+                  await chatLock.unlock('Unlock chats');
+                }}
+              >
+                <Ionicons name={chatLock.unlocked ? 'lock-open' : 'lock-closed'} size={15} color={colors.primary} />
                 <Text style={styles.hiddenToggleText}>
-                  {showHidden ? 'Hide private chats' : `Show hidden chats (${hiddenIds.size})`}
+                  {chatLock.unlocked ? 'Hide locked chats' : `Locked chats (${lockedCount})`}
                 </Text>
               </Pressable>
             )}
+            {/* Archived chats are reached from Settings › Archived chats — no
+                inline reveal row on the main list (WhatsApp parity). */}
             {msgHits.length > 0 && (
               <View style={styles.hits}>
                 <Text style={styles.hitsHead}>MESSAGES</Text>
@@ -821,6 +885,12 @@ const makeStyles = (colors: Palette) =>
       position: 'absolute', right: 0, bottom: 0,
       width: 14, height: 14, borderRadius: 7,
       backgroundColor: '#25D366', borderWidth: 2, borderColor: colors.bg,
+    },
+    disappearBadge: {
+      position: 'absolute', right: -2, top: -2,
+      width: 18, height: 18, borderRadius: 9,
+      backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center',
+      borderWidth: 1.5, borderColor: colors.bg,
     },
     hiddenToggle: {
       flexDirection: 'row', alignItems: 'center', gap: 6,

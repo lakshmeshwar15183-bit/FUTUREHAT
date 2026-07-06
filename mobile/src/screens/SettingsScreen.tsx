@@ -7,7 +7,7 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { supabase } from '../lib/supabase';
-import { getCurrentUser, getMyProfile, signOut, getSubscription, isSubscriptionActive, getServerAdmin } from '../lib/shared';
+import { getCurrentUser, getMyProfile, signOut, getSubscription, isSubscriptionActive, getServerAdmin, getServerModerator, getServerOwner, getMailboxUnseenCount } from '../lib/shared';
 import type { Profile } from '../lib/shared';
 import { getCachedProfile, cacheProfile, getCache, setCache } from '../lib/localCache';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
@@ -26,6 +26,9 @@ export default function SettingsScreen() {
   const [uid, setUid] = useState<string | null>(null);
   const [premium, setPremium] = useState(false);
   const [admin, setAdmin] = useState(false);
+  const [owner, setOwner] = useState(false);
+  const [moderator, setModerator] = useState(false);
+  const [unseenMail, setUnseenMail] = useState(0);
 
   useFocusEffect(
     React.useCallback(() => {
@@ -38,11 +41,12 @@ export default function SettingsScreen() {
         // Instant: cached profile + premium/admin flags so the header + gated
         // rows render immediately, offline included.
         if (id) { const cached = await getCachedProfile(id); if (alive && cached) setProfile(cached); }
-        const [cp, ca] = await Promise.all([
+        const [cp, ca, co] = await Promise.all([
           getCache<boolean>('me:premium', false),
           getCache<boolean>('me:admin', false),
+          getCache<boolean>('me:owner', false),
         ]);
-        if (alive) { setPremium(cp); setAdmin(ca); }
+        if (alive) { setPremium(cp); setAdmin(ca); setOwner(co); }
         // Background refresh + cache rewrite (kept even if offline throws).
         const p = await getMyProfile(supabase).catch(() => null);
         if (alive && p) { setProfile(p); cacheProfile(p); }
@@ -51,6 +55,14 @@ export default function SettingsScreen() {
         if (alive) { setPremium(prem); setCache('me:premium', prem); }
         const adm = await getServerAdmin(supabase).catch(() => false);
         if (alive) { setAdmin(adm); setCache('me:admin', adm); }
+        // Admin Dashboard is OWNER-only (the single permanent owner). is_owner is
+        // the immutable developer allowlist, independent of profiles.role.
+        const own = await getServerOwner(supabase).catch(() => false);
+        if (alive) { setOwner(own); setCache('me:owner', own); }
+        const mod = await getServerModerator(supabase).catch(() => false);
+        if (alive) setModerator(mod);
+        const mail = await getMailboxUnseenCount(supabase).catch(() => 0);
+        if (alive) setUnseenMail(mail);
       })();
       return () => { alive = false; };
     }, []),
@@ -78,6 +90,7 @@ export default function SettingsScreen() {
           <View style={styles.nameRow}>
             <Text style={styles.profileName} numberOfLines={1}>{profile?.display_name ?? 'Your name'}</Text>
             {(premium || admin) && <Text style={styles.plusBadge}>+</Text>}
+            {moderator && !admin && <Text style={styles.modBadge}>🛡 MOD</Text>}
             {admin && <Text style={styles.devBadge}>DEV</Text>}
           </View>
           {profile?.username ? <Text style={styles.handle} numberOfLines={1}>@{profile.username}</Text> : null}
@@ -143,11 +156,17 @@ export default function SettingsScreen() {
         <Row icon="download-outline" label="Export my data" onPress={() => navigation.navigate('DataExport')} />
       </Group>
 
-      {admin && (
-        <Group>
+      <Group>
+        <Row icon="mail-outline" label="Mailbox" badge={unseenMail} onPress={() => { setUnseenMail(0); navigation.navigate('Mailbox'); }} />
+        {/* Moderator dashboard: OWNER + moderators (getServerModerator is true for
+            the owner too). Admin dashboard: OWNER only. */}
+        {moderator && (
+          <Row icon="shield-checkmark-outline" label="Moderator dashboard" onPress={() => navigation.navigate('Moderator')} />
+        )}
+        {owner && (
           <Row icon="shield-half-outline" label="Admin dashboard" onPress={() => navigation.navigate('Admin')} />
-        </Group>
-      )}
+        )}
+      </Group>
 
       <Group>
         <Row icon="share-social-outline" label="Invite a friend" onPress={() => navigation.navigate('Invite')} />
@@ -178,12 +197,14 @@ function Row({
   onPress,
   danger,
   locked,
+  badge,
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
   onPress: () => void;
   danger?: boolean;
   locked?: boolean;
+  badge?: number;
 }) {
   const colors = useColors();
   const tint = danger ? colors.danger : colors.text;
@@ -197,6 +218,11 @@ function Row({
     >
       <Ionicons name={icon} size={22} color={danger ? colors.danger : colors.textMuted} />
       <Text style={{ flex: 1, color: tint, fontSize: font.body, marginLeft: spacing(4) }}>{label}</Text>
+      {badge ? (
+        <View style={{ minWidth: 20, height: 20, paddingHorizontal: 6, borderRadius: 10, backgroundColor: colors.danger, alignItems: 'center', justifyContent: 'center', marginRight: spacing(2) }}>
+          <Text style={{ color: '#fff', fontSize: font.tiny, fontWeight: '800' }}>{badge > 99 ? '99+' : badge}</Text>
+        </View>
+      ) : null}
       {locked && (
         <Ionicons name="lock-closed" size={14} color={colors.textFaint} style={{ marginRight: spacing(1.5) }} />
       )}
@@ -225,6 +251,18 @@ const makeStyles = (colors: Palette) =>
       backgroundColor: colors.accentPlus,
       fontSize: font.tiny,
       fontWeight: '800',
+      paddingHorizontal: 6,
+      paddingVertical: 1,
+      borderRadius: 5,
+      overflow: 'hidden',
+    },
+    modBadge: {
+      marginLeft: spacing(2),
+      color: '#fff',
+      backgroundColor: '#3b82f6',
+      fontSize: font.tiny,
+      fontWeight: '800',
+      letterSpacing: 0.3,
       paddingHorizontal: 6,
       paddingVertical: 1,
       borderRadius: 5,

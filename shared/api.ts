@@ -16,6 +16,7 @@ import type {
   MessageReaction,
   Status,
   StatusType,
+  StatusAudience,
   StatusViewer,
   UUID,
   MessageType,
@@ -200,10 +201,14 @@ export async function getMyConversations(
         .map((id) => profById.get(id))
         .filter((p): p is Profile => !!p);
 
+      // Skip unsent (is_deleted) messages so the chat-list preview shows the last
+      // REAL message — an unsent message vanishes here too (Instagram-style), never
+      // leaving a "deleted" preview behind.
       const { data: lastMsg } = await client
         .from('messages')
         .select('*')
         .eq('conversation_id', conv.id)
+        .eq('is_deleted', false)
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -269,9 +274,75 @@ export async function getMessages(
     .from('messages')
     .select('*')
     .eq('conversation_id', conversationId)
+    // Disappearing messages (0022): never fetch ones that already expired.
+    .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
     .order('created_at', { ascending: false })
     .limit(limit);
   return (data || []).reverse();
+}
+
+// ── Disappearing messages (0022) ─────────────────────────────────────────────
+
+/** Set (or clear) a conversation's disappearing-messages timer. `seconds` is
+ *  0 (off) or 3600..28800 (1–8h). Member-gated server-side via `set_disappearing`.
+ *  New messages carry a per-message `expires_at` snapshot from this setting. */
+export async function setConversationDisappearing(
+  client: SupabaseClient,
+  conversationId: UUID,
+  seconds: number,
+): Promise<{ error: Error | null }> {
+  const { error } = await client.rpc('set_disappearing', {
+    conv: conversationId,
+    secs: seconds,
+  });
+  return { error };
+}
+
+/** Current disappearing-messages timer for a conversation (0 = off). Best-effort:
+ *  returns 0 on error or before the migration is applied. */
+export async function getDisappearing(
+  client: SupabaseClient,
+  conversationId: UUID,
+): Promise<number> {
+  try {
+    const { data } = await client
+      .from('conversations')
+      .select('disappear_seconds')
+      .eq('id', conversationId)
+      .single();
+    return (data as { disappear_seconds?: number } | null)?.disappear_seconds ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** Opportunistic physical cleanup of expired messages in the caller's own
+ *  conversations. Best-effort: swallows errors (clients also hide expired live). */
+export async function purgeExpiredMessages(client: SupabaseClient): Promise<number> {
+  try {
+    const { data } = await client.rpc('purge_expired_messages');
+    return typeof data === 'number' ? data : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** True when a message has passed its disappearing expiry at `now` (ms epoch).
+ *  Messages with no `expires_at` never expire. */
+export function messageExpired(m: Message, now: number = Date.now()): boolean {
+  return !!m.expires_at && new Date(m.expires_at).getTime() <= now;
+}
+
+/** Soonest future `expires_at` across a list, as ms epoch, or null when none.
+ *  Drives a single self-rescheduling expiry timer (mirrors status strips). */
+export function nextMessageExpiry(messages: Message[], now: number = Date.now()): number | null {
+  let soonest: number | null = null;
+  for (const m of messages) {
+    if (!m.expires_at) continue;
+    const t = new Date(m.expires_at).getTime();
+    if (t > now && (soonest === null || t < soonest)) soonest = t;
+  }
+  return soonest;
 }
 
 /**
@@ -763,22 +834,53 @@ function flattenJoin<T>(v: unknown): T | null {
   return (v as T) ?? null;
 }
 
+// Extra attributes for a status. All optional and backward-compatible — existing
+// callers that pass only (type, content, mediaUrl, background) keep working.
+export interface CreateStatusOpts {
+  caption?: string;                 // image/video/audio caption
+  textColor?: string;               // custom text-status color
+  durationMs?: number;              // audio/video length
+  audience?: StatusAudience;        // privacy audience; defaults to 'everyone'
+  memberIds?: UUID[];               // for audience 'except' / 'only' — snapshotted
+}
+
 export async function createStatus(
   client: SupabaseClient,
   type: StatusType,
   content?: string,
   mediaUrl?: string,
   background?: string,
+  opts?: CreateStatusOpts,
 ): Promise<{ status: Status | null; error: Error | null }> {
   const user = await getCurrentUser(client);
   if (!user) return { status: null, error: new Error('not authenticated') };
 
+  const audience = opts?.audience ?? 'everyone';
   const { data, error } = await client
     .from('statuses')
-    .insert({ user_id: user.id, type, content, media_url: mediaUrl, background })
+    .insert({
+      user_id: user.id,
+      type,
+      content,
+      media_url: mediaUrl,
+      background,
+      caption: opts?.caption ?? null,
+      text_color: opts?.textColor ?? null,
+      duration_ms: opts?.durationMs ?? null,
+      audience,
+    })
     .select()
     .single();
-  return { status: data, error };
+  if (error || !data) return { status: data ?? null, error };
+
+  // Snapshot the Except / Only member list for this status so privacy is
+  // enforced consistently even if the user later changes their default.
+  if ((audience === 'except' || audience === 'only') && opts?.memberIds?.length) {
+    const rows = opts.memberIds.map((uid) => ({ status_id: (data as Status).id, user_id: uid }));
+    const { error: audErr } = await client.from('status_audience').insert(rows);
+    if (audErr) return { status: data as Status, error: audErr };
+  }
+  return { status: data as Status, error: null };
 }
 
 // Delete one of your own statuses (RLS enforces ownership).
@@ -831,6 +933,102 @@ export async function getStatusViewers(
   });
 }
 
+// Cheap viewer count for one of your statuses (no row payload transferred).
+export async function getStatusViewCount(client: SupabaseClient, statusId: UUID): Promise<number> {
+  const { count } = await client
+    .from('status_views')
+    .select('*', { count: 'exact', head: true })
+    .eq('status_id', statusId);
+  return count ?? 0;
+}
+
+// Opportunistic physical cleanup of expired statuses (RLS already hides them).
+// Safe for any client to call; returns how many rows were purged.
+export async function purgeExpiredStatuses(client: SupabaseClient): Promise<number> {
+  const { data } = await client.rpc('purge_expired_statuses');
+  return (data as number) ?? 0;
+}
+
+// Realtime: fire `cb` whenever any status row is inserted/deleted, so the tray
+// strip and viewer can drop expired/removed statuses and surface new ones live
+// without polling. status/status_views are already in the supabase_realtime
+// publication (0002 / 0012).
+//
+// CP5 perf pass: this used to open a FRESH `status-changes` channel per caller.
+// Supabase forbids two subscriptions to the same topic on one client, and every
+// INSERT/DELETE fired an *immediate* full refetch — so a burst of status writes
+// (e.g. your own post echoing back while `onPosted` also reloads) triggered a
+// refetch storm. We now keep ONE shared channel per client, ref-counted like the
+// presence room above, and DEBOUNCE the fan-out so rapid changes coalesce into a
+// single reload. Callers get a `{ unsubscribe }` handle; the channel is torn down
+// only when the last subscriber leaves.
+interface StatusChangesRoom {
+  channel: RealtimeChannel;
+  subscribers: Set<() => void>;
+  timer: ReturnType<typeof setTimeout> | null;
+}
+let statusChangesRoom: StatusChangesRoom | null = null;
+const STATUS_CHANGE_DEBOUNCE_MS = 250;
+
+export function subscribeStatusChanges(
+  client: SupabaseClient,
+  cb: () => void,
+): { unsubscribe: () => void } {
+  if (!statusChangesRoom) {
+    const room: StatusChangesRoom = {
+      channel: null as unknown as RealtimeChannel,
+      subscribers: new Set(),
+      timer: null,
+    };
+    const fire = () => {
+      if (room.timer) clearTimeout(room.timer);
+      room.timer = setTimeout(() => {
+        room.timer = null;
+        room.subscribers.forEach((s) => s());
+      }, STATUS_CHANGE_DEBOUNCE_MS);
+    };
+    room.channel = client
+      .channel('status-changes')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'statuses' }, fire)
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'statuses' }, fire)
+      .subscribe();
+    statusChangesRoom = room;
+  }
+
+  const room = statusChangesRoom;
+  room.subscribers.add(cb);
+  return {
+    unsubscribe: () => {
+      const r = statusChangesRoom;
+      if (!r) return;
+      r.subscribers.delete(cb);
+      if (r.subscribers.size === 0) {
+        if (r.timer) clearTimeout(r.timer);
+        void client.removeChannel(r.channel);
+        statusChangesRoom = null;
+      }
+    },
+  };
+}
+
+// Realtime: fire `cb` when a new view is recorded on one of the current user's
+// statuses (drives a live "seen by" count/list). RLS already limits which
+// status_views rows the owner receives.
+export function subscribeStatusViews(
+  client: SupabaseClient,
+  statusId: UUID,
+  cb: () => void,
+): RealtimeChannel {
+  return client
+    .channel(`status-views:${statusId}`)
+    .on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'status_views', filter: `status_id=eq.${statusId}` },
+      () => cb(),
+    )
+    .subscribe();
+}
+
 // ── Storage (media uploads) ─────────────────────────────────────────────────
 
 // `file` is File | Blob on web; on React Native we pass a decoded ArrayBuffer
@@ -852,6 +1050,26 @@ export async function uploadMedia(
   if (error) return { url: null, error };
 
   const { data } = client.storage.from('media').getPublicUrl(path);
+  return { url: data.publicUrl, error: null };
+}
+
+// Upload status media (image / video / audio) to the private `status` bucket,
+// under <userId>/<ts>.<ext> (matches the "status owner write" storage policy).
+// Both web and mobile use this so the bucket/path/url logic lives in one place.
+// Retry = simply call again (a fresh timestamped path is used each time).
+export async function uploadStatusMedia(
+  client: SupabaseClient,
+  userId: UUID,
+  file: File | Blob | ArrayBuffer,
+  ext: string,
+  contentType?: string,
+): Promise<{ url: string | null; error: Error | null }> {
+  const path = `${userId}/${Date.now()}.${ext.replace(/^\./, '')}`;
+  const { error } = await client.storage
+    .from('status')
+    .upload(path, file as Blob, contentType ? { contentType } : undefined);
+  if (error) return { url: null, error };
+  const { data } = client.storage.from('status').getPublicUrl(path);
   return { url: data.publicUrl, error: null };
 }
 

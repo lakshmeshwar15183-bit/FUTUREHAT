@@ -196,6 +196,7 @@ const makeStyles = (colors: Palette) =>
       alignItems: 'center',
       justifyContent: 'center',
       elevation: 6,
+      shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 5, shadowOffset: { width: 0, height: 3 },
     },
     fabDisabled: { opacity: 0.4 },
   });

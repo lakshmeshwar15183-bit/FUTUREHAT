@@ -15,13 +15,16 @@ import {
   blockUser, unblockUser, getBlockedIds, submitReport,
   muteConversation, unmuteConversation, getMutedIds,
 } from '@shared/supportApi';
-import { getSharedMedia } from '@shared/api';
+import { getSharedMedia, getDisappearing, setConversationDisappearing } from '@shared/api';
+import { getLockedIds, lockConversation, unlockConversation } from '@shared/chatLockApi';
+import { deviceAuth } from '../lib/deviceAuth';
 import type { Profile, Message } from '@shared/types';
 import { MediaLightbox, type MediaItem } from '../media/MediaLightbox';
 import '../media/MediaLightbox.css';
 import { formatDistanceToNow } from 'date-fns';
 import { modalBackdrop, modalPanel } from '../motion';
 import './ContactProfileModal.css';
+import '../moderator/ModeratorDashboard.css';
 
 interface Props {
   profile: Profile;
@@ -41,16 +44,59 @@ export function ContactProfileModal({ profile, online, isPremium, conversationId
   const [toast, setToast] = useState<string | null>(null);
   const [media, setMedia] = useState<Message[]>([]);
   const [lightbox, setLightbox] = useState<string | null>(null);
+  // Disappearing messages (0022): per-chat timer, 0 = off else 3600..28800 (1–8h).
+  const [disappearSecs, setDisappearSecs] = useState(0);
+  // Chat Lock (0027): this chat locked behind the device's own auth (fingerprint /
+  // face / PIN). No secret is stored by FUTUREHAT.
+  const [locked, setLocked] = useState(false);
+  const [lockAvailable, setLockAvailable] = useState(false);
+  // Moderator badge (0023): profiles.role is world-readable; fetch it lightly.
+  const [isModerator, setIsModerator] = useState(false);
 
   function flash(m: string) { setToast(m); setTimeout(() => setToast(null), 2400); }
 
   useEffect(() => {
+    void (async () => {
+      try {
+        const { data } = await supabase.from('profiles').select('role').eq('id', profile.id).maybeSingle();
+        setIsModerator(['moderator', 'admin', 'owner'].includes((data as { role?: string } | null)?.role ?? ''));
+      } catch { /* ignore */ }
+    })();
     getBlockedIds(supabase).then((ids) => setBlocked(ids.includes(profile.id))).catch(() => {});
+    void deviceAuth.isAvailable().then(setLockAvailable).catch(() => setLockAvailable(false));
     if (conversationId) {
       getMutedIds(supabase).then((ids) => setMuted(ids.includes(conversationId))).catch(() => {});
       getSharedMedia(supabase, conversationId).then(setMedia).catch(() => {});
+      getDisappearing(supabase, conversationId).then(setDisappearSecs).catch(() => {});
+      getLockedIds(supabase).then((ids) => setLocked(ids.includes(conversationId))).catch(() => {});
     }
   }, [profile.id, conversationId]);
+
+  // Toggle Chat Lock for this conversation. Both directions require the device auth
+  // gesture (fingerprint / face / PIN) so only the device owner can change it.
+  async function toggleLock() {
+    if (!conversationId) return;
+    if (!lockAvailable) {
+      flash('Set up a screen lock (fingerprint, face, or PIN) on this device to use Chat Lock.');
+      return;
+    }
+    const was = locked;
+    const ok = await deviceAuth.authenticate(was ? 'Unlock chat' : 'Lock chat');
+    if (!ok) return;
+    setLocked(!was); // instant
+    const { error } = was ? await unlockConversation(supabase, conversationId) : await lockConversation(supabase, conversationId);
+    if (error) { setLocked(was); flash('Could not update Chat Lock'); }
+    else flash(was ? 'Chat unlocked' : 'Chat locked');
+  }
+
+  async function chooseDisappearing(secs: number) {
+    if (!conversationId) return;
+    const prev = disappearSecs;
+    setDisappearSecs(secs); // instant
+    const { error } = await setConversationDisappearing(supabase, conversationId, secs);
+    if (error) { setDisappearSecs(prev); flash('Could not update timer'); }
+    else flash(secs > 0 ? 'Disappearing messages on' : 'Disappearing messages off');
+  }
 
   const photos = media.filter((m) => m.type === 'image');
   const docs = media.filter((m) => m.type === 'file');
@@ -124,10 +170,12 @@ export function ContactProfileModal({ profile, online, isPremium, conversationId
           <div className="contact-avatar" style={profile.avatar_url ? { backgroundImage: `url(${profile.avatar_url})` } : undefined}>
             {!profile.avatar_url && (profile.display_name?.[0]?.toUpperCase() || '?')}
             {online && <span className="contact-online-dot" />}
+            {disappearSecs > 0 && <span className="contact-disappear-badge" title="Disappearing messages on">⏳</span>}
           </div>
           <div className="contact-name">
             {profile.display_name || 'FUTUREHAT user'}
             {isPremium && <span className="contact-badge" title="FUTUREHAT+">✦</span>}
+            {isModerator && <span className="mod-badge" title="FUTUREHAT Moderator">🛡 MOD</span>}
           </div>
           <div className="contact-presence">{presence}</div>
         </div>
@@ -150,6 +198,55 @@ export function ContactProfileModal({ profile, online, isPremium, conversationId
             <div className="contact-field"><div className="contact-field-val">{profile.phone}</div><div className="contact-field-label">Phone</div></div>
           )}
         </div>
+
+        {conversationId && (
+          <div className="contact-disappear">
+            <div className="contact-disappear-head">
+              <span className="contact-disappear-icon">⏳</span>
+              <div className="contact-disappear-text">
+                <div className="contact-disappear-title">Disappearing messages</div>
+                <div className="contact-disappear-hint">
+                  New messages in this chat disappear after the selected duration.
+                </div>
+              </div>
+              <select
+                className="contact-disappear-select"
+                value={disappearSecs}
+                onChange={(e) => chooseDisappearing(Number(e.target.value))}
+                aria-label="Disappearing messages timer"
+              >
+                <option value={0}>Off</option>
+                {Array.from({ length: 8 }, (_, i) => i + 1).map((h) => (
+                  <option key={h} value={h * 3600}>{h} hour{h > 1 ? 's' : ''}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        )}
+
+        {conversationId && (
+          <div className="contact-disappear">
+            <div className="contact-disappear-head">
+              <span className="contact-disappear-icon">🔒</span>
+              <div className="contact-disappear-text">
+                <div className="contact-disappear-title">Chat lock</div>
+                <div className="contact-disappear-hint">
+                  {lockAvailable
+                    ? "Lock this chat behind your device's fingerprint, face unlock, or PIN."
+                    : 'Set up a screen lock on this device to use Chat Lock.'}
+                </div>
+              </div>
+              <button
+                className={`contact-lock-btn ${locked ? 'on' : ''}`}
+                onClick={toggleLock}
+                disabled={!lockAvailable}
+                aria-pressed={locked}
+              >
+                {locked ? 'Locked' : 'Lock'}
+              </button>
+            </div>
+          </div>
+        )}
 
         {conversationId && (photos.length > 0 || docs.length > 0) && (
           <div className="contact-media">

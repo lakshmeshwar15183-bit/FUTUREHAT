@@ -1,0 +1,95 @@
+/* FUTUREHAT — Calls module (web). Theme-aware via --fh-* vars. */
+
+.calls-modal {
+  position: relative; width: min(460px, 100%); height: min(80vh, 720px);
+  display: flex; flex-direction: column; overflow: hidden;
+  background: var(--fh-panel); color: var(--fh-text);
+  border: 1px solid var(--fh-border); border-radius: 18px;
+  box-shadow: var(--fh-shadow, 0 24px 60px rgba(0,0,0,.4));
+}
+
+.calls-head { display: flex; align-items: center; gap: 10px; padding: 16px 18px; border-bottom: 1px solid var(--fh-border); }
+.calls-head h2 { margin: 0; font-size: 19px; flex: 1; }
+.calls-head.selecting { background: var(--fh-accent); color: #fff; }
+.calls-head.selecting strong { flex: 1; }
+.calls-head-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.calls-icon-btn { background: none; border: none; color: inherit; cursor: pointer; font-size: 17px; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
+.calls-icon-btn:hover { background: rgba(127,127,127,.16); }
+.calls-modal .modal-close { position: static; width: 32px; height: 32px; border: none; border-radius: 50%; background: rgba(127,127,127,.16); color: var(--fh-text); cursor: pointer; }
+.calls-modal .header-menu-wrap { position: relative; }
+.calls-modal .header-menu { position: absolute; top: 36px; right: 0; z-index: 20; }
+
+.calls-search { display: flex; align-items: center; gap: 8px; margin: 10px 14px; padding: 8px 12px; background: var(--fh-elevated); border-radius: 999px; }
+.calls-search input { flex: 1; background: none; border: none; outline: none; color: var(--fh-text); font-size: 14px; }
+
+.calls-list { flex: 1; overflow-y: auto; }
+.calls-row { display: flex; align-items: center; gap: 12px; padding: 10px 16px; cursor: pointer; }
+.calls-row:hover { background: var(--fh-elevated); }
+.calls-row.sel { background: rgba(124,92,255,.16); }
+.calls-check { width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--fh-border); display: flex; align-items: center; justify-content: center; font-size: 12px; color: #fff; flex-shrink: 0; }
+.calls-check.on { background: var(--fh-accent); border-color: var(--fh-accent); }
+.calls-avatar { width: 46px; height: 46px; border-radius: 50%; background: var(--fh-accent); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; background-size: cover; background-position: center; flex-shrink: 0; }
+.calls-avatar.sm { width: 36px; height: 36px; font-size: 14px; }
+.calls-avatar.lg { width: 96px; height: 96px; font-size: 34px; }
+.calls-row-main { flex: 1; min-width: 0; }
+.calls-name { font-weight: 600; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.calls-row.missed .calls-name { color: #ef4444; }
+.calls-meta { display: flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--fh-muted); margin-top: 2px; }
+.calls-dir { font-weight: 800; }
+.calls-dir.out { color: var(--fh-accent); }
+.calls-dir.in { color: #22c55e; }
+.calls-dir.miss { color: #ef4444; }
+.calls-type-btn { background: none; border: none; color: var(--fh-accent); cursor: pointer; padding: 6px; border-radius: 8px; display: flex; align-items: center; }
+.calls-type-btn:hover { background: rgba(124,92,255,.14); }
+
+.calls-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; text-align: center; color: var(--fh-muted); padding: 30px; }
+.calls-empty-illus { width: 96px; height: 96px; border-radius: 50%; background: rgba(124,92,255,.14); color: var(--fh-accent); display: flex; align-items: center; justify-content: center; margin-bottom: 16px; }
+.calls-empty-title { font-size: 18px; font-weight: 700; color: var(--fh-text); }
+.calls-empty-sub { font-size: 13px; margin-top: 6px; max-width: 260px; }
+
+.calls-fab { position: absolute; right: 18px; bottom: 18px; width: 54px; height: 54px; border-radius: 50%; background: var(--fh-accent); color: #fff; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 6px 18px rgba(0,0,0,.3); }
+.calls-fab-plus { position: absolute; top: 10px; right: 12px; font-size: 12px; font-weight: 800; }
+.calls-cancel { background: none; border: none; color: #ef4444; font-weight: 700; cursor: pointer; font-size: 13px; }
+.calls-sched-icon { width: 46px; display: flex; justify-content: center; color: var(--fh-accent); }
+
+/* Detail */
+.calls-detail { display: flex; flex-direction: column; align-items: center; padding: 24px; overflow-y: auto; }
+.calls-detail-name { font-size: 20px; font-weight: 700; margin-top: 12px; }
+.calls-detail-sub { font-size: 13px; color: var(--fh-muted); margin-top: 2px; }
+.calls-detail-quick { display: flex; gap: 12px; margin: 20px 0; }
+.calls-detail-quick button { display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-radius: 12px; border: 1px solid var(--fh-border); background: var(--fh-elevated); color: var(--fh-text); font-weight: 600; cursor: pointer; }
+.calls-detail-quick button:hover { border-color: var(--fh-accent); color: var(--fh-accent); }
+.calls-detail-actions { display: flex; flex-direction: column; gap: 8px; width: 100%; max-width: 300px; }
+.calls-detail-actions button { display: flex; align-items: center; gap: 8px; justify-content: flex-start; padding: 11px 14px; border-radius: 10px; border: 1px solid var(--fh-border); background: var(--fh-panel); color: var(--fh-text); cursor: pointer; font-size: 14px; }
+.calls-detail-actions button:hover { background: var(--fh-elevated); }
+.calls-detail-actions button.danger { color: #ef4444; border-color: rgba(239,68,68,.4); }
+.calls-toast { margin-top: 14px; background: var(--fh-elevated); padding: 8px 14px; border-radius: 999px; font-size: 13px; }
+
+/* Sub-panels (schedule compose / contact picker) */
+.calls-sub-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.5); display: flex; align-items: center; justify-content: center; padding: 18px; z-index: 30; }
+.calls-sub-panel { width: 100%; max-width: 360px; max-height: 90%; overflow-y: auto; background: var(--fh-panel); border: 1px solid var(--fh-border); border-radius: 14px; padding: 18px; }
+.calls-sub-panel h3 { margin: 0 0 12px; font-size: 16px; }
+.calls-input { width: 100%; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--fh-border); background: var(--fh-bg); color: var(--fh-text); font-size: 14px; margin-bottom: 10px; }
+.calls-pick-list { max-height: 300px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.calls-pick-row { display: flex; align-items: center; gap: 10px; padding: 8px; border-radius: 10px; border: none; background: none; color: var(--fh-text); cursor: pointer; width: 100%; text-align: left; }
+.calls-pick-row:hover { background: var(--fh-elevated); }
+.calls-pick-name { flex: 1; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.calls-picked { font-weight: 700; margin-bottom: 10px; }
+.calls-type-chips, .calls-sub-actions { display: flex; gap: 8px; margin-bottom: 12px; }
+.calls-type-chips button { flex: 1; padding: 8px; border-radius: 999px; border: 1px solid var(--fh-border); background: var(--fh-bg); color: var(--fh-muted); cursor: pointer; }
+.calls-type-chips button.on { background: var(--fh-accent); color: #fff; border-color: var(--fh-accent); }
+.calls-sub-actions { justify-content: flex-end; }
+.calls-sub-actions button { padding: 8px 16px; border-radius: 8px; border: 1px solid var(--fh-border); background: var(--fh-bg); color: var(--fh-text); cursor: pointer; font-weight: 600; }
+.calls-sub-actions button.primary { background: var(--fh-accent); color: #fff; border-color: var(--fh-accent); }
+.calls-sub-actions button:disabled { opacity: .5; cursor: not-allowed; }
+
+/* Settings */
+.calls-settings { padding: 8px 16px; overflow-y: auto; }
+.calls-toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 4px; border-bottom: 1px solid var(--fh-border); cursor: pointer; }
+.calls-toggle-name { font-size: 14.5px; font-weight: 600; }
+.calls-toggle-sub { font-size: 12px; color: var(--fh-muted); margin-top: 2px; }
+.calls-switch { width: 42px; height: 24px; border-radius: 999px; background: var(--fh-border); position: relative; flex-shrink: 0; transition: background .15s; }
+.calls-switch.on { background: var(--fh-accent); }
+.calls-switch i { position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; border-radius: 50%; background: #fff; transition: left .15s; }
+.calls-switch.on i { left: 20px; }
+.calls-note { font-size: 12px; color: var(--fh-muted); text-align: center; margin-top: 16px; }

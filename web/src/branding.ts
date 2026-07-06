@@ -3,5 +3,5 @@
 
 export const OWNER = 'LAKSHMESHWAR PANDEY';
 export const APP_NAME = 'FUTUREHAT';
-export const APP_VERSION = '1.1.0';
+export const APP_VERSION = '2.4.3';
 export const CREDIT = `Developed by ${OWNER}`;

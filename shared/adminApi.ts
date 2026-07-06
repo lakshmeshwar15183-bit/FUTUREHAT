@@ -7,7 +7,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type {
   UUID,
-  PlatformRole,
   AccountStatus,
   PremiumDuration,
   AnnouncementKind,
@@ -24,6 +23,9 @@ import type {
   AdminReport,
   AdminConversationView,
   ReportStatus,
+  WarningReason,
+  MailboxItem,
+  ModeratorAuditEntry,
 } from './types.js';
 
 // ── Privilege checks (server-authoritative) ─────────────────────────────────────
@@ -96,8 +98,11 @@ export async function adminDeleteAccount(client: SupabaseClient, target: UUID, r
   if (error) throw error;
 }
 
-// Promote / demote / assign moderator / assign+remove admin (admin ⇒ owner-only server-side).
-export async function adminSetRole(client: SupabaseClient, target: UUID, role: Exclude<PlatformRole, 'owner'>): Promise<void> {
+// Assign / remove Moderator, or demote to User. The 'admin' (and 'owner') roles are
+// PERMANENT and can never be assigned or transferred through the app — FUTUREHAT has a
+// single hardcoded owner/admin (the developer allowlist). The server-side admin_set_role
+// (migration 0025) rejects any role other than 'user'/'moderator'; this type mirrors that.
+export async function adminSetRole(client: SupabaseClient, target: UUID, role: 'user' | 'moderator'): Promise<void> {
   const { error } = await client.rpc('admin_set_role', { target, new_role: role });
   if (error) throw error;
 }
@@ -200,6 +205,14 @@ export async function adminSendAnnouncement(
   return (data as string) ?? null;
 }
 
+// Removes the latest active announcement (owner-only RPC). Returns the deleted
+// announcement id, or null if there was no active announcement to remove.
+export async function adminRemoveCurrentAnnouncement(client: SupabaseClient): Promise<string | null> {
+  const { data, error } = await client.rpc('admin_remove_announcement');
+  if (error) throw error;
+  return (data as string) ?? null;
+}
+
 // ── Analytics / metrics / health ─────────────────────────────────────────────────
 
 export async function adminStats(client: SupabaseClient): Promise<AdminStats> {
@@ -291,6 +304,67 @@ export async function adminGetConversation(
   });
   if (error) throw error;
   return data as AdminConversationView;
+}
+
+// ── Moderator system (0023) ──────────────────────────────────────────────────
+// Assign / remove the moderator role via the modular server entry point, which
+// wraps {role change + mailbox notification + audit} in one call. Admin-gated
+// server-side; a future eligibility system can call the same RPC.
+export async function assignModerator(client: SupabaseClient, target: UUID): Promise<void> {
+  const { error } = await client.rpc('assign_moderator', { p_target: target });
+  if (error) throw error;
+}
+export async function removeModerator(client: SupabaseClient, target: UUID): Promise<void> {
+  const { error } = await client.rpc('remove_moderator', { p_target: target });
+  if (error) throw error;
+}
+
+// Issue a structured official warning (fixed reason + optional note), delivered
+// to the target's mailbox and permanently recorded. Moderator-or-admin gated.
+export async function issueWarning(
+  client: SupabaseClient, target: UUID, reason: WarningReason, note?: string, reportId?: UUID,
+): Promise<void> {
+  const { error } = await client.rpc('issue_warning', {
+    p_target: target, p_reason: reason, p_note: note ?? null, p_report: reportId ?? null,
+  });
+  if (error) throw error;
+}
+
+// Escalate a report to admins (flag + note; sets status 'reviewing').
+export async function escalateReport(
+  client: SupabaseClient, reportId: UUID, note?: string,
+): Promise<void> {
+  const { error } = await client.rpc('mod_escalate_report', {
+    p_report: reportId, p_note: note ?? null,
+  });
+  if (error) throw error;
+}
+
+// ── User mailbox ──────────────────────────────────────────────────────────────
+export async function getMyMailbox(client: SupabaseClient, limit = 100): Promise<MailboxItem[]> {
+  const { data, error } = await client.rpc('my_mailbox', { p_limit: limit });
+  if (error) throw error;
+  return (data as MailboxItem[]) ?? [];
+}
+export async function getMailboxUnseenCount(client: SupabaseClient): Promise<number> {
+  const { data, error } = await client.rpc('my_mailbox_unseen_count');
+  if (error) return 0;
+  return (data as number) ?? 0;
+}
+export async function markMailboxSeen(client: SupabaseClient, id: UUID): Promise<void> {
+  const { error } = await client.rpc('mark_mailbox_seen', { p_id: id });
+  if (error) throw error;
+}
+export async function markAllMailboxSeen(client: SupabaseClient): Promise<void> {
+  const { error } = await client.rpc('mark_all_mailbox_seen');
+  if (error) throw error;
+}
+
+// Admin-only view of moderator actions (immutable audit_log slice).
+export async function moderatorAuditLog(client: SupabaseClient, limit = 300): Promise<ModeratorAuditEntry[]> {
+  const { data, error } = await client.rpc('admin_moderator_audit', { p_limit: limit });
+  if (error) throw error;
+  return (data as ModeratorAuditEntry[]) ?? [];
 }
 
 // Register/update the current device (clients call on launch so admins can see and

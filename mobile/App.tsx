@@ -5,7 +5,7 @@ import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
+import { NavigationContainer, DefaultTheme, useNavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
@@ -15,6 +15,7 @@ import { getCurrentUser, onAuthChange } from './src/lib/shared';
 import { startSync } from './src/lib/sync';
 import { ThemeProvider, useTheme } from './src/theme';
 import { AppLockProvider, useAppLock } from './src/security/AppLock';
+import { ChatLockProvider } from './src/security/ChatLock';
 import { CallProvider } from './src/calls/CallContext';
 import LockScreen from './src/security/LockScreen';
 import { APP_NAME } from './src/branding';
@@ -22,9 +23,11 @@ import type { RootStackParamList } from './src/navigation/types';
 
 import AuthScreen from './src/screens/AuthScreen';
 import ConversationsScreen from './src/screens/ConversationsScreen';
-import StatusScreen from './src/screens/StatusScreen';
 import CommunitiesScreen from './src/screens/CommunitiesScreen';
 import CallsScreen from './src/screens/CallsScreen';
+import CallDetailScreen from './src/screens/CallDetailScreen';
+import ScheduledCallsScreen from './src/screens/ScheduledCallsScreen';
+import CallSettingsScreen from './src/screens/CallSettingsScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 import ChatScreen from './src/screens/ChatScreen';
 import NewChatScreen from './src/screens/NewChatScreen';
@@ -50,7 +53,10 @@ import InviteScreen from './src/screens/InviteScreen';
 import StarredScreen from './src/screens/StarredScreen';
 import AdminDashboardScreen from './src/screens/admin/AdminDashboardScreen';
 import AdminUserDetailScreen from './src/screens/admin/AdminUserDetailScreen';
+import ModeratorDashboardScreen from './src/screens/ModeratorDashboardScreen';
+import MailboxScreen from './src/screens/MailboxScreen';
 import AdminGate from './src/components/AdminGate';
+import NotificationsBridge from './src/components/NotificationsBridge';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator();
@@ -69,7 +75,6 @@ function MainTabs() {
         tabBarIcon: ({ color, size, focused }) => {
           const map: Record<string, [keyof typeof Ionicons.glyphMap, keyof typeof Ionicons.glyphMap]> = {
             Chats: ['chatbubbles', 'chatbubbles-outline'],
-            Status: ['radio', 'radio-outline'],
             Communities: ['people', 'people-outline'],
             Calls: ['call', 'call-outline'],
             Settings: ['settings', 'settings-outline'],
@@ -80,7 +85,6 @@ function MainTabs() {
       })}
     >
       <Tab.Screen name="Chats" component={ConversationsScreen} options={{ title: APP_NAME }} />
-      <Tab.Screen name="Status" component={StatusScreen} />
       <Tab.Screen name="Communities" component={CommunitiesScreen} />
       <Tab.Screen name="Calls" component={CallsScreen} />
       <Tab.Screen name="Settings" component={SettingsScreen} />
@@ -91,6 +95,7 @@ function MainTabs() {
 function RootNavigator() {
   const { colors, mode } = useTheme();
   const { locked } = useAppLock();
+  const navRef = useNavigationContainerRef<RootStackParamList>();
   const [loading, setLoading] = useState(true);
   const [signedIn, setSignedIn] = useState(false);
 
@@ -147,7 +152,7 @@ function RootNavigator() {
   return (
     <>
       <StatusBar style={colors.isLight ? 'dark' : 'light'} />
-      <NavigationContainer theme={navTheme}>
+      <NavigationContainer theme={navTheme} ref={navRef}>
         <Stack.Navigator screenOptions={screenOptions}>
           {signedIn ? (
             <>
@@ -176,6 +181,11 @@ function RootNavigator() {
               <Stack.Screen name="Starred" component={StarredScreen} options={{ title: 'Starred messages' }} />
               <Stack.Screen name="Admin" component={AdminDashboardScreen} options={{ title: 'Admin dashboard' }} />
               <Stack.Screen name="AdminUserDetail" component={AdminUserDetailScreen} options={{ title: 'Manage user' }} />
+              <Stack.Screen name="Moderator" component={ModeratorDashboardScreen} options={{ title: 'Moderator dashboard' }} />
+              <Stack.Screen name="Mailbox" component={MailboxScreen} options={{ title: 'Mailbox' }} />
+              <Stack.Screen name="CallDetail" component={CallDetailScreen} options={{ title: '' }} />
+              <Stack.Screen name="ScheduledCalls" component={ScheduledCallsScreen} options={{ title: 'Scheduled calls' }} />
+              <Stack.Screen name="CallSettings" component={CallSettingsScreen} options={{ title: 'Call settings' }} />
             </>
           ) : (
             <Stack.Screen name="Auth" component={AuthScreen} options={{ headerShown: false }} />
@@ -183,6 +193,7 @@ function RootNavigator() {
         </Stack.Navigator>
       </NavigationContainer>
       {signedIn && <AdminGate />}
+      {signedIn && <NotificationsBridge navRef={navRef} />}
       {signedIn && locked && (
         <View style={StyleSheet.absoluteFill}>
           <LockScreen />
@@ -200,9 +211,11 @@ export default function App() {
       <SafeAreaProvider>
         <ThemeProvider>
           <AppLockProvider>
-            <CallProvider>
-              <RootNavigator />
-            </CallProvider>
+            <ChatLockProvider>
+              <CallProvider>
+                <RootNavigator />
+              </CallProvider>
+            </ChatLockProvider>
           </AppLockProvider>
         </ThemeProvider>
       </SafeAreaProvider>

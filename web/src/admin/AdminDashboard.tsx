@@ -7,7 +7,8 @@ import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { supabase } from '../supabase';
 import { getServerAdmin } from '@shared/premiumApi';
-import { getServerOwner, adminReportsPendingCount } from '@shared/adminApi';
+import { getServerOwner, adminReportsPendingCount, moderatorAuditLog } from '@shared/adminApi';
+import type { ModeratorAuditEntry } from '@shared/types';
 import { modalBackdrop, modalPanel } from '../motion';
 import { AdminUsers } from './AdminUsers';
 import { AdminReports } from './AdminReports';
@@ -19,7 +20,7 @@ import './AdminDashboard.css';
 
 type Tab =
   | 'overview' | 'users' | 'reports' | 'tickets' | 'calls' | 'messages'
-  | 'search' | 'flags' | 'app' | 'health' | 'audit';
+  | 'search' | 'flags' | 'app' | 'health' | 'audit' | 'modaudit';
 
 interface Stats {
   users: number; messages: number; conversations: number; communities: number;
@@ -108,6 +109,7 @@ export function AdminDashboard({ onClose }: { onClose: () => void }) {
     { id: 'messages', label: 'Messages' },
     { id: 'search', label: 'Search' },
     { id: 'health', label: 'Database' },
+    { id: 'modaudit', label: 'Mod Audit' },
     { id: 'flags', label: 'Feature Flags', ownerOnly: true },
     { id: 'app', label: 'App', ownerOnly: true },
     { id: 'audit', label: 'Audit Log', ownerOnly: true },
@@ -151,6 +153,7 @@ export function AdminDashboard({ onClose }: { onClose: () => void }) {
               {tab === 'messages' && <AdminMessages />}
               {tab === 'search' && <AdminSearch />}
               {tab === 'health' && <AdminHealth />}
+              {tab === 'modaudit' && <ModeratorAudit />}
               {tab === 'flags' && isOwner && <AdminFeatureFlags />}
               {tab === 'app' && isOwner && <AdminAppMgmt />}
               {tab === 'audit' && isOwner && <AdminAudit />}
@@ -183,5 +186,35 @@ export function AdminDashboard({ onClose }: { onClose: () => void }) {
         )}
       </motion.div>
     </motion.div>
+  );
+}
+
+// Admin-only view of the immutable moderator audit trail (0023). Read-only.
+function ModeratorAudit() {
+  const [rows, setRows] = useState<ModeratorAuditEntry[]>([]);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => { moderatorAuditLog(supabase, 300).then(setRows).catch((e) => setErr(e.message)); }, []);
+  if (err) return <div className="admin-warn">{err}</div>;
+  return (
+    <div className="admin-audit">
+      <div className="admin-hint">Every moderator action is recorded here permanently. Records can never be edited or deleted.</div>
+      {rows.length === 0 && <div className="admin-empty">No moderator actions yet.</div>}
+      {rows.length > 0 && (
+        <table className="admin-table">
+          <thead><tr><th>When</th><th>Moderator</th><th>Action</th><th>User / Report</th><th>Details</th></tr></thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.id}>
+                <td>{new Date(r.created_at).toLocaleString()}</td>
+                <td>{r.actor_email || (r.actor_id ? r.actor_id.slice(0, 8) : '—')}</td>
+                <td><span className="admin-tag">{r.action}</span></td>
+                <td><code>{r.target ? String(r.target).slice(0, 12) : '—'}</code></td>
+                <td className="admin-meta-cell">{r.meta ? JSON.stringify(r.meta) : ''}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
   );
 }

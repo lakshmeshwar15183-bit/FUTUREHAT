@@ -8,7 +8,7 @@ import { supabase } from '../supabase';
 import {
   adminCallStats, adminMessageStats, adminDbHealth,
   getFeatureFlags, adminSetFeatureFlag, adminSetAppEnabled,
-  getActiveAnnouncements, adminSendAnnouncement,
+  getActiveAnnouncements, adminSendAnnouncement, adminRemoveCurrentAnnouncement,
   adminAuditLog, adminGlobalSearch, adminDeleteMessage, adminDeleteCommunity,
 } from '@shared/adminApi';
 import type {
@@ -118,6 +118,7 @@ export function AdminAppMgmt() {
   const [body, setBody] = useState('');
   const [list, setList] = useState<Announcement[]>([]);
   const [busy, setBusy] = useState(false);
+  const [removing, setRemoving] = useState(false);
   const load = () => getActiveAnnouncements(supabase).then(setList);
   useEffect(() => { load(); }, []);
   async function send() {
@@ -125,6 +126,15 @@ export function AdminAppMgmt() {
     setBusy(true);
     try { await adminSendAnnouncement(supabase, kind, title.trim(), body.trim() || undefined); setTitle(''); setBody(''); await load(); }
     catch (e: any) { alert(e.message); } finally { setBusy(false); }
+  }
+  async function removeCurrent() {
+    if (!list.length) return;
+    if (!confirm('Are you sure you want to remove the current announcement?')) return;
+    setRemoving(true);
+    try {
+      await adminRemoveCurrentAnnouncement(supabase);
+      await load();
+    } catch (e: any) { alert(e.message); } finally { setRemoving(false); }
   }
   return (
     <div className="admin-app-mgmt">
@@ -139,6 +149,14 @@ export function AdminAppMgmt() {
         <input placeholder="Title" value={title} onChange={(e) => setTitle(e.target.value)} />
         <textarea placeholder="Message (optional)" value={body} onChange={(e) => setBody(e.target.value)} rows={3} />
         <button onClick={send} disabled={!title.trim()}>Send</button>
+        <button
+          className="danger"
+          onClick={removeCurrent}
+          disabled={!list.length || removing}
+          title={list.length ? 'Remove the announcement currently shown to all users' : ''}
+        >
+          {removing ? 'Removing…' : list.length ? 'Remove Current Announcement' : 'No active announcement'}
+        </button>
       </fieldset>
 
       <fieldset className="admin-action-group">

@@ -10,6 +10,7 @@ import {
   adminBanUser, adminSuspendUser, adminRestoreUser, adminDisableUser, adminLockUser,
   adminVerifyUser, adminForceLogout, adminDeleteAccount, adminSetRole,
   adminGrantPremium, adminRevokePremium, adminRemoveDevice,
+  assignModerator, removeModerator,
 } from '@shared/adminApi';
 import type { AdminUserSummary, AdminUserDetail, PremiumDuration } from '@shared/types';
 
@@ -57,7 +58,12 @@ export function AdminUsers({ isOwner }: { isOwner: boolean }) {
   }
 
   const u = detail;
-  const protectedOwner = !!u?.owner && !isOwner; // admins cannot touch an owner
+  // The permanent OWNER account is absolutely protected: no one (not even the
+  // Owner) may ban/suspend/disable/lock/force-logout/delete/demote/un-verify/manage
+  // it. When the target is an owner we replace all management controls with a clean
+  // read-only "Owner account — protected" state. The server (0013 _guard_owner_target
+  // + 0026 _guard_protect_owner) enforces the same rule regardless of the request.
+  const protectedOwner = !!u?.owner;
 
   return (
     <div className="admin-users">
@@ -122,8 +128,21 @@ export function AdminUsers({ isOwner }: { isOwner: boolean }) {
                 {u.suspended_until && <div><span>Suspended until</span><b>{new Date(u.suspended_until).toLocaleString()}</b></div>}
               </div>
 
-              {protectedOwner && <div className="admin-warn">This is an Owner account — only the Owner can modify it.</div>}
+              {protectedOwner && (
+                <div className="admin-owner-protected">
+                  <span className="admin-owner-protected-icon">🛡️</span>
+                  <div>
+                    <div className="admin-owner-protected-title">Owner account — protected</div>
+                    <div className="admin-owner-protected-body">
+                      This is the permanent FUTUREHAT Owner. It cannot be banned, suspended, disabled,
+                      locked, logged out, deleted, demoted, un-verified, or otherwise modified.
+                    </div>
+                  </div>
+                </div>
+              )}
 
+              {/* Management controls — hidden entirely for the protected Owner account. */}
+              {!protectedOwner && (<>
               <fieldset className="admin-action-group" disabled={busy || protectedOwner}>
                 <legend>Account</legend>
                 <button className="danger" onClick={() => act(() => adminBanUser(supabase, u.id, prompt('Ban reason?') || undefined), 'Banned', 'Permanently ban this account?')}>Ban</button>
@@ -157,10 +176,22 @@ export function AdminUsers({ isOwner }: { isOwner: boolean }) {
               <fieldset className="admin-action-group" disabled={busy || protectedOwner}>
                 <legend>Role</legend>
                 <button onClick={() => act(() => adminSetRole(supabase, u.id, 'user'), 'Set: User')}>Demote to User</button>
-                <button onClick={() => act(() => adminSetRole(supabase, u.id, 'moderator'), 'Set: Moderator')}>Assign Moderator</button>
-                <button disabled={!isOwner} title={isOwner ? '' : 'Owner only'} onClick={() => act(() => adminSetRole(supabase, u.id, 'admin'), 'Set: Admin')}>Assign Admin</button>
-                {!isOwner && <span className="admin-hint">Only the Owner can manage Admins.</span>}
+                {u.role === 'moderator' ? (
+                  <button className="danger" onClick={() => act(
+                    () => removeModerator(supabase, u.id),
+                    'Moderator removed',
+                    `Remove ${u.display_name || 'this user'} as a FUTUREHAT Moderator? They will be notified and lose the Moderator Dashboard.`,
+                  )}>Remove Moderator</button>
+                ) : (
+                  <button onClick={() => act(
+                    () => assignModerator(supabase, u.id),
+                    'Moderator assigned',
+                    `Appoint ${u.display_name || 'this user'} as an official FUTUREHAT Moderator? They will be notified and gain the Moderator Dashboard.`,
+                  )}>Assign Moderator</button>
+                )}
+                {/* Admin is permanent (single hardcoded owner/admin) — never assignable via the app. */}
               </fieldset>
+              </>)}
 
               <fieldset className="admin-action-group column" disabled={busy}>
                 <legend>Devices ({u.devices.length})</legend>

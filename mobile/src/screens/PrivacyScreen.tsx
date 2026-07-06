@@ -10,12 +10,16 @@ import { supabase } from '../lib/supabase';
 import {
   getPrivacy, setPrivacy, getBlockedIds, unblockUser, getProfile,
   getPreferences, updatePreferences, getSubscription, isSubscriptionActive,
+  autoLockLabel, type ChatLockAutoLock,
   type PrivacySettings, type Visibility, type Profile,
 } from '../lib/shared';
 import { getCache, setCache } from '../lib/localCache';
 import { queueAction } from '../lib/sync';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
+import { useChatLock } from '../security/ChatLock';
 import Avatar from '../components/Avatar';
+
+const AUTO_LOCK_OPTIONS: ChatLockAutoLock[] = [0, 60000, 300000, 1800000];
 
 const VIS_ROWS: { key: keyof PrivacySettings; label: string }[] = [
   { key: 'lastSeen', label: 'Last seen & online' },
@@ -32,6 +36,7 @@ const VIS_LABEL: Record<Visibility, string> = { everyone: 'Everyone', contacts: 
 export default function PrivacyScreen() {
   const colors = useColors();
   const styles = useMemo(() => makeStyles(colors), [colors]);
+  const chatLock = useChatLock();
   const [p, setP] = useState<PrivacySettings | null>(null);
   const [blocked, setBlocked] = useState<Profile[]>([]);
   const [ghostMode, setGhostMode] = useState(false);
@@ -111,6 +116,32 @@ export default function PrivacyScreen() {
             trackColor={{ true: colors.primary, false: colors.border }}
           />
         </View>
+      </View>
+
+      <Text style={styles.sectionLabel}>CHAT LOCK</Text>
+      <View style={styles.group}>
+        <View style={styles.row}>
+          <View style={{ flex: 1, marginRight: spacing(3) }}>
+            <Text style={styles.rowLabel}>Enable Chat Lock</Text>
+            <Text style={styles.rowDesc}>
+              Lock individual chats behind your device's fingerprint, face unlock, or PIN. Turn a chat's lock on from its profile.
+            </Text>
+          </View>
+          <Switch
+            value={chatLock.settings.enabled}
+            onValueChange={(v) => chatLock.setSettings({ enabled: v })}
+            trackColor={{ true: colors.primary, false: colors.border }}
+          />
+        </View>
+        {chatLock.settings.enabled && AUTO_LOCK_OPTIONS.map((ms) => {
+          const active = chatLock.settings.autoLockMs === ms;
+          return (
+            <Pressable key={ms} style={styles.row} onPress={() => chatLock.setSettings({ autoLockMs: ms })}>
+              <Text style={[styles.rowLabel, active && { color: colors.primary, fontWeight: '600' }]}>{autoLockLabel(ms)}</Text>
+              {active && <Ionicons name="checkmark" size={18} color={colors.primary} />}
+            </Pressable>
+          );
+        })}
       </View>
 
       <Text style={styles.sectionLabel}>RECEIPTS</Text>

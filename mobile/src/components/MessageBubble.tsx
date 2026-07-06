@@ -14,6 +14,12 @@ import AudioMessage from './AudioMessage';
 
 export type TickStatus = 'sending' | 'sent' | 'delivered' | 'read';
 
+// Single source of truth for the long-press activation delay, shared by the
+// outer bubble AND every nested interactive child (reply/image/video/audio).
+// This is what makes the ENTIRE bubble one continuous long-press target: any
+// child that captures the touch responder still fires the same menu.
+const LONG_PRESS_MS = 250;
+
 // Videos are stored as type 'file'; detect them by extension.
 const VIDEO_RE = /\.(mp4|webm|mov|m4v|ogv|ogg)(\?|#|$)/i;
 export const isVideoUrl = (url?: string | null) => !!url && VIDEO_RE.test(url);
@@ -40,9 +46,6 @@ interface Props {
   tick?: TickStatus;
   onLongPress?: () => void;
   onPress?: () => void;
-  /** Tapping the always-visible ⋯ button opens the message action sheet
-   *  (reactions + reply/copy/forward/…), matching web's hover menu. */
-  onMore?: () => void;
   selected?: boolean;
   /** Continuation of a run from the same sender — hides the tail + sender name. */
   grouped?: boolean;
@@ -101,7 +104,6 @@ function MessageBubble({
   tick,
   onLongPress,
   onPress,
-  onMore,
   selected,
   grouped: groupedRun,
   onOpenImage,
@@ -138,8 +140,15 @@ function MessageBubble({
     <Pressable
       onLongPress={onLongPress}
       onPress={onPress}
-      delayLongPress={250}
-      style={[styles.wrap, wrapTight, mine ? styles.wrapMine : styles.wrapTheirs, selected && styles.wrapSelected]}
+      delayLongPress={LONG_PRESS_MS}
+      // WhatsApp-style press-and-hold feedback: the bubble subtly scales/dims while
+      // held (before the ~250ms long-press fires the action sheet + haptic).
+      style={({ pressed }) => [
+        styles.wrap, wrapTight,
+        mine ? styles.wrapMine : styles.wrapTheirs,
+        selected && styles.wrapSelected,
+        pressed && !!onLongPress && styles.wrapPressed,
+      ]}
     >
       <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs, bubbleShape, activeMatch && styles.bubbleActiveMatch]}>
         {!mine && senderName && !groupedRun && <Text style={styles.sender}>{senderName}</Text>}
@@ -153,7 +162,9 @@ function MessageBubble({
 
         {replyTo && (
           <Pressable
-            onPress={onReplyPress}
+            onPress={selectionMode ? onPress : onReplyPress}
+            onLongPress={onLongPress}
+            delayLongPress={LONG_PRESS_MS}
             style={[styles.reply, { borderLeftColor: colors.primary }]}
           >
             <Text style={styles.replyName} numberOfLines={1}>
@@ -166,7 +177,11 @@ function MessageBubble({
         )}
 
         {message.type === 'image' && message.media_url && (
-          <Pressable onPress={() => onOpenImage?.(message.media_url!)}>
+          <Pressable
+            onPress={() => onOpenImage?.(message.media_url!)}
+            onLongPress={onLongPress}
+            delayLongPress={LONG_PRESS_MS}
+          >
             <Image
               source={message.media_url}
               style={styles.image}
@@ -178,11 +193,20 @@ function MessageBubble({
         )}
 
         {message.type === 'audio' && message.media_url && (
-          <AudioMessage uri={message.media_url} tint={mine ? colors.bubbleOutText : colors.primary} />
+          <AudioMessage
+            uri={message.media_url}
+            tint={mine ? colors.bubbleOutText : colors.primary}
+            onLongPress={onLongPress}
+          />
         )}
 
         {message.type === 'file' && message.media_url && isVideoUrl(message.media_url) && (
-          <Pressable onPress={() => onOpenImage?.(message.media_url!)} style={styles.videoTile}>
+          <Pressable
+            onPress={() => onOpenImage?.(message.media_url!)}
+            onLongPress={onLongPress}
+            delayLongPress={LONG_PRESS_MS}
+            style={styles.videoTile}
+          >
             <Ionicons name="play-circle" size={48} color="#fff" />
             <Text style={styles.videoLabel} numberOfLines={1}>{message.content || 'Video'}</Text>
           </Pressable>
@@ -202,11 +226,6 @@ function MessageBubble({
         )}
 
         <View style={styles.meta}>
-          {onMore && !selectionMode && (
-            <Pressable onPress={onMore} hitSlop={10} style={styles.moreBtn}>
-              <Ionicons name="ellipsis-horizontal" size={15} color={mine ? colors.bubbleOutMuted : colors.textFaint} />
-            </Pressable>
-          )}
           {starred && (
             <Ionicons name="star" size={12} color={mine ? colors.bubbleOutMuted : colors.textFaint} style={{ marginRight: 3 }} />
           )}
@@ -289,6 +308,7 @@ const makeStyles = (colors: Palette) =>
     wrapMine: { alignItems: 'flex-end' },
     wrapTheirs: { alignItems: 'flex-start' },
     wrapSelected: { backgroundColor: colors.primary + '22' },
+    wrapPressed: { transform: [{ scale: 0.98 }], opacity: 0.9 },
     bubble: {
       maxWidth: '82%',
       borderRadius: radius.lg,
@@ -323,7 +343,6 @@ const makeStyles = (colors: Palette) =>
     replyName: { color: colors.primary, fontSize: font.tiny, fontWeight: '700' },
     replyText: { fontSize: font.small },
     meta: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-end', marginTop: 2 },
-    moreBtn: { marginRight: 6, opacity: 0.7 },
     edited: { fontSize: 10, marginRight: 4 },
     time: { fontSize: 10 },
     reactions: {

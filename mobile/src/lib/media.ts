@@ -6,7 +6,7 @@ import * as FileSystem from 'expo-file-system';
 import { decode } from 'base64-arraybuffer';
 
 import { supabase } from './supabase';
-import { uploadMedia, uploadAvatar } from './shared';
+import { uploadMedia, uploadAvatar, uploadStatusMedia } from './shared';
 import type { UUID } from './shared';
 
 async function uriToArrayBuffer(uri: string): Promise<ArrayBuffer> {
@@ -52,6 +52,21 @@ export async function uploadMediaFromUri(
       fileName,
       mimeType ?? guessMime(fileName),
     );
+  } catch (e: any) {
+    return { url: null, error: e instanceof Error ? e : new Error(String(e)) };
+  }
+}
+
+/** Upload status media (image/video/audio) from a local URI to the `status` bucket. */
+export async function uploadStatusMediaFromUri(
+  userId: UUID,
+  uri: string,
+  ext: string,
+  mimeType?: string,
+): Promise<{ url: string | null; error: Error | null }> {
+  try {
+    const buf = await uriToArrayBuffer(uri);
+    return uploadStatusMedia(supabase, userId, buf, ext, mimeType ?? guessMime(`f.${ext}`));
   } catch (e: any) {
     return { url: null, error: e instanceof Error ? e : new Error(String(e)) };
   }

@@ -9,12 +9,13 @@
 // try/caught so a corrupt or missing entry degrades to "no cache" rather than a
 // crash — the network path still works.
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { ConversationSummary, Message, Profile, MessageType, UUID } from './shared';
+import type { ConversationSummary, Message, Profile, MessageType, UUID, RecentContact } from './shared';
 
 const K = {
   convs: (uid: string) => `fh:cache:convs:${uid}`,
   msgs: (convId: string) => `fh:cache:msgs:${convId}`,
   profile: (id: string) => `fh:cache:profile:${id}`,
+  recent: (uid: string) => `fh:cache:recent:${uid}`,
   draft: (convId: string) => `fh:draft:${convId}`,
   outbox: 'fh:outbox:v1',
   actions: 'fh:actions:v1',
@@ -114,6 +115,20 @@ export async function cacheProfile(profile: Profile): Promise<void> {
   await writeJSON(K.profile(profile.id), profile);
 }
 
+// ── Recent contacts (persistent "previously chatted users" for New Chat) ───────
+// Independent of the conversations cache, so a deleted chat never removes the
+// person here. Read-first: New Chat renders this cached list instantly, then a
+// background listRecentContacts() refresh rewrites it. Removals update this cache
+// immediately and are synced via the durable action queue ('removeRecentContact').
+
+export async function getCachedRecentContacts(uid: string): Promise<RecentContact[]> {
+  return readJSON<RecentContact[]>(K.recent(uid), []);
+}
+
+export async function cacheRecentContacts(uid: string, list: RecentContact[]): Promise<void> {
+  await writeJSON(K.recent(uid), list);
+}
+
 // ── Drafts (persist unsent composer text per chat) ─────────────────────────────
 
 export async function getDraft(convId: string): Promise<string> {
@@ -198,6 +213,69 @@ export async function removeAction(id: string): Promise<void> {
 export async function updateAction(id: string, patch: Partial<QueuedAction>): Promise<void> {
   const cur = await getActionQueue();
   await writeJSON(K.actions, cur.map((a) => (a.id === id ? { ...a, ...patch } : a)));
+}
+
+// ── Reconciliation with in-flight optimistic actions ───────────────────────────
+// A background server refetch (e.g. getArchivedIds / getLockedIds) returns the
+// server's truth, which does NOT yet include a change the user made a moment ago
+// whose queued write is still in flight. Folding the queue's pending conversation
+// mutations back on top of that server list stops the stale snapshot from
+// clobbering the optimistic change — the exact bug behind "archived chat pops
+// back into the list" and "chat lock toggle flips back to Off after a refresh".
+//
+// `addKinds` push a conversation id INTO the effect set (e.g. 'archive','lockChat');
+// `removeKinds` take it OUT (e.g. 'unarchive','unlockChat'). The queue is ordered
+// oldest→newest and processed in order, so the latest queued action wins (e.g.
+// archive-then-unarchive nets to "removed"). Never throws.
+export async function pendingConversationEffects(
+  addKinds: string[],
+  removeKinds: string[],
+): Promise<{ adds: Set<string>; removes: Set<string> }> {
+  const adds = new Set<string>();
+  const removes = new Set<string>();
+  try {
+    const queue = await getActionQueue();
+    for (const a of queue) {
+      const cid = a?.payload?.conversationId;
+      if (!cid) continue;
+      if (addKinds.includes(a.kind)) { adds.add(cid); removes.delete(cid); }
+      else if (removeKinds.includes(a.kind)) { removes.add(cid); adds.delete(cid); }
+    }
+  } catch {
+    /* queue unreadable → treat as no pending effects */
+  }
+  return { adds, removes };
+}
+
+// Union two effect snapshots taken around a server read. The server read and the
+// queue check are two separate awaits; a queued action can succeed and leave the
+// queue in the gap between them, which would drop its effect and let the (possibly
+// pre-write) server snapshot revert the user's just-made change — the "toggle
+// flips back to Off after a refresh" / "archived chat pops back" race. Capturing
+// the queue BOTH before and after the read and merging keeps any effect that was
+// pending at either instant. The later snapshot (`b`) wins per id (it reflects the
+// most recent net intent, e.g. lock-then-unlock nets to a remove). Never throws.
+export function mergeEffects(
+  a: { adds: Set<string>; removes: Set<string> },
+  b: { adds: Set<string>; removes: Set<string> },
+): { adds: Set<string>; removes: Set<string> } {
+  const adds = new Set(a.adds);
+  const removes = new Set(a.removes);
+  b.adds.forEach((id) => { adds.add(id); removes.delete(id); });
+  b.removes.forEach((id) => { removes.add(id); adds.delete(id); });
+  return { adds, removes };
+}
+
+/** Apply pending {adds, removes} on top of a server-authoritative id list, so
+ *  reconciliation preserves not-yet-synced optimistic changes. Pure/allocating. */
+export function reconcileIds(
+  serverIds: Iterable<string>,
+  eff: { adds: Set<string>; removes: Set<string> },
+): Set<string> {
+  const set = new Set(serverIds);
+  eff.adds.forEach((id) => set.add(id));
+  eff.removes.forEach((id) => set.delete(id));
+  return set;
 }
 
 /** Outbox items for a specific conversation, as optimistic Message rows so the

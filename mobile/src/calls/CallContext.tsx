@@ -23,6 +23,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { RTCView, type MediaStream } from 'react-native-webrtc';
 import InCallManager from 'react-native-incall-manager';
 
+import { AppState } from 'react-native';
 import { supabase } from '../lib/supabase';
 import {
   getCurrentUser,
@@ -32,11 +33,13 @@ import {
   subscribeToIncomingCalls,
   subscribeToCallStatus,
   onAuthChange,
+  sendPush,
   type Call,
   type CallType,
   type Profile,
   type UUID,
 } from '../lib/shared';
+import { presentCallNotification, clearCallNotification } from '../lib/notifications';
 import { CallSession } from './webrtc';
 import Avatar from '../components/Avatar';
 import { useColors } from '../theme';
@@ -88,6 +91,16 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       const peer = await getProfile(supabase, call.caller_id);
       setIncoming({ call, peer });
       (InCallManager as any).startRingtone('_DEFAULT_');
+      // Background: also raise a high-priority call notification (system default
+      // ringtone via the Calls channel) so the user sees it outside the app.
+      if (AppState.currentState !== 'active') {
+        void presentCallNotification({
+          callId: call.id,
+          conversationId: call.conversation_id,
+          title: peer?.display_name ?? 'FUTUREHAT',
+          video: call.type === 'video',
+        });
+      }
     });
     return () => {
       supabase.removeChannel(channel);
@@ -108,6 +121,14 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       setActive({ callId: call.id, conversationId, peer, type, isCaller: true });
+      // Notify a backgrounded/killed callee via push (best-effort).
+      void sendPush(supabase, {
+        conversationId,
+        kind: 'call',
+        title: peer?.display_name ?? 'FUTUREHAT',
+        body: type === 'video' ? 'Incoming video call' : 'Incoming voice call',
+        data: { callId: call.id, video: String(type === 'video') },
+      });
     },
     [uid, active],
   );
@@ -115,6 +136,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   const acceptIncoming = useCallback(async () => {
     if (!incoming) return;
     InCallManager.stopRingtone();
+    void clearCallNotification(incoming.call.id);
     await updateCallStatus(supabase, incoming.call.id, 'accepted');
     setActive({
       callId: incoming.call.id,
@@ -129,6 +151,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   const declineIncoming = useCallback(async () => {
     if (!incoming) return;
     InCallManager.stopRingtone();
+    void clearCallNotification(incoming.call.id);
     await updateCallStatus(supabase, incoming.call.id, 'declined');
     setIncoming(null);
   }, [incoming]);

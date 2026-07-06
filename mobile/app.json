@@ -2,7 +2,7 @@
   "expo": {
     "name": "FUTUREHAT",
     "slug": "futurehat",
-    "version": "2.1.0",
+    "version": "2.4.6",
     "orientation": "portrait",
     "scheme": "futurehat",
     "userInterfaceStyle": "automatic",
@@ -18,11 +18,19 @@
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "dev.lakshmeshwar.futurehat"
+      "bundleIdentifier": "dev.lakshmeshwar.futurehat",
+      "buildNumber": "27",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSPhotoLibraryAddUsageDescription": "FUTUREHAT saves photos and media you download to your photo library.",
+        "UIBackgroundModes": [
+          "audio"
+        ]
+      }
     },
     "android": {
       "package": "dev.lakshmeshwar.futurehat",
-      "versionCode": 15,
+      "versionCode": 27,
       "allowBackup": false,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
@@ -35,7 +43,9 @@
         "WRITE_EXTERNAL_STORAGE",
         "USE_BIOMETRIC",
         "USE_FINGERPRINT",
-        "VIBRATE"
+        "VIBRATE",
+        "POST_NOTIFICATIONS",
+        "USE_FULL_SCREEN_INTENT"
       ]
     },
     "web": {
@@ -50,19 +60,19 @@
         "expo-image-picker",
         {
           "photosPermission": "FUTUREHAT uses your photos so you can share images and set a profile picture.",
-          "cameraPermission": "FUTUREHAT uses your camera so you can take and send photos."
+          "cameraPermission": "FUTUREHAT uses your camera so you can take photos and make video calls."
         }
       ],
       [
         "expo-av",
         {
-          "microphonePermission": "FUTUREHAT uses your microphone to record voice messages."
+          "microphonePermission": "FUTUREHAT uses your microphone to record voice messages and make calls."
         }
       ],
       [
         "expo-local-authentication",
         {
-          "faceIDPermission": "FUTUREHAT uses Face ID to unlock the app when App Lock is on."
+          "faceIDPermission": "FUTUREHAT uses Face ID to unlock the app and locked chats."
         }
       ],
       [
@@ -89,6 +99,9 @@
             "targetSdkVersion": 35,
             "enableProguardInReleaseBuilds": true,
             "enableShrinkResourcesInReleaseBuilds": true
+          },
+          "ios": {
+            "deploymentTarget": "15.1"
           }
         }
       ],

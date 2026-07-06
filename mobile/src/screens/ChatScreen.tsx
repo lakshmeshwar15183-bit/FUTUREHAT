@@ -7,9 +7,11 @@ import {
   Alert,
   FlatList,
   Keyboard,
+  Dimensions,
   Modal,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -24,7 +26,8 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import { Audio } from 'expo-av';
-import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
+import { useNavigation, useRoute, useFocusEffect, type RouteProp } from '@react-navigation/native';
+import { setOpenConversation, clearConversationNotification } from '../lib/notifications';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { supabase } from '../lib/supabase';
@@ -64,8 +67,13 @@ import {
   getServerPremium,
   scheduleMessage,
   dispatchDueMessages,
+  messageExpired,
+  nextMessageExpiry,
+  purgeExpiredMessages,
+  getDisappearing,
   FREE_LIMITS,
   PREMIUM_LIMITS,
+  sendPush,
 } from '../lib/shared';
 import type { Message, MessageReaction, Profile, ConversationSummary, Poll, PollVote, SearchKind, ChatSettings, ReportReason } from '../lib/shared';
 import {
@@ -91,6 +99,7 @@ import ScheduleMessageModal from '../components/ScheduleMessageModal';
 import ErrorBoundary from '../components/ErrorBoundary';
 import { STICKERS } from '../lib/stickers';
 import { useCalls } from '../calls/CallContext';
+import { useChatLock } from '../security/ChatLock';
 import type { RootStackParamList } from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'Chat'>;
@@ -131,11 +140,45 @@ function ChatScreenInner() {
   const navigation = useNavigation<Nav>();
   const { params } = useRoute<Rt>();
   const { conversationId } = params;
+
+  // Tell the notifications bridge which chat is open so it never notifies for it,
+  // and clear any pending notification for this chat while it's focused.
+  useFocusEffect(
+    useCallback(() => {
+      setOpenConversation(conversationId);
+      void clearConversationNotification(conversationId);
+      return () => setOpenConversation(null);
+    }, [conversationId]),
+  );
+
   const colors = useColors();
   const { wallpaperColor, isPremium } = useTheme();
   const insets = useSafeAreaInsets();
   const { startCall } = useCalls();
+  const chatLock = useChatLock();
   const styles = useMemo(() => makeStyles(colors), [colors]);
+
+  // Chat Lock (0027): if this chat is locked and the Locked area isn't already
+  // unlocked this session, require device authentication before showing anything.
+  const [gateOk, setGateOk] = useState(false);
+  const gateBusy = useRef(false);
+  const needsGate = chatLock.isLocked(conversationId) && !chatLock.unlocked && !gateOk;
+  useEffect(() => {
+    if (!needsGate || gateBusy.current) return;
+    gateBusy.current = true;
+    (async () => {
+      const ok = await chatLock.authenticate('Unlock chat');
+      gateBusy.current = false;
+      if (ok) setGateOk(true);
+      else navigation.goBack();
+    })();
+  }, [needsGate, chatLock, navigation]);
+
+  // Disappearing-messages timer for this chat (0 = off) — drives the header badge.
+  const [disappearSecs, setDisappearSecs] = useState(0);
+  useEffect(() => {
+    getDisappearing(supabase, conversationId).then(setDisappearSecs).catch(() => {});
+  }, [conversationId]);
 
   // WhatsApp-identical keyboard handling. We do NOT use KeyboardAvoidingView:
   // targetSdk 35 forces edge-to-edge on Android 15+, which makes the manifest's
@@ -187,6 +230,9 @@ function ChatScreenInner() {
   const [emojiComposerOpen, setEmojiComposerOpen] = useState(false);
   const [starredIds, setStarredIds] = useState<Set<string>>(new Set());
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
+  // Disappearing messages (0022): a tick that advances to the next-soonest
+  // `expires_at` so expired messages drop from the timeline live (no polling).
+  const [now, setNow] = useState<number>(() => Date.now());
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectionForward, setSelectionForward] = useState(false);
@@ -332,6 +378,11 @@ function ChatScreenInner() {
         }
       }
 
+      // Disappearing messages (0022): opportunistic physical cleanup of expired
+      // messages in my conversations. Fire-and-forget; the query + client filter
+      // already hide expired ones regardless.
+      purgeExpiredMessages(supabase).catch(() => {});
+
       // 3) BACKGROUND: fetch fresh history, merge with pending, refresh cache.
       try {
         const msgs = await getMessages(supabase, conversationId, 100);
@@ -414,6 +465,11 @@ function ChatScreenInner() {
           ? prev.map((m) => (m.id === incoming.id ? incoming : m))
           : [...prev, incoming]));
         upsertCachedMessage(conversationId, incoming).catch(() => {});
+        // A system message means the disappearing timer was just changed — refresh
+        // the header indicator to match.
+        if (incoming.type === 'system') {
+          getDisappearing(supabase, conversationId).then(setDisappearSecs).catch(() => {});
+        }
         if (incoming.sender_id !== uid && !ghostRef.current) {
           markMessageAsRead(supabase, incoming.id).catch(() => {});
         }
@@ -524,9 +580,15 @@ function ChatScreenInner() {
       headerLeft: undefined,
       headerTitle: () => (
         <Pressable onPress={() => peers[0] && navigation.navigate('Profile', { userId: peers[0].id, conversationId })}>
-          <Text style={styles.headerTitle} numberOfLines={1}>
-            {ghost ? '👻 ' : ''}{params.title}
-          </Text>
+          <View style={styles.headerTitleRow}>
+            <Text style={styles.headerTitle} numberOfLines={1}>
+              {ghost ? '👻 ' : ''}{params.title}
+            </Text>
+            {/* Disappearing-messages indicator (WhatsApp parity). */}
+            {disappearSecs > 0 && (
+              <Ionicons name="timer-outline" size={15} color={colors.textMuted} style={{ marginLeft: 5 }} />
+            )}
+          </View>
           {!!subtitle && <Text style={styles.headerSub}>{subtitle}</Text>}
         </Pressable>
       ),
@@ -550,7 +612,7 @@ function ChatScreenInner() {
         </View>
       ),
     });
-  }, [navigation, params.title, subtitle, peers, colors, styles, selectionMode, selectedIds, isGroup, ghost]);
+  }, [navigation, params.title, subtitle, peers, colors, styles, selectionMode, selectedIds, isGroup, ghost, disappearSecs]);
 
   function placeCall(kind: 'audio' | 'video') {
     // Only reachable from direct chats (call buttons are hidden in groups).
@@ -645,6 +707,16 @@ function ChatScreenInner() {
     // queue on success; the onOutboxSent listener swaps the pending row for the
     // confirmed one. If offline, it stays queued and auto-sends on reconnect.
     flushOutbox().catch(() => {});
+
+    // Best-effort push so a killed/backgrounded recipient still gets notified.
+    // No-ops until FCM (google-services.json + push function + secret) is set up.
+    void sendPush(supabase, {
+      conversationId,
+      kind: isGroup ? 'group' : 'message',
+      title: isGroup ? (params.title || 'Group') : 'New message',
+      body,
+      data: {},
+    });
   }
 
   // Free tier caps uploads at 5 MB; premium lifts it to 100 MB (web parity via
@@ -909,7 +981,7 @@ function ChatScreenInner() {
     buttons.push({ text: 'Delete for me', onPress: deleteForMe });
     if (mine) {
       buttons.push({
-        text: 'Delete for everyone',
+        text: 'Unsend',
         style: 'destructive',
         onPress: async () => {
           setSelected(null);
@@ -923,10 +995,10 @@ function ChatScreenInner() {
 
   // Bulk delete for multi-select (delete-for-everyone).
   async function deleteMany(ids: string[]) {
-    Alert.alert('Delete messages', `Delete ${ids.length} message${ids.length === 1 ? '' : 's'}?`, [
+    Alert.alert('Unsend messages', `Unsend ${ids.length} message${ids.length === 1 ? '' : 's'}? This removes ${ids.length === 1 ? 'it' : 'them'} for everyone.`, [
       { text: 'Cancel', style: 'cancel' },
       {
-        text: 'Delete for everyone',
+        text: 'Unsend',
         style: 'destructive',
         onPress: async () => {
           exitSelection();
@@ -978,7 +1050,12 @@ function ChatScreenInner() {
   const timeline = useMemo<TimelineItem[]>(() => {
     const merged: TimelineItem[] = [
       ...messages
-        .filter((m) => !hiddenIds.has(m.id)) // delete-for-me: never show to this user
+        // delete-for-me: never show to this user. is_deleted: an UNSENT message
+        // (Instagram-style) vanishes entirely for everyone — no tombstone. The
+        // realtime UPDATE (is_deleted → true) makes it disappear live on all clients.
+        // messageExpired: disappearing message (0022) past its expiry — hide it
+        // instantly; the `now` tick re-runs this filter as each one expires.
+        .filter((m) => !hiddenIds.has(m.id) && !m.is_deleted && !messageExpired(m, now))
         .map((m): TimelineItem => ({ kind: 'msg', id: m.id, at: m.created_at, message: m })),
       ...polls.map((p): TimelineItem => ({ kind: 'poll', id: `poll:${p.id}`, at: p.created_at, poll: p })),
     ];
@@ -1006,7 +1083,17 @@ function ChatScreenInner() {
       }
     }
     return out;
-  }, [messages, polls, hiddenIds]);
+  }, [messages, polls, hiddenIds, now]);
+
+  // Disappearing messages (0022): schedule ONE self-rescheduling timer to the
+  // next-soonest expiry so expired messages drop live, with no polling. Mirrors
+  // the StatusStrip expiry-timer pattern.
+  useEffect(() => {
+    const next = nextMessageExpiry(messages, now);
+    if (next === null) return;
+    const id = setTimeout(() => setNow(Date.now()), Math.max(0, next - now) + 250);
+    return () => clearTimeout(id);
+  }, [messages, now]);
 
   // Index messages + peers once per data change so each row is an O(1) lookup
   // instead of an O(n) .find() that ran for every visible bubble on every render.
@@ -1057,6 +1144,18 @@ function ChatScreenInner() {
       );
     }
     const msg = item.message;
+    // System messages (0027): centered WhatsApp-style info notice. Not selectable,
+    // replyable, editable or deletable — just an informational pill.
+    if (msg.type === 'system') {
+      return (
+        <View style={styles.systemNotice}>
+          <View style={styles.systemPill}>
+            <Ionicons name="timer-outline" size={12} color={colors.textMuted} style={{ marginRight: 5 }} />
+            <Text style={styles.systemNoticeText}>{msg.content}</Text>
+          </View>
+        </View>
+      );
+    }
     const mine = msg.sender_id === uid;
     const replyTo = msg.reply_to ? messageById.get(msg.reply_to) ?? null : null;
     const senderName = isGroup ? peerNameById.get(msg.sender_id) ?? null : null;
@@ -1081,12 +1180,16 @@ function ChatScreenInner() {
           selected={selectionMode && selectedIds.has(msg.id)}
           selectionMode={selectionMode}
           onLongPress={() => {
-            Haptics.selectionAsync().catch(() => {});
-            if (selectionMode) toggleSelect(msg);
-            else setSelected(msg);
+            if (selectionMode) {
+              Haptics.selectionAsync().catch(() => {});
+              toggleSelect(msg);
+            } else {
+              // Firmer WhatsApp-style buzz as the context menu opens.
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+              setSelected(msg);
+            }
           }}
           onPress={selectionMode ? () => toggleSelect(msg) : undefined}
-          onMore={() => setSelected(msg)}
           onOpenImage={(url) => (selectionMode ? toggleSelect(msg) : setViewerUrl(url))}
           highlight={searchActive ? search : ''}
           activeMatch={msg.id === activeMatchId}
@@ -1127,6 +1230,23 @@ function ChatScreenInner() {
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search, searchKind, searchActive]);
+
+  // Locked chat: block the thread behind a device-auth gate.
+  if (needsGate) {
+    return (
+      <View style={styles.center}>
+        <Ionicons name="lock-closed" size={54} color={colors.textFaint} />
+        <Text style={styles.lockGateText}>This chat is locked</Text>
+        <Pressable
+          style={styles.lockGateBtn}
+          onPress={async () => { const ok = await chatLock.authenticate('Unlock chat'); if (ok) setGateOk(true); }}
+        >
+          <Ionicons name="finger-print" size={18} color="#fff" />
+          <Text style={styles.lockGateBtnText}>Unlock</Text>
+        </Pressable>
+      </View>
+    );
+  }
 
   if (loading) {
     return (
@@ -1420,51 +1540,65 @@ function ChatScreenInner() {
       </Modal>
 
       {/* Message action sheet */}
-      <Modal visible={!!selected} transparent animationType="fade" onRequestClose={() => setSelected(null)}>
-        <Pressable style={styles.backdrop} onPress={() => setSelected(null)}>
-          <View style={[styles.sheet, { paddingBottom: insets.bottom + 12 }]}>
-            <View style={styles.emojiRow}>
+      <Modal visible={!!selected} transparent animationType="slide" onRequestClose={() => setSelected(null)}>
+        <Pressable style={styles.msgBackdrop} onPress={() => setSelected(null)}>
+          <Pressable style={[styles.msgSheet, { paddingBottom: insets.bottom + 10 }]} onPress={() => {}}>
+            <View style={styles.grabber} />
+
+            {/* Reaction bar — compact rounded pill; reactions work exactly as before. */}
+            <View style={styles.reactionBar}>
               {QUICK_EMOJI.map((e) => (
-                <Pressable key={e} onPress={() => react(e)} hitSlop={6}>
-                  <Text style={styles.emoji}>{e}</Text>
+                <Pressable
+                  key={e}
+                  onPress={() => react(e)}
+                  hitSlop={6}
+                  style={({ pressed }) => [styles.reactionBtn, pressed && styles.reactionBtnPressed]}
+                >
+                  <Text style={styles.reactionEmoji}>{e}</Text>
                 </Pressable>
               ))}
               {/* Open the full emoji palette — reaction parity with web. */}
-              <Pressable onPress={() => setEmojiPickerOpen(true)} hitSlop={6} style={styles.emojiMore}>
+              <Pressable onPress={() => setEmojiPickerOpen(true)} hitSlop={6} style={styles.reactionAdd}>
                 <Ionicons name="add" size={22} color={colors.textMuted} />
               </Pressable>
             </View>
-            <ActionRow icon="arrow-undo" label="Reply" onPress={() => { setReply(selected); setSelected(null); }} />
-            <ActionRow
-              icon={selected && starredIds.has(selected.id) ? 'star' : 'star-outline'}
-              label={selected && starredIds.has(selected.id) ? 'Unstar' : 'Star'}
-              onPress={toggleStar}
-            />
-            <ActionRow icon="checkmark-circle-outline" label="Select" onPress={() => { if (selected) enterSelection(selected); setSelected(null); }} />
-            {selected?.type === 'text' && (
-              <ActionRow
-                icon="copy"
-                label="Copy"
-                onPress={async () => {
-                  if (selected?.content) await Clipboard.setStringAsync(selected.content);
-                  setSelected(null);
-                }}
-              />
-            )}
-            <ActionRow icon="arrow-redo" label="Forward" onPress={openForward} />
-            <ActionRow icon="information-circle-outline" label="Info" onPress={showInfo} />
-            {selected?.sender_id === uid && selected?.type === 'text' && (
-              <ActionRow
-                icon="create"
-                label="Edit"
-                onPress={() => { setEditing(selected); setText(selected?.content ?? ''); setSelected(null); }}
-              />
-            )}
-            {!!uid && selected?.sender_id !== uid && (
-              <ActionRow icon="flag-outline" label="Report" danger onPress={startReport} />
-            )}
-            <ActionRow icon="trash" label="Delete" danger onPress={doDelete} />
-          </View>
+
+            {/* Menu — compact list card. All existing actions preserved. */}
+            <ScrollView style={styles.menuScroll} bounces={false} showsVerticalScrollIndicator={false}>
+              <View style={styles.menuCard}>
+                <ActionRow icon="arrow-undo" label="Reply" onPress={() => { setReply(selected); setSelected(null); }} />
+                <ActionRow
+                  icon={selected && starredIds.has(selected.id) ? 'star' : 'star-outline'}
+                  label={selected && starredIds.has(selected.id) ? 'Unstar' : 'Star'}
+                  onPress={toggleStar}
+                />
+                <ActionRow icon="checkmark-circle-outline" label="Select" onPress={() => { if (selected) enterSelection(selected); setSelected(null); }} />
+                {selected?.type === 'text' && (
+                  <ActionRow
+                    icon="copy"
+                    label="Copy"
+                    onPress={async () => {
+                      if (selected?.content) await Clipboard.setStringAsync(selected.content);
+                      setSelected(null);
+                    }}
+                  />
+                )}
+                <ActionRow icon="arrow-redo" label="Forward" onPress={openForward} />
+                <ActionRow icon="information-circle-outline" label="Info" onPress={showInfo} />
+                {selected?.sender_id === uid && selected?.type === 'text' && (
+                  <ActionRow
+                    icon="create"
+                    label="Edit"
+                    onPress={() => { setEditing(selected); setText(selected?.content ?? ''); setSelected(null); }}
+                  />
+                )}
+                {!!uid && selected?.sender_id !== uid && (
+                  <ActionRow icon="flag-outline" label="Report" danger onPress={startReport} />
+                )}
+                <ActionRow icon="trash" label="Delete" danger onPress={doDelete} />
+              </View>
+            </ScrollView>
+          </Pressable>
         </Pressable>
       </Modal>
 
@@ -1620,12 +1754,21 @@ function ActionRow({
   const colors = useColors();
   const tint = danger ? colors.danger : colors.text;
   return (
-    <Pressable style={attachStyles.actionRow} onPress={onPress}>
-      <Ionicons name={icon} size={22} color={tint} />
-      <Text style={[attachStyles.actionLabel, { color: tint }]}>{label}</Text>
+    <Pressable
+      style={({ pressed }) => [msgMenuStyles.row, pressed && { backgroundColor: colors.surfaceAlt }]}
+      onPress={onPress}
+    >
+      <Ionicons name={icon} size={21} color={tint} />
+      <Text style={[msgMenuStyles.label, { color: tint }]}>{label}</Text>
     </Pressable>
   );
 }
+
+// Compact, Material-style rows for the message context menu.
+const msgMenuStyles = StyleSheet.create({
+  row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 11, paddingHorizontal: 10, borderRadius: 12 },
+  label: { fontSize: 15.5, marginLeft: 16, fontWeight: '500' },
+});
 
 const attachStyles = StyleSheet.create({
   opt: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12 },
@@ -1651,8 +1794,22 @@ const makeStyles = (colors: Palette) =>
       backgroundColor: colors.surface, paddingHorizontal: 12, paddingVertical: 5,
       borderRadius: radius.sm, overflow: 'hidden',
     },
-    headerTitle: { color: colors.text, fontSize: font.heading, fontWeight: '600' },
+    headerTitle: { color: colors.text, fontSize: font.heading, fontWeight: '600', flexShrink: 1 },
+    headerTitleRow: { flexDirection: 'row', alignItems: 'center' },
     headerSub: { color: colors.textMuted, fontSize: font.tiny },
+    systemNotice: { alignItems: 'center', marginVertical: 8, paddingHorizontal: 24 },
+    systemPill: {
+      flexDirection: 'row', alignItems: 'center', maxWidth: '90%',
+      backgroundColor: colors.surface, paddingHorizontal: 12, paddingVertical: 6,
+      borderRadius: radius.md, overflow: 'hidden',
+    },
+    systemNoticeText: { color: colors.textMuted, fontSize: font.tiny, textAlign: 'center', flexShrink: 1 },
+    lockGateText: { color: colors.text, fontSize: font.heading, fontWeight: '600', marginTop: 14 },
+    lockGateBtn: {
+      flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 18,
+      backgroundColor: colors.primary, paddingHorizontal: 22, paddingVertical: 11, borderRadius: radius.pill,
+    },
+    lockGateBtnText: { color: '#fff', fontSize: font.body, fontWeight: '700' },
     headerActions: { flexDirection: 'row', alignItems: 'center' },
     searchBar: {
       backgroundColor: colors.surface, paddingHorizontal: 12, paddingTop: 8, paddingBottom: 8,
@@ -1732,6 +1889,37 @@ const makeStyles = (colors: Palette) =>
     recDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.danger, marginRight: 8 },
     recText: { color: colors.textMuted, fontSize: font.small },
     backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+    // ── WhatsApp-style message context menu (premium bottom sheet) ──────────────
+    msgBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
+    msgSheet: {
+      backgroundColor: colors.surface,
+      borderTopLeftRadius: 26,
+      borderTopRightRadius: 26,
+      paddingHorizontal: 12,
+      paddingTop: 8,
+      // Premium elevation.
+      shadowColor: '#000', shadowOffset: { width: 0, height: -3 }, shadowOpacity: 0.18, shadowRadius: 14, elevation: 16,
+    },
+    grabber: { alignSelf: 'center', width: 38, height: 4, borderRadius: 2, backgroundColor: colors.border, marginBottom: 10 },
+    reactionBar: {
+      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+      alignSelf: 'center',
+      backgroundColor: colors.surfaceAlt,
+      borderRadius: radius.pill,
+      paddingHorizontal: 8, paddingVertical: 6,
+      marginBottom: 10,
+      gap: 2,
+    },
+    reactionBtn: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: radius.pill },
+    reactionBtnPressed: { transform: [{ scale: 1.25 }], backgroundColor: colors.surface },
+    reactionEmoji: { fontSize: 27 },
+    reactionAdd: {
+      width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center',
+      backgroundColor: colors.surface, marginLeft: 2,
+    },
+    // Cap the menu so the sheet never dominates the screen (≤45% target).
+    menuScroll: { maxHeight: Math.round(Dimensions.get('window').height * 0.42) },
+    menuCard: { paddingBottom: 2 },
     sheet: {
       backgroundColor: colors.surface,
       borderTopLeftRadius: radius.lg,

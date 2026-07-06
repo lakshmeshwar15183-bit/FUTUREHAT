@@ -3,7 +3,10 @@
 export type UUID = string;
 
 export type ConversationType = 'direct' | 'group';
-export type MessageType = 'text' | 'image' | 'file' | 'audio';
+// 'system' = WhatsApp-style centered info notice (e.g. disappearing-messages
+// turned on/off). System messages never disappear and are not user-editable /
+// deletable. Added in migration 0027.
+export type MessageType = 'text' | 'image' | 'file' | 'audio' | 'system';
 export type ReceiptStatus = 'delivered' | 'read';
 export type ParticipantRole = 'member' | 'admin';
 
@@ -25,6 +28,9 @@ export interface Conversation {
   avatar_url: string | null;
   created_by: UUID | null;
   created_at: string;
+  /** Disappearing-messages timer (0022): 0 = OFF (default), else 3600..28800
+   *  (1–8h). Optional so the type is safe before the migration is applied. */
+  disappear_seconds?: number;
 }
 
 export interface ConversationParticipant {
@@ -48,6 +54,10 @@ export interface Message {
   /** Set when this message was forwarded from another chat (see 0011). Optional
    *  so the field is safe before the migration is applied. */
   is_forwarded?: boolean | null;
+  /** When set (0022), the message auto-disappears at this time. Stamped at INSERT
+   *  from the conversation's disappearing timer; NULL when the timer is off.
+   *  Optional so the type is safe before the migration is applied. */
+  expires_at?: string | null;
   /** Client-only: this is an optimistic/queued message not yet confirmed by the
    *  server (offline outbox). Never persisted server-side. */
   pending?: boolean;
@@ -140,7 +150,14 @@ export interface ScheduledMessage {
   created_at: string;
 }
 
-export type StatusType = 'image' | 'text' | 'video';
+export type StatusType = 'image' | 'text' | 'video' | 'audio';
+
+// Who may see a status. Enforced server-side (see migration 0021):
+//   everyone  — any authenticated user (minus blocked)
+//   contacts  — users who share a direct conversation with the author
+//   except    — contacts, minus the snapshotted status_audience list
+//   only       — only the snapshotted status_audience list
+export type StatusAudience = 'everyone' | 'contacts' | 'except' | 'only';
 
 export interface Status {
   id: UUID;
@@ -149,6 +166,10 @@ export interface Status {
   content: string | null;
   media_url: string | null;
   background: string | null;
+  caption: string | null;       // image/video/audio caption (0021)
+  text_color: string | null;    // custom text-status color (0021)
+  duration_ms: number | null;   // audio/video length for the viewer (0021)
+  audience: StatusAudience;      // privacy audience (0021); defaults to 'everyone'
   created_at: string;
   expires_at: string;
   // Joined author profile (display_name + avatar_url), best-effort.
@@ -183,6 +204,107 @@ export interface Call {
   reconnects?: number | null;
   turn_used?: boolean | null;
   failure_reason?: string | null;
+}
+
+// ── Calls module — history / schedule / settings (0024) ──────────────────────
+export type CallDirection = 'incoming' | 'outgoing';
+
+// One enriched row from get_call_history(): the call plus the viewer-relative
+// peer (the other 1:1 participant; null for groups) and direction.
+export interface CallHistoryItem {
+  id: UUID;
+  conversation_id: UUID;
+  caller_id: UUID;
+  type: CallType;
+  status: CallStatus;
+  started_at: string;
+  answered_at: string | null;
+  ended_at: string | null;
+  direction: CallDirection;
+  conversation_type: string | null;
+  conversation_name: string | null;
+  peer_id: UUID | null;
+  peer_username: string | null;
+  peer_name: string | null;
+  peer_avatar: string | null;
+}
+
+// Consecutive same-peer calls collapsed into one WhatsApp-style row ("Name (n)").
+export interface CallGroup {
+  key: string;                 // conversation_id (stable per peer/chat)
+  conversation_id: UUID;
+  peer_id: UUID | null;
+  title: string;               // peer name / conversation name / fallback
+  peer_username: string | null;
+  peer_avatar: string | null;
+  latest: CallHistoryItem;     // newest call in the group (drives icon/time)
+  count: number;               // number of collapsed calls
+  callIds: UUID[];             // every call id in the group (for delete)
+  anyMissed: boolean;
+}
+
+export interface ScheduledCall {
+  id: UUID;
+  conversation_id: UUID;
+  organizer_id: UUID;
+  callee_id: UUID | null;
+  type: CallType;
+  scheduled_at: string;
+  title: string | null;
+  status: 'scheduled' | 'cancelled' | 'done';
+  created_at: string;
+}
+
+// Persisted in user_preferences.extra.calls (no new table).
+export interface CallSettings {
+  silence_unknown: boolean;    // silence calls from people you don't share a chat with
+  ringtone: boolean;           // play a ringtone on incoming calls
+  vibrate: boolean;            // vibrate on incoming calls
+}
+
+// ── Notifications (0025) ─────────────────────────────────────────────────────
+// A tone value is 'default' (device system sound) or a content:// URI the user
+// explicitly picked in Android's per-channel settings.
+export interface NotificationSettings {
+  // MESSAGE
+  messageMute: boolean;
+  messageTone: string;          // 'default' | uri
+  messageVibrate: boolean;
+  messagePopup: boolean;
+  messageHighPriority: boolean;
+  messagePreview: boolean;
+  // CALLS
+  callRingtone: string;         // 'default' | uri
+  callVibrate: boolean;
+  callFullScreen: boolean;
+  callFlash: boolean;
+  // STATUS
+  statusMute: boolean;
+  // GROUPS
+  groupTone: string;            // 'default' | uri
+  groupVibrate: boolean;
+  groupMute: boolean;
+}
+
+export type PushKind = 'message' | 'group' | 'call' | 'missed_call' | 'status' | 'system';
+
+// ── Chat Lock (0027) ────────────────────────────────────────────────────────────
+// Per-chat lock secured entirely by the DEVICE's own authentication (Android
+// BiometricPrompt / iOS LocalAuthentication → biometric, else device PIN/password).
+// FUTUREHAT never stores a PIN, password, or biometric — it only records WHICH
+// conversations the user chose to lock (locked_conversations) so the choice syncs
+// across their devices. Auto-lock timing + the master enable live in
+// user_preferences.extra.chatLock so they sync too.
+
+/** Re-lock delay (ms) after leaving a locked chat / backgrounding the app.
+ *  0 = immediately on exit. */
+export type ChatLockAutoLock = 0 | 60000 | 300000 | 1800000;
+
+export interface ChatLockSettings {
+  /** Master switch — when off, locking is not offered and no chat is gated. */
+  enabled: boolean;
+  /** How long after exit before a revealed locked chat re-locks. */
+  autoLockMs: ChatLockAutoLock;
 }
 
 // ── Owner / Admin management (0013) ─────────────────────────────────────────────
@@ -308,10 +430,16 @@ export type ReportReason =
 
 export type ReportStatus = 'open' | 'reviewing' | 'resolved' | 'dismissed';
 
+// What a report points at (0008). 'message' = reported message; 'user' = reported
+// profile. The Moderator Dashboard splits its two sections on this.
+export type ReportTargetKind = 'user' | 'message' | 'conversation' | 'channel' | 'community';
+
 // One row from admin_list_reports() — joins reporter + reported-user profiles and
 // the (live or snapshotted) message content onto the report.
 export interface AdminReport {
   report_id: UUID;
+  target_type: ReportTargetKind;
+  target_id: UUID;
   message_id: UUID | null;
   conversation_id: UUID | null;
   reporter_id: UUID;
@@ -319,6 +447,9 @@ export interface AdminReport {
   reason: ReportReason;
   description: string | null;
   status: ReportStatus;
+  escalated: boolean;
+  escalated_at: string | null;
+  escalated_note: string | null;
   created_at: string;
   reviewed_at: string | null;
   reviewed_by: UUID | null;
@@ -333,6 +464,43 @@ export interface AdminReport {
   conversation_type: string | null;
   conversation_name: string | null;
 }
+
+// ── Moderator system (0023) ─────────────────────────────────────────────────
+// Fixed warning-reason vocabulary — kept in sync with the CHECK in issue_warning().
+export type WarningReason =
+  | 'spam' | 'harassment' | 'fake_profile' | 'hate_speech'
+  | 'scam_fraud' | 'inappropriate_content' | 'other';
+
+export const WARNING_REASONS: ReadonlyArray<{ value: WarningReason; label: string }> = [
+  { value: 'spam',                  label: 'Spam' },
+  { value: 'harassment',            label: 'Harassment' },
+  { value: 'fake_profile',          label: 'Fake Profile' },
+  { value: 'hate_speech',           label: 'Hate Speech' },
+  { value: 'scam_fraud',            label: 'Scam / Fraud' },
+  { value: 'inappropriate_content', label: 'Inappropriate Content' },
+  { value: 'other',                 label: 'Other' },
+];
+
+// Kinds of user-mailbox notification (user_warnings.kind, 0023).
+export type MailboxKind = 'warning' | 'mod_appointed' | 'mod_removed' | 'info';
+
+// One row from my_mailbox() — a notification in the user's mailbox.
+export interface MailboxItem {
+  id: UUID;
+  kind: MailboxKind;
+  title: string | null;
+  reason: WarningReason | string | null;
+  message: string | null;
+  report_id: UUID | null;
+  created_by: UUID | null;
+  actor_username: string | null;
+  actor_name: string | null;
+  seen_at: string | null;
+  created_at: string;
+}
+
+// One row from admin_moderator_audit() — same shape as AuditEntry.
+export type ModeratorAuditEntry = AuditEntry;
 
 export interface AdminConversationView {
   conversation: { id: UUID; type: string; name: string | null; created_at: string } | null;

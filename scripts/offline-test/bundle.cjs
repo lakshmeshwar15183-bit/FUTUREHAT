@@ -40,15 +40,26 @@ __export(localCache_exports, {
   cacheConversations: () => cacheConversations,
   cacheMessages: () => cacheMessages,
   cacheProfile: () => cacheProfile,
+  cacheRecentContacts: () => cacheRecentContacts,
+  enqueueAction: () => enqueueAction,
   enqueueOutbox: () => enqueueOutbox,
+  getActionQueue: () => getActionQueue,
+  getCache: () => getCache,
   getCachedConversations: () => getCachedConversations,
   getCachedMessages: () => getCachedMessages,
   getCachedProfile: () => getCachedProfile,
+  getCachedRecentContacts: () => getCachedRecentContacts,
   getDraft: () => getDraft,
   getOutbox: () => getOutbox,
   getPendingMessages: () => getPendingMessages,
+  mergeEffects: () => mergeEffects,
+  pendingConversationEffects: () => pendingConversationEffects,
+  reconcileIds: () => reconcileIds,
+  removeAction: () => removeAction,
   removeFromOutbox: () => removeFromOutbox,
+  setCache: () => setCache,
   setDraft: () => setDraft,
+  updateAction: () => updateAction,
   updateOutboxItem: () => updateOutboxItem,
   upsertCachedMessage: () => upsertCachedMessage,
   uuidv4: () => uuidv4
@@ -58,8 +69,10 @@ var K = {
   convs: (uid) => `fh:cache:convs:${uid}`,
   msgs: (convId) => `fh:cache:msgs:${convId}`,
   profile: (id) => `fh:cache:profile:${id}`,
+  recent: (uid) => `fh:cache:recent:${uid}`,
   draft: (convId) => `fh:draft:${convId}`,
-  outbox: "fh:outbox:v1"
+  outbox: "fh:outbox:v1",
+  actions: "fh:actions:v1"
 };
 var MSG_CACHE_LIMIT = 200;
 function uuidv4() {
@@ -82,6 +95,12 @@ async function writeJSON(key, value) {
     await import_async_storage.default.setItem(key, JSON.stringify(value));
   } catch {
   }
+}
+async function getCache(key, fallback) {
+  return readJSON(`fh:cache:kv:${key}`, fallback);
+}
+async function setCache(key, value) {
+  await writeJSON(`fh:cache:kv:${key}`, value);
 }
 async function getCachedConversations(uid) {
   return readJSON(K.convs(uid), []);
@@ -115,6 +134,12 @@ async function getCachedProfile(id) {
 async function cacheProfile(profile) {
   await writeJSON(K.profile(profile.id), profile);
 }
+async function getCachedRecentContacts(uid) {
+  return readJSON(K.recent(uid), []);
+}
+async function cacheRecentContacts(uid, list) {
+  await writeJSON(K.recent(uid), list);
+}
 async function getDraft(convId) {
   try {
     return await import_async_storage.default.getItem(K.draft(convId)) ?? "";
@@ -146,6 +171,61 @@ async function updateOutboxItem(tempId, patch) {
   const next = cur.map((i) => i.tempId === tempId ? { ...i, ...patch } : i);
   await writeJSON(K.outbox, next);
 }
+async function getActionQueue() {
+  return readJSON(K.actions, []);
+}
+async function enqueueAction(action) {
+  const cur = await getActionQueue();
+  cur.push(action);
+  await writeJSON(K.actions, cur);
+}
+async function removeAction(id) {
+  const cur = await getActionQueue();
+  await writeJSON(K.actions, cur.filter((a) => a.id !== id));
+}
+async function updateAction(id, patch) {
+  const cur = await getActionQueue();
+  await writeJSON(K.actions, cur.map((a) => a.id === id ? { ...a, ...patch } : a));
+}
+async function pendingConversationEffects(addKinds, removeKinds) {
+  const adds = /* @__PURE__ */ new Set();
+  const removes = /* @__PURE__ */ new Set();
+  try {
+    const queue = await getActionQueue();
+    for (const a of queue) {
+      const cid = a?.payload?.conversationId;
+      if (!cid) continue;
+      if (addKinds.includes(a.kind)) {
+        adds.add(cid);
+        removes.delete(cid);
+      } else if (removeKinds.includes(a.kind)) {
+        removes.add(cid);
+        adds.delete(cid);
+      }
+    }
+  } catch {
+  }
+  return { adds, removes };
+}
+function mergeEffects(a, b) {
+  const adds = new Set(a.adds);
+  const removes = new Set(a.removes);
+  b.adds.forEach((id) => {
+    adds.add(id);
+    removes.delete(id);
+  });
+  b.removes.forEach((id) => {
+    removes.add(id);
+    adds.delete(id);
+  });
+  return { adds, removes };
+}
+function reconcileIds(serverIds, eff) {
+  const set = new Set(serverIds);
+  eff.adds.forEach((id) => set.add(id));
+  eff.removes.forEach((id) => set.delete(id));
+  return set;
+}
 async function getPendingMessages(convId) {
   const box = await getOutbox();
   return box.filter((i) => i.conversationId === convId).map((i) => ({
@@ -166,10 +246,12 @@ async function getPendingMessages(convId) {
 // ../../mobile/src/lib/sync.ts
 var sync_exports = {};
 __export(sync_exports, {
+  flushActions: () => flushActions,
   flushOutbox: () => flushOutbox,
   isOnline: () => isOnline,
   onConnectivity: () => onConnectivity,
   onOutboxSent: () => onOutboxSent,
+  queueAction: () => queueAction,
   startSync: () => startSync
 });
 var import_netinfo = __toESM(require("/Users/lakshmeshwarpandey/FUTUREHAT/scripts/offline-test/mocks/netinfo.js"));
@@ -225,6 +307,89 @@ async function flushOutbox() {
     flushing = false;
   }
 }
+function deepSet(root, path, value) {
+  const base = root && typeof root === "object" ? { ...root } : {};
+  if (path.length === 0) return value;
+  const [head, ...rest] = path;
+  base[head] = rest.length === 0 ? value : deepSet(base[head], rest, value);
+  return base;
+}
+async function mergeExtra(payload) {
+  const prefs = await (0, import_shared.getPreferences)(import_supabase.supabase).catch(() => null);
+  if (!prefs) return { error: new Error("could not read preferences") };
+  const extra = prefs.extra && typeof prefs.extra === "object" ? prefs.extra : {};
+  const nextExtra = deepSet(extra, payload.path, payload.value);
+  return (0, import_shared.updatePreferences)(import_supabase.supabase, { extra: nextExtra });
+}
+var actionHandlers = {
+  pin: (p) => (0, import_shared.pinConversation)(import_supabase.supabase, p.conversationId),
+  unpin: (p) => (0, import_shared.unpinConversation)(import_supabase.supabase, p.conversationId),
+  mute: (p) => (0, import_shared.muteConversation)(import_supabase.supabase, p.conversationId),
+  unmute: (p) => (0, import_shared.unmuteConversation)(import_supabase.supabase, p.conversationId),
+  archive: (p) => (0, import_shared.archiveConversation)(import_supabase.supabase, p.conversationId),
+  unarchive: (p) => (0, import_shared.unarchiveConversation)(import_supabase.supabase, p.conversationId),
+  // Chat Lock (0027): device-secured per-chat lock. Only the user's CHOICE to
+  // lock syncs here — never a PIN/biometric (those stay on-device).
+  lockChat: (p) => (0, import_shared.lockConversation)(import_supabase.supabase, p.conversationId),
+  unlockChat: (p) => (0, import_shared.unlockConversation)(import_supabase.supabase, p.conversationId),
+  markRead: (p) => (0, import_shared.markConversationRead)(import_supabase.supabase, p.conversationId),
+  block: (p) => (0, import_shared.blockUser)(import_supabase.supabase, p.userId),
+  unblock: (p) => (0, import_shared.unblockUser)(import_supabase.supabase, p.userId),
+  star: (p) => (0, import_shared.starMessage)(import_supabase.supabase, p.messageId),
+  unstar: (p) => (0, import_shared.unstarMessage)(import_supabase.supabase, p.messageId),
+  hideMessage: (p) => (0, import_shared.hideMessageForMe)(import_supabase.supabase, p.messageId),
+  deleteForMe: (p) => (0, import_shared.deleteConversationForMe)(import_supabase.supabase, p.conversationId),
+  deleteForEveryone: (p) => (0, import_shared.deleteConversationForEveryone)(import_supabase.supabase, p.conversationId),
+  updateProfile: (p) => (0, import_shared.updateMyProfile)(import_supabase.supabase, p.updates),
+  updatePreferences: (p) => (0, import_shared.updatePreferences)(import_supabase.supabase, p.updates),
+  // Remove one person from the New Chat "recent contacts" history. Removal-only:
+  // does not delete messages/conversation, block, or touch the other account.
+  removeRecentContact: (p) => (0, import_shared.removeRecentContact)(import_supabase.supabase, p.contactId),
+  updateChatSettings: (p) => (0, import_shared.setChatSettings)(import_supabase.supabase, p.patch),
+  updatePrivacy: (p) => (0, import_shared.setPrivacy)(import_supabase.supabase, p.patch),
+  // Conflict-safe partial write into user_preferences.extra (notifications,
+  // storage, and any future extra.<section>). See mergeExtra() above.
+  mergeExtra: (p) => mergeExtra(p)
+};
+var MAX_ACTION_ATTEMPTS = 25;
+var flushingActions = false;
+async function flushActions() {
+  if (flushingActions) return;
+  flushingActions = true;
+  try {
+    const queue = await getActionQueue();
+    for (const action of queue) {
+      if (!online) break;
+      const handler = actionHandlers[action.kind];
+      if (!handler) {
+        await removeAction(action.id);
+        continue;
+      }
+      try {
+        const res = await handler(action.payload);
+        const err = res && typeof res === "object" ? res.error : null;
+        if (err) {
+          const attempts = (action.attempts ?? 0) + 1;
+          if (attempts >= MAX_ACTION_ATTEMPTS) await removeAction(action.id);
+          else await updateAction(action.id, { attempts });
+        } else {
+          await removeAction(action.id);
+        }
+      } catch {
+        const attempts = (action.attempts ?? 0) + 1;
+        if (attempts >= MAX_ACTION_ATTEMPTS) await removeAction(action.id);
+        else await updateAction(action.id, { attempts });
+      }
+    }
+  } finally {
+    flushingActions = false;
+  }
+}
+async function queueAction(kind, payload) {
+  await enqueueAction({ id: uuidv4(), kind, payload, createdAt: (/* @__PURE__ */ new Date()).toISOString(), attempts: 0 });
+  if (online) flushActions().catch(() => {
+  });
+}
 var started = false;
 function startSync() {
   if (started) return () => {
@@ -235,9 +400,13 @@ function startSync() {
     const cameOnline = nowOnline && !online;
     online = nowOnline;
     onlineListeners.forEach((l) => l(online));
-    if (cameOnline) flushOutbox();
+    if (cameOnline) {
+      flushOutbox();
+      flushActions();
+    }
   });
   flushOutbox();
+  flushActions();
   return () => {
     unsub();
     started = false;

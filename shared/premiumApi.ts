@@ -1,5 +1,5 @@
 // FUTUREHAT+ — premium data-access layer (subscriptions, preferences, pins,
-// hidden chats, scheduled messages). Framework-agnostic; web and mobile share it.
+// scheduled messages). Framework-agnostic; web and mobile share it.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type {
@@ -178,37 +178,9 @@ export async function unpinConversation(client: SupabaseClient, conversationId: 
   return { error };
 }
 
-// ── Hidden conversations ───────────────────────────────────────────────────────
-
-export async function getHiddenIds(client: SupabaseClient): Promise<UUID[]> {
-  const { data: auth } = await client.auth.getUser();
-  if (!auth.user) return [];
-  const { data } = await client
-    .from('hidden_conversations')
-    .select('conversation_id')
-    .eq('user_id', auth.user.id);
-  return (data || []).map((r: any) => r.conversation_id);
-}
-
-export async function hideConversation(client: SupabaseClient, conversationId: UUID) {
-  const { data: auth } = await client.auth.getUser();
-  if (!auth.user) return { error: new Error('not authenticated') };
-  const { error } = await client
-    .from('hidden_conversations')
-    .upsert({ user_id: auth.user.id, conversation_id: conversationId });
-  return { error };
-}
-
-export async function unhideConversation(client: SupabaseClient, conversationId: UUID) {
-  const { data: auth } = await client.auth.getUser();
-  if (!auth.user) return { error: new Error('not authenticated') };
-  const { error } = await client
-    .from('hidden_conversations')
-    .delete()
-    .eq('user_id', auth.user.id)
-    .eq('conversation_id', conversationId);
-  return { error };
-}
+// NOTE: the premium "Hide private chats" feature (hidden_conversations table) was
+// removed in 0027 and replaced by device-secured Chat Lock (see shared/chatLockApi.ts).
+// Archive (accountApi) and Delete-for-me (deleted_conversations) are separate and untouched.
 
 // ── Scheduled / reminder messages ──────────────────────────────────────────────
 

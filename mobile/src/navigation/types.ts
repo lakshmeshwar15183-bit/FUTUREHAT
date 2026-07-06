@@ -29,4 +29,9 @@ export type RootStackParamList = {
   Starred: undefined;
   Admin: undefined;
   AdminUserDetail: { userId: string; isOwner: boolean };
+  Moderator: undefined;
+  Mailbox: undefined;
+  CallDetail: { conversationId: UUID; peerId?: UUID; title: string; username?: string; avatarUrl?: string | null };
+  ScheduledCalls: undefined;
+  CallSettings: undefined;
 };

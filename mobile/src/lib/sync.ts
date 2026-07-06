@@ -19,8 +19,8 @@ import {
   unmuteConversation,
   archiveConversation,
   unarchiveConversation,
-  hideConversation,
-  unhideConversation,
+  lockConversation,
+  unlockConversation,
   markConversationRead,
   blockUser,
   unblockUser,
@@ -34,6 +34,7 @@ import {
   getPreferences,
   setChatSettings,
   setPrivacy,
+  removeRecentContact,
 } from './shared';
 import {
   getOutbox,
@@ -156,8 +157,10 @@ const actionHandlers: Record<string, (payload: any) => Promise<ActionResult>> = 
   unmute: (p) => unmuteConversation(supabase, p.conversationId),
   archive: (p) => archiveConversation(supabase, p.conversationId),
   unarchive: (p) => unarchiveConversation(supabase, p.conversationId),
-  hide: (p) => hideConversation(supabase, p.conversationId),
-  unhide: (p) => unhideConversation(supabase, p.conversationId),
+  // Chat Lock (0027): device-secured per-chat lock. Only the user's CHOICE to
+  // lock syncs here — never a PIN/biometric (those stay on-device).
+  lockChat: (p) => lockConversation(supabase, p.conversationId),
+  unlockChat: (p) => unlockConversation(supabase, p.conversationId),
   markRead: (p) => markConversationRead(supabase, p.conversationId),
   block: (p) => blockUser(supabase, p.userId),
   unblock: (p) => unblockUser(supabase, p.userId),
@@ -168,6 +171,9 @@ const actionHandlers: Record<string, (payload: any) => Promise<ActionResult>> = 
   deleteForEveryone: (p) => deleteConversationForEveryone(supabase, p.conversationId),
   updateProfile: (p) => updateMyProfile(supabase, p.updates),
   updatePreferences: (p) => updatePreferences(supabase, p.updates),
+  // Remove one person from the New Chat "recent contacts" history. Removal-only:
+  // does not delete messages/conversation, block, or touch the other account.
+  removeRecentContact: (p) => removeRecentContact(supabase, p.contactId),
   updateChatSettings: (p) => setChatSettings(supabase, p.patch),
   updatePrivacy: (p) => setPrivacy(supabase, p.patch),
   // Conflict-safe partial write into user_preferences.extra (notifications,

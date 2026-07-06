@@ -17,6 +17,7 @@ import {
 } from '@shared/callsApi';
 import { getProfile } from '@shared/api';
 import type { Call, CallType } from '@shared/types';
+import { showCallNotification } from '../lib/webNotifications';
 
 // Production TURN from build env (VITE_TURN_*). VITE_TURN_URL may be a comma-
 // separated list of transport URLs under one credential. When unset there is NO
@@ -347,6 +348,13 @@ export function CallProvider({ children }: { children: ReactNode }) {
       const p = await getProfile(supabase, incoming.caller_id).catch(() => null);
       setPeerName(p?.display_name || 'Incoming call');
       setPhase('incoming');
+      // Browser notification when the tab isn't focused (WhatsApp Web parity).
+      showCallNotification({
+        conversationId: incoming.conversation_id,
+        title: p?.display_name || 'FUTUREHAT',
+        video: incoming.type === 'video',
+        icon: p?.avatar_url ?? null,
+      });
     });
     return () => { supabase.removeChannel(channel); };
   }, [myId, phase]);

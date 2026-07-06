@@ -25,6 +25,18 @@
   padding: 10px 12px; font-size: 13px; margin-bottom: 14px;
 }
 
+/* Read-only protected state shown in place of management controls for the
+   permanent OWNER account (AdminUsers). */
+.admin-owner-protected {
+  display: flex; gap: 12px; align-items: flex-start;
+  background: rgba(124, 92, 255, 0.10);
+  border: 1px solid rgba(124, 92, 255, 0.40); border-radius: 12px;
+  padding: 14px 16px; margin: 12px 0;
+}
+.admin-owner-protected-icon { font-size: 20px; line-height: 1.2; }
+.admin-owner-protected-title { font-weight: 800; font-size: 15px; color: var(--fh-text); }
+.admin-owner-protected-body { color: var(--fh-muted); font-size: 13px; margin-top: 3px; line-height: 1.5; }
+
 .admin-tabs { display: flex; gap: 8px; margin-bottom: 18px; border-bottom: 1px solid var(--fh-border); }
 .admin-tabs button {
   flex: 1; padding: 10px; background: none; border: none; border-bottom: 2px solid transparent;
