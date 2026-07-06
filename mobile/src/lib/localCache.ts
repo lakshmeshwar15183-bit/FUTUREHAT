@@ -160,6 +160,12 @@ export interface OutboxItem {
   replyTo?: UUID;
   createdAt: string;
   attempts: number;
+  /** Offline media queue (0030): a local file:// URI to UPLOAD on flush before the
+   *  message row is inserted. When set, flushOutbox uploads it and uses the returned
+   *  remote URL as media_url. Lets photos/videos survive an app kill mid-send. */
+  localUri?: string;
+  fileName?: string;
+  mediaMeta?: Record<string, unknown>;
 }
 
 export async function getOutbox(): Promise<OutboxItem[]> {
@@ -290,11 +296,13 @@ export async function getPendingMessages(convId: string): Promise<Message[]> {
       sender_id: i.senderId,
       type: i.type,
       content: i.content,
-      media_url: i.mediaUrl ?? null,
+      // Show the local file while it's still uploading (localUri), else the remote url.
+      media_url: i.mediaUrl ?? i.localUri ?? null,
       reply_to: i.replyTo ?? null,
       is_deleted: false,
       created_at: i.createdAt,
       edited_at: null,
       pending: true,
+      media_meta: (i.mediaMeta ?? null) as Message['media_meta'],
     }));
 }

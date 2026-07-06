@@ -14,11 +14,10 @@ import AudioMessage from './AudioMessage';
 
 export type TickStatus = 'sending' | 'sent' | 'delivered' | 'read';
 
-// Single source of truth for the long-press activation delay, shared by the
-// outer bubble AND every nested interactive child (reply/image/video/audio).
-// This is what makes the ENTIRE bubble one continuous long-press target: any
-// child that captures the touch responder still fires the same menu.
-const LONG_PRESS_MS = 250;
+// Long-press is handled ONCE, natively, by the SwipeToReply wrapper's RNGH
+// Gesture.LongPress covering the whole bubble subtree — so no child here needs
+// its own onLongPress/delayLongPress. Taps (open image, jump to reply, toggle
+// select) stay on these Pressables; the native long-press arbiter sits above.
 
 // Videos are stored as type 'file'; detect them by extension.
 const VIDEO_RE = /\.(mp4|webm|mov|m4v|ogv|ogg)(\?|#|$)/i;
@@ -44,7 +43,6 @@ interface Props {
   onReplyPress?: () => void;
   reactions?: MessageReaction[];
   tick?: TickStatus;
-  onLongPress?: () => void;
   onPress?: () => void;
   selected?: boolean;
   /** Continuation of a run from the same sender — hides the tail + sender name. */
@@ -102,7 +100,6 @@ function MessageBubble({
   onReplyPress,
   reactions = [],
   tick,
-  onLongPress,
   onPress,
   selected,
   grouped: groupedRun,
@@ -138,16 +135,14 @@ function MessageBubble({
 
   return (
     <Pressable
-      onLongPress={onLongPress}
       onPress={onPress}
-      delayLongPress={LONG_PRESS_MS}
       // WhatsApp-style press-and-hold feedback: the bubble subtly scales/dims while
-      // held (before the ~250ms long-press fires the action sheet + haptic).
+      // held (the wrapper's native long-press then fires the action sheet + haptic).
       style={({ pressed }) => [
         styles.wrap, wrapTight,
         mine ? styles.wrapMine : styles.wrapTheirs,
         selected && styles.wrapSelected,
-        pressed && !!onLongPress && styles.wrapPressed,
+        pressed && styles.wrapPressed,
       ]}
     >
       <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs, bubbleShape, activeMatch && styles.bubbleActiveMatch]}>
@@ -163,8 +158,6 @@ function MessageBubble({
         {replyTo && (
           <Pressable
             onPress={selectionMode ? onPress : onReplyPress}
-            onLongPress={onLongPress}
-            delayLongPress={LONG_PRESS_MS}
             style={[styles.reply, { borderLeftColor: colors.primary }]}
           >
             <Text style={styles.replyName} numberOfLines={1}>
@@ -179,8 +172,6 @@ function MessageBubble({
         {message.type === 'image' && message.media_url && (
           <Pressable
             onPress={() => onOpenImage?.(message.media_url!)}
-            onLongPress={onLongPress}
-            delayLongPress={LONG_PRESS_MS}
           >
             <Image
               source={message.media_url}
@@ -189,6 +180,12 @@ function MessageBubble({
               contentFit="cover"
               recyclingKey={message.media_url}
             />
+            {message.media_meta?.viewOnce && (
+              <View style={styles.viewOnceTag}>
+                <Ionicons name="eye" size={12} color="#fff" />
+                <Text style={styles.viewOnceText}>View once</Text>
+              </View>
+            )}
           </Pressable>
         )}
 
@@ -196,15 +193,12 @@ function MessageBubble({
           <AudioMessage
             uri={message.media_url}
             tint={mine ? colors.bubbleOutText : colors.primary}
-            onLongPress={onLongPress}
           />
         )}
 
         {message.type === 'file' && message.media_url && isVideoUrl(message.media_url) && (
           <Pressable
             onPress={() => onOpenImage?.(message.media_url!)}
-            onLongPress={onLongPress}
-            delayLongPress={LONG_PRESS_MS}
             style={styles.videoTile}
           >
             <Ionicons name="play-circle" size={48} color="#fff" />
@@ -325,6 +319,8 @@ const makeStyles = (colors: Palette) =>
     text: { fontSize: font.body, lineHeight: 20 },
     deleted: { fontSize: font.body, fontStyle: 'italic' },
     image: { width: 220, height: 220, borderRadius: radius.md, marginBottom: 2 },
+    viewOnceTag: { position: 'absolute', left: 8, top: 8, flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 },
+    viewOnceText: { color: '#fff', fontSize: 11, fontWeight: '600' },
     file: { flexDirection: 'row', alignItems: 'center', paddingVertical: 4, minWidth: 180 },
     fileName: { fontSize: font.body, marginLeft: 8, flex: 1 },
     videoTile: {

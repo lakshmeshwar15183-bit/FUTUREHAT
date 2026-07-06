@@ -69,3 +69,25 @@ EXPO_PUBLIC_SUPABASE_ANON_KEY=...
 - Enroll in Play App Signing and upload the AAB.
 - Wire **Google Play Billing** for FUTUREHAT+ (currently activation is recorded
   via the shared API for testing; see `src/screens/PremiumScreen.tsx`).
+
+## Media picker (0030) — native rebuild required
+
+The production media picker adds **`expo-media-library`** (album enumeration + the
+full-screen gallery). This is a native module, so a plain JS/OTA update is NOT enough
+— you must regenerate the native project and rebuild:
+
+```bash
+cd mobile
+npm install --legacy-peer-deps          # picks up expo-media-library
+npx expo prebuild --clean               # regenerates android/ with the new module + permissions
+JAVA_HOME=/opt/homebrew/opt/openjdk@17 ./android/gradlew -p android :app:assembleRelease
+```
+
+The Android manifest gains `READ_MEDIA_IMAGES` / `READ_MEDIA_VIDEO` (Android 13+) via
+the `expo-media-library` config plugin in `app.json` (already wired). On first launch
+the app requests photo/video access; the picker shows a permission-denied state if the
+user declines.
+
+> Phase B/C (crop/draw/text via `@shopify/react-native-skia`, video trim via
+> `ffmpeg-kit-react-native`) add further native modules and will each require another
+> `expo prebuild --clean` + rebuild when those phases land.

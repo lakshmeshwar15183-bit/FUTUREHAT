@@ -1,5 +1,6 @@
 // FUTUREHAT mobile — navigation param list shared across screens.
 import type { UUID, CallHistoryItem } from '../lib/shared';
+import type { PickedAsset } from '../screens/MediaPickerScreen';
 
 export type RootStackParamList = {
   Auth: undefined;
@@ -38,6 +39,9 @@ export type RootStackParamList = {
   CallDetail: { conversationId: UUID; peerId?: UUID; title: string; username?: string; avatarUrl?: string | null; calls?: CallHistoryItem[] };
   ScheduledCalls: undefined;
   CallSettings: undefined;
+  // Media picker/editor (0030): full-screen picker → per-asset preview/editor.
+  MediaPicker: { conversationId: UUID; maxSelection?: number };
+  MediaPreview: { conversationId: UUID; assets: PickedAsset[]; startIndex?: number };
   // Streaks (0029): the hub, one pair's detail, the info pages, and Hall of Legends.
   Streaks: undefined;
   StreakDetail: { conversationId: UUID; title: string };

@@ -61,6 +61,35 @@ export interface Message {
   /** Client-only: this is an optimistic/queued message not yet confirmed by the
    *  server (offline outbox). Never persisted server-side. */
   pending?: boolean;
+  /** Per-attachment metadata produced by the media picker/editor (0030). Optional
+   *  so the type is safe before the migration is applied; old rows read as {}. */
+  media_meta?: MediaMeta | null;
+}
+
+/** Metadata the media picker/editor attaches to an image/file message (0030). */
+export interface MediaMeta {
+  /** View Once: recipient may open exactly once; cannot forward/save/export. */
+  viewOnce?: boolean;
+  /** Uploaded at HD (higher quality tier). */
+  hd?: boolean;
+  /** Chosen quality tier. */
+  quality?: 'standard' | 'hd' | 'original';
+  width?: number;
+  height?: number;
+  /** Video duration in ms (when the attachment is a video). */
+  durationMs?: number;
+  /** True if the image was edited (crop/draw/text/stickers) before sending. */
+  edited?: boolean;
+}
+
+/** Result of mark_view_once_seen() / view_once_state() (0030). */
+export interface ViewOnceState {
+  view_once: boolean;
+  is_sender?: boolean;
+  seen?: boolean;
+  can_open?: boolean;
+  first_view?: boolean;
+  consumed?: boolean;
 }
 
 export interface MessageReceipt {

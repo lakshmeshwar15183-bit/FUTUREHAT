@@ -2,7 +2,7 @@
   "expo": {
     "name": "FUTUREHAT",
     "slug": "futurehat",
-    "version": "2.4.6",
+    "version": "2.4.8",
     "orientation": "portrait",
     "scheme": "futurehat",
     "userInterfaceStyle": "automatic",
@@ -19,7 +19,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "dev.lakshmeshwar.futurehat",
-      "buildNumber": "27",
+      "buildNumber": "29",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSPhotoLibraryAddUsageDescription": "FUTUREHAT saves photos and media you download to your photo library.",
@@ -30,7 +30,7 @@
     },
     "android": {
       "package": "dev.lakshmeshwar.futurehat",
-      "versionCode": 27,
+      "versionCode": 29,
       "allowBackup": false,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
@@ -41,6 +41,8 @@
         "RECORD_AUDIO",
         "READ_EXTERNAL_STORAGE",
         "WRITE_EXTERNAL_STORAGE",
+        "READ_MEDIA_IMAGES",
+        "READ_MEDIA_VIDEO",
         "USE_BIOMETRIC",
         "USE_FINGERPRINT",
         "VIBRATE",
@@ -67,6 +69,14 @@
         "expo-av",
         {
           "microphonePermission": "FUTUREHAT uses your microphone to record voice messages and make calls."
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "FUTUREHAT accesses your photos and videos so you can share them in chats.",
+          "savePhotosPermission": "FUTUREHAT saves media you download to your gallery.",
+          "isAccessMediaLocationEnabled": true
         }
       ],
       [

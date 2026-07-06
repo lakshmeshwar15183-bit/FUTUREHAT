@@ -11,6 +11,7 @@
 import NetInfo from '@react-native-community/netinfo';
 
 import { supabase } from './supabase';
+import { uploadMediaFromUri } from './media';
 import {
   sendMessage,
   pinConversation,
@@ -86,14 +87,30 @@ export async function flushOutbox(): Promise<void> {
     for (const item of box) {
       if (!online) break;
       try {
+        // Offline media (0030): if this item still holds a LOCAL file:// URI, upload
+        // it now (on reconnect) and swap in the remote URL before inserting the row.
+        // On upload failure we bump attempts and keep it queued for the next flush.
+        let mediaUrl = item.mediaUrl;
+        if (item.localUri && !mediaUrl) {
+          const { url, error: upErr } = await uploadMediaFromUri(
+            item.conversationId, item.localUri, item.fileName ?? `media_${item.tempId}`,
+          );
+          if (upErr || !url) {
+            await updateOutboxItem(item.tempId, { attempts: (item.attempts ?? 0) + 1 });
+            continue;
+          }
+          mediaUrl = url;
+          await updateOutboxItem(item.tempId, { mediaUrl: url, localUri: undefined });
+        }
         const { message, error } = await sendMessage(
           supabase,
           item.conversationId,
           item.content,
           item.type,
-          item.mediaUrl,
+          mediaUrl,
           item.replyTo,
           item.tempId, // reuse the optimistic id as the real row id
+          item.mediaMeta as import('./shared').MediaMeta | undefined,
         );
         // A duplicate-key error means a PRIOR attempt already inserted this row
         // (its id === tempId) but we never got to dequeue it — treat as sent so we

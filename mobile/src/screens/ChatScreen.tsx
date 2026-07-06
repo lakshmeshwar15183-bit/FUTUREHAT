@@ -89,6 +89,7 @@ import {
 } from '../lib/localCache';
 import { flushOutbox, onOutboxSent, queueAction } from '../lib/sync';
 import { uploadMediaFromUri } from '../lib/media';
+import { registerMediaHandler, type MediaSubmission } from '../media/mediaSendBridge';
 import { formatLastSeen, formatDaySeparator, formatTime } from '../lib/time';
 import { useColors, useTheme, spacing, radius, font, type Palette } from '../theme';
 import MessageBubble, { type TickStatus, isVideoUrl, replySummary } from '../components/MessageBubble';
@@ -742,6 +743,7 @@ function ChatScreenInner() {
     fileName: string,
     type: 'image' | 'file' | 'audio',
     caption?: string,
+    mediaMeta?: import('../lib/shared').MediaMeta,
   ) {
     setSending(true);
     try {
@@ -750,7 +752,9 @@ function ChatScreenInner() {
         Alert.alert('Upload failed', error?.message ?? 'Could not upload file.');
         return;
       }
-      const { message } = await sendMessage(supabase, conversationId, caption ?? fileName, type, url);
+      const { message } = await sendMessage(
+        supabase, conversationId, caption ?? fileName, type, url, undefined, undefined, mediaMeta,
+      );
       if (message) {
         setMsgs((prev) => (prev.some((m) => m.id === message.id) ? prev : [...prev, message]));
         setReceipts((prev) => new Map(prev).set(message.id, 'sent'));
@@ -760,6 +764,61 @@ function ChatScreenInner() {
       setSending(false);
     }
   }
+
+  // Open the full-screen media picker (replaces the old bottom-sheet gallery).
+  function openMediaPicker() {
+    setAttachOpen(false);
+    navigation.navigate('MediaPicker', { conversationId });
+  }
+
+  // Receive finished attachments from the MediaPreview editor (via the send bridge).
+  // Each is rendered optimistically and DURABLY QUEUED with its local file:// URI, so
+  // the actual upload happens in flushOutbox — surviving an app kill and auto-sending
+  // on reconnect (offline upload queue, spec §13). No network wait blocks the UI.
+  const sendMediaSubmission = useCallback(async (sub: MediaSubmission) => {
+    for (const item of sub.items) {
+      const tempId = uuidv4();
+      const optimistic: Message = {
+        id: tempId,
+        conversation_id: conversationId,
+        sender_id: uid ?? '',
+        type: item.type,
+        content: item.caption ?? '',
+        media_url: item.uri,               // local preview until the upload completes
+        reply_to: null,
+        is_deleted: false,
+        created_at: new Date().toISOString(),
+        edited_at: null,
+        pending: true,
+        media_meta: (item.mediaMeta ?? null) as Message['media_meta'],
+      };
+      setMsgs((prev) => [...prev, optimistic]);
+      setReceipts((prev) => new Map(prev).set(tempId, 'sending'));
+      upsertCachedMessage(conversationId, optimistic).catch(() => {});
+      // eslint-disable-next-line no-await-in-loop
+      await enqueueOutbox({
+        tempId,
+        conversationId,
+        senderId: uid ?? '',
+        content: item.caption ?? '',
+        type: item.type,
+        createdAt: optimistic.created_at,
+        attempts: 0,
+        localUri: item.uri,                // flushOutbox uploads this, then inserts
+        fileName: item.fileName,
+        mediaMeta: item.mediaMeta as Record<string, unknown> | undefined,
+      });
+    }
+    requestAnimationFrame(() => listRef.current?.scrollToOffset({ offset: 0, animated: true }));
+    flushOutbox().catch(() => {});
+  }, [conversationId, uid]);
+
+  // Register this chat as the handler for media coming back from the picker while
+  // it's mounted; unregister on unmount so a backgrounded chat never receives it.
+  useEffect(() => {
+    const off = registerMediaHandler(conversationId, (sub) => { void sendMediaSubmission(sub); });
+    return off;
+  }, [conversationId, sendMediaSubmission]);
 
   // Premium stickers — sent as an image message carrying the SVG data URI
   // (web parity: ChatView.sendSticker). No upload needed.
@@ -786,22 +845,19 @@ function ChatScreenInner() {
     Alert.alert('Scheduled', `Your message will send ${when.toLocaleString()}.`);
   }
 
+  // Camera capture. The gallery/library path is now the full-screen MediaPicker
+  // (openMediaPicker); this handles ONLY the "Camera" attach option (spec §16 — the
+  // old bottom-sheet library launch was removed).
   async function pickImage(fromCamera: boolean) {
     setAttachOpen(false);
-    const perm = fromCamera
-      ? await ImagePicker.requestCameraPermissionsAsync()
-      : await ImagePicker.requestMediaLibraryPermissionsAsync();
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
     if (!perm.granted) return;
-    const res = fromCamera
-      ? await ImagePicker.launchCameraAsync({ quality: 0.7 })
-      : await ImagePicker.launchImageLibraryAsync({
-          mediaTypes: ImagePicker.MediaTypeOptions.Images,
-          quality: 0.7,
-        });
+    const res = await ImagePicker.launchCameraAsync({ quality: 0.7 });
     if (res.canceled || !res.assets?.length) return;
     const a = res.assets[0];
     if (!withinUploadLimit(a.fileSize)) return;
     await sendMedia(a.uri, a.fileName ?? `photo_${Date.now()}.jpg`, 'image');
+    void fromCamera; // signature kept for the existing Camera AttachOption call site
   }
 
   async function pickDocument() {
@@ -1164,6 +1220,19 @@ function ChatScreenInner() {
         enabled={!selectionMode && !msg.is_deleted}
         tint={colors.primary}
         onReply={() => { setEditing(null); setReply(msg); }}
+        // Long-press is a native RNGH gesture on the wrapper (covers the whole
+        // bubble) so it fires fast and reliably even with the keyboard open —
+        // deleted messages are inert. See SwipeToReply for the gesture wiring.
+        onLongPress={msg.is_deleted ? undefined : () => {
+          if (selectionMode) {
+            Haptics.selectionAsync().catch(() => {});
+            toggleSelect(msg);
+          } else {
+            // Firmer WhatsApp-style buzz as the context menu opens.
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+            setSelected(msg);
+          }
+        }}
       >
         <MessageBubble
           message={msg}
@@ -1179,16 +1248,6 @@ function ChatScreenInner() {
           tick={mine ? (msg.pending ? 'sending' : receipts.get(msg.id) ?? 'sent') : undefined}
           selected={selectionMode && selectedIds.has(msg.id)}
           selectionMode={selectionMode}
-          onLongPress={() => {
-            if (selectionMode) {
-              Haptics.selectionAsync().catch(() => {});
-              toggleSelect(msg);
-            } else {
-              // Firmer WhatsApp-style buzz as the context menu opens.
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-              setSelected(msg);
-            }
-          }}
           onPress={selectionMode ? () => toggleSelect(msg) : undefined}
           onOpenImage={(url) => (selectionMode ? toggleSelect(msg) : setViewerUrl(url))}
           highlight={searchActive ? search : ''}
@@ -1313,6 +1372,12 @@ function ChatScreenInner() {
         keyExtractor={(it) => it.id}
         renderItem={renderItem}
         contentContainerStyle={styles.listContent}
+        // "handled" (not the default "never") lets a long-press on a bubble land
+        // WHILE the keyboard is open: without it the list swallows the first
+        // touch to dismiss the keyboard, so the bubble never sees it and the
+        // user had to close the keyboard before the actions menu would open.
+        // Taps on empty list space still dismiss the keyboard as before.
+        keyboardShouldPersistTaps="handled"
         ListFooterComponent={
           <View style={styles.encNote}>
             <Ionicons name="lock-closed" size={11} color={colors.textMuted} />
@@ -1426,7 +1491,7 @@ function ChatScreenInner() {
       <Modal visible={attachOpen} transparent animationType="slide" onRequestClose={() => setAttachOpen(false)}>
         <Pressable style={styles.backdrop} onPress={() => setAttachOpen(false)}>
           <View style={[styles.sheet, { paddingBottom: insets.bottom + 12 }]}>
-            <AttachOption icon="image" label="Photo / Video" color="#5B6EF5" onPress={() => pickImage(false)} />
+            <AttachOption icon="image" label="Photo / Video" color="#5B6EF5" onPress={openMediaPicker} />
             <AttachOption icon="camera" label="Camera" color="#E8638A" onPress={() => pickImage(true)} />
             <AttachOption icon="document" label="Document" color="#F7A948" onPress={pickDocument} />
             <AttachOption

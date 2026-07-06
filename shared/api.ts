@@ -20,6 +20,8 @@ import type {
   StatusViewer,
   UUID,
   MessageType,
+  MediaMeta,
+  ViewOnceState,
 } from './types.js';
 
 // ── Auth ────────────────────────────────────────────────────────────────────
@@ -424,6 +426,7 @@ export async function sendMessage(
   mediaUrl?: string,
   replyTo?: UUID,
   id?: UUID,
+  mediaMeta?: MediaMeta,
 ): Promise<{ message: Message | null; error: Error | null }> {
   const user = await getCurrentUser(client);
   if (!user) return { message: null, error: new Error('not authenticated') };
@@ -441,10 +444,36 @@ export async function sendMessage(
       content,
       media_url: mediaUrl,
       reply_to: replyTo,
+      // Only send media_meta when provided & non-empty, so text messages and the
+      // pre-0030 clients stay byte-identical (column defaults to '{}').
+      ...(mediaMeta && Object.keys(mediaMeta).length ? { media_meta: mediaMeta } : {}),
     })
     .select()
     .single();
   return { message: data, error };
+}
+
+// ── View Once (0030) ──────────────────────────────────────────────────────────
+// Mark a View-Once message as opened by the current user. Server-authoritative and
+// idempotent: the FIRST recipient open records the view (first_view=true); later
+// opens (or the sender) report consumed. Returns null on error (caller decides UX).
+export async function markViewOnceSeen(
+  client: SupabaseClient,
+  messageId: UUID,
+): Promise<ViewOnceState | null> {
+  const { data, error } = await client.rpc('mark_view_once_seen', { p_message: messageId });
+  if (error) return null;
+  return data as ViewOnceState;
+}
+
+// Read-only: may the current user still open this View-Once message? (no consume)
+export async function getViewOnceState(
+  client: SupabaseClient,
+  messageId: UUID,
+): Promise<ViewOnceState | null> {
+  const { data, error } = await client.rpc('view_once_state', { p_message: messageId });
+  if (error) return null;
+  return data as ViewOnceState;
 }
 
 // Edit a message's text (sets edited_at). RLS allows only the sender.
