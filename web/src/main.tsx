@@ -7,6 +7,8 @@ import { PresenceProvider } from './PresenceContext';
 import { CallProvider } from './calls/CallContext';
 import { AppLockGate } from './premium/AppLockGate';
 import { AuthScreen } from './Auth';
+import { ResetPasswordScreen } from './ResetPassword';
+import { supabase } from './supabase';
 import { App } from './App';
 import { pageVariants } from './motion';
 import { registerServiceWorker } from './pwa/usePwaInstall';
@@ -35,9 +37,31 @@ function Splash() {
 }
 
 function Root() {
-  const { user, loading } = useAuth();
+  const { user, loading, recoveryMode, clearRecoveryMode } = useAuth();
 
   if (loading) return <Splash />;
+
+  // Recovery beats every other route. The user MIGHT be technically signed in
+  // via the temporary recovery session — we still need them to pick a new
+  // password before the app is safe to use. When they finish (or abort) the
+  // ResetPassword screen clears recoveryMode + signs out, dropping us back on
+  // AuthScreen. The has-session flag is derived from the URL so we can also
+  // handle a direct visit to /reset-password (e.g. bookmarked link) gracefully.
+  if (recoveryMode) {
+    return (
+      <motion.div key="reset" variants={pageVariants} initial="initial" animate="animate" exit="exit" style={{ height: '100%' }}>
+        <ResetPasswordScreen
+          hasRecoverySession={!!user}
+          onDone={() => {
+            clearRecoveryMode();
+            // Best-effort ensure we drop the recovery session before showing
+            // the sign-in screen; safe to call even if already signed out.
+            void supabase.auth.signOut();
+          }}
+        />
+      </motion.div>
+    );
+  }
 
   return (
     <AnimatePresence mode="wait">

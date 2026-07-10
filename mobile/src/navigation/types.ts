@@ -4,6 +4,11 @@ import type { PickedAsset } from '../screens/MediaPickerScreen';
 
 export type RootStackParamList = {
   Auth: undefined;
+  /** Landing screen for the password-recovery deep link. `recoveryError` is set
+   *  by the App-level link handler when it couldn't install a recovery session
+   *  (malformed/expired token) so the screen can show an explanation instead
+   *  of a form that will silently no-op. */
+  ResetPassword: { recoveryError?: string } | undefined;
   Main: undefined;
   Chat: { conversationId: UUID; title: string };
   NewChat: undefined;

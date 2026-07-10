@@ -8,12 +8,24 @@ import { Mascot } from './Mascot';
 import { spring, quick } from './motion';
 import './Auth.css';
 
+// Where we tell Supabase to send the user after they click the reset-password
+// link. MUST match one of the entries in Supabase → Auth → URL Configuration →
+// Additional Redirect URLs, otherwise the auth server silently downgrades to
+// the project's Site URL (and the "reset link opens the wrong page" bug is back).
+// VITE_SITE_URL overrides `window.location.origin` for cases where the app is
+// hosted behind a proxy that reports a different origin than the public domain.
+function resetRedirectUrl(): string {
+  const base = (import.meta as any).env?.VITE_SITE_URL || window.location.origin;
+  return `${String(base).replace(/\/+$/, '')}/reset-password`;
+}
+
 export function AuthScreen() {
-  const [mode, setMode] = useState<'signin' | 'signup'>('signin');
+  const [mode, setMode] = useState<'signin' | 'signup' | 'forgot'>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [loading, setLoading] = useState(false);
   const [pwFocused, setPwFocused] = useState(false);
   const [happy, setHappy] = useState(false);
@@ -23,6 +35,7 @@ export function AuthScreen() {
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError('');
+    setNotice('');
     setLoading(true);
     try {
       if (mode === 'signup') {
@@ -34,6 +47,13 @@ export function AuthScreen() {
           setMode('signin');
           setHappy(false);
         }, 700);
+      } else if (mode === 'forgot') {
+        const { error: err } = await supabase.auth.resetPasswordForEmail(email, {
+          redirectTo: resetRedirectUrl(),
+        });
+        if (err) throw err;
+        setNotice("Password reset link sent. Check your email and click the link to continue.");
+        setMode('signin');
       } else {
         const { error: err } = await signInWithEmail(supabase, email, password);
         if (err) throw err;
@@ -89,20 +109,23 @@ export function AuthScreen() {
             required
             disabled={loading}
           />
-          <input
-            type="password"
-            placeholder="Password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            onFocus={() => setPwFocused(true)}
-            onBlur={() => setPwFocused(false)}
-            required
-            minLength={6}
-            disabled={loading}
-          />
+          {mode !== 'forgot' && (
+            <input
+              type="password"
+              placeholder="Password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              onFocus={() => setPwFocused(true)}
+              onBlur={() => setPwFocused(false)}
+              required
+              minLength={6}
+              disabled={loading}
+            />
+          )}
           <AnimatePresence>
             {error && (
               <motion.div
+                key="err"
                 className="auth-error"
                 initial={{ opacity: 0, y: -6 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -111,17 +134,41 @@ export function AuthScreen() {
                 {error}
               </motion.div>
             )}
+            {notice && (
+              <motion.div
+                key="ntc"
+                className="auth-error"
+                style={{ background: 'rgba(0, 168, 132, 0.15)', color: 'inherit' }}
+                initial={{ opacity: 0, y: -6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+              >
+                {notice}
+              </motion.div>
+            )}
           </AnimatePresence>
           <motion.button whileTap={{ scale: 0.96 }} type="submit" disabled={loading} className="auth-submit">
-            {loading ? <span className="fh-spinner" style={{ width: 20, height: 20, borderWidth: 2 }} /> : mode === 'signin' ? 'Sign In' : 'Create account'}
+            {loading ? (
+              <span className="fh-spinner" style={{ width: 20, height: 20, borderWidth: 2 }} />
+            ) : mode === 'signin' ? 'Sign In'
+              : mode === 'signup' ? 'Create account'
+              : 'Send reset link'}
           </motion.button>
         </form>
 
         <div className="auth-toggle">
-          {mode === 'signin' ? (
-            <>New here? <a onClick={() => setMode('signup')}>Create an account</a></>
-          ) : (
-            <>Already have an account? <a onClick={() => setMode('signin')}>Sign in</a></>
+          {mode === 'signin' && (
+            <>
+              <a onClick={() => { setError(''); setNotice(''); setMode('forgot'); }}>Forgot password?</a>
+              <span style={{ margin: '0 8px', opacity: 0.5 }}>·</span>
+              New here? <a onClick={() => { setError(''); setNotice(''); setMode('signup'); }}>Create an account</a>
+            </>
+          )}
+          {mode === 'signup' && (
+            <>Already have an account? <a onClick={() => { setError(''); setNotice(''); setMode('signin'); }}>Sign in</a></>
+          )}
+          {mode === 'forgot' && (
+            <>Remembered it? <a onClick={() => { setError(''); setNotice(''); setMode('signin'); }}>Back to sign in</a></>
           )}
         </div>
       </motion.div>

@@ -362,7 +362,7 @@ export async function getSharedMedia(
       .from('messages')
       .select('*')
       .eq('conversation_id', conversationId)
-      .in('type', ['image', 'file'])
+      .in('type', ['image', 'video', 'file'])
       .eq('is_deleted', false)
       .order('created_at', { ascending: false })
       .limit(limit);
@@ -406,13 +406,26 @@ export async function searchAllMessages(
 /** A URL anywhere in text — used to classify "link" messages in search filters. */
 export const LINK_RE = /https?:\/\/[^\s]+|www\.[^\s]+/i;
 
+/** Canonical video-file detector. Shared by web + mobile so detection never
+ *  diverges. Used both to render first-class `type='video'` messages and to
+ *  keep treating legacy `type='file'` rows that carry a video URL as video. */
+export const VIDEO_RE = /\.(mp4|webm|mov|m4v|ogv|ogg)(\?|#|$)/i;
+export function isVideoUrl(url?: string | null): boolean {
+  return !!url && VIDEO_RE.test(url);
+}
+/** True for any message that should render/behave as a video — the first-class
+ *  type OR a legacy file row with a video URL. */
+export function isVideoMessage(m: Pick<Message, 'type' | 'media_url'>): boolean {
+  return m.type === 'video' || (m.type === 'file' && isVideoUrl(m.media_url));
+}
+
 /** Message-kind buckets for filtered (media / links / docs / voice) search. */
 export type SearchKind = 'all' | 'media' | 'links' | 'docs' | 'voice';
 export function messageMatchesKind(m: Message, kind: SearchKind): boolean {
   switch (kind) {
-    case 'media': return m.type === 'image' || (m.type === 'file' && /\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(m.media_url ?? ''));
+    case 'media': return m.type === 'image' || isVideoMessage(m);
     case 'links': return m.type === 'text' && LINK_RE.test(m.content ?? '');
-    case 'docs': return m.type === 'file' && !/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(m.media_url ?? '');
+    case 'docs': return m.type === 'file' && !isVideoUrl(m.media_url);
     case 'voice': return m.type === 'audio';
     default: return true;
   }
@@ -1080,6 +1093,64 @@ export async function uploadMedia(
 
   const { data } = client.storage.from('media').getPublicUrl(path);
   return { url: data.publicUrl, error: null };
+}
+
+// ── Signed media URLs ───────────────────────────────────────────────────────
+// The `media` bucket is PRIVATE (migrations 0002/0015 — read is scoped to
+// conversation membership via RLS). A `getPublicUrl()` link therefore hits the
+// `/object/public/media/…` endpoint, which returns 400/403 for a private bucket
+// no matter the RLS — the classic "image renders as a black screen" bug. The fix
+// is to serve media through short-lived SIGNED urls, which honour RLS. We keep
+// storing the public url (so old rows and the DB shape don't change) and resolve
+// it to a signed url at render time via `signedMediaUrl` below.
+
+/** Extract the object path (`<conv>/<file>`) from a stored media-bucket URL.
+ *  Handles both `/object/public/media/…` and `/object/sign/media/…` forms.
+ *  Returns null for anything that isn't a media-bucket URL (data URIs, stickers,
+ *  external links, local `file://` uris) so callers can pass those through. */
+export function mediaPathFromUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  const m = url.match(/\/storage\/v1\/object\/(?:public\/|sign\/|authenticated\/)?media\/([^?#]+)/);
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
+// Cache signed urls in-memory keyed by object path, with their expiry, so we make
+// at most one createSignedUrl round-trip per media item per hour and expo-image's
+// url-keyed cache keeps hitting (a fresh token every render would bust it).
+const SIGNED_TTL_SECONDS = 60 * 60; // 1 hour
+const signedUrlCache = new Map<string, { url: string; expiresAt: number }>();
+
+/** Resolve a stored media_url into a displayable url. For private-bucket media
+ *  this returns a signed url (cached until ~1 min before expiry); everything else
+ *  (data URIs, stickers, external/local urls) is returned unchanged. On any error
+ *  it falls back to the original url rather than throwing, so callers can always
+ *  render *something* and surface a retry. */
+export async function signedMediaUrl(
+  client: SupabaseClient,
+  url: string | null | undefined,
+): Promise<string | null> {
+  if (!url) return url ?? null;
+  const path = mediaPathFromUrl(url);
+  if (!path) return url; // not private media — pass through unchanged
+
+  const now = Date.now();
+  const cached = signedUrlCache.get(path);
+  if (cached && cached.expiresAt > now + 60_000) return cached.url;
+
+  const { data, error } = await client.storage
+    .from('media')
+    .createSignedUrl(path, SIGNED_TTL_SECONDS);
+  if (error || !data?.signedUrl) return url; // fall back to raw url on failure
+  signedUrlCache.set(path, { url: data.signedUrl, expiresAt: now + SIGNED_TTL_SECONDS * 1000 });
+  return data.signedUrl;
+}
+
+/** Evict a cached signed URL so the next signedMediaUrl() call re-signs. Called
+ *  on user-initiated retry so a transient signing error doesn't stick around
+ *  for an hour. No-op for non-media urls. */
+export function invalidateSignedMediaUrl(url: string | null | undefined): void {
+  const path = mediaPathFromUrl(url);
+  if (path) signedUrlCache.delete(path);
 }
 
 // Upload status media (image / video / audio) to the private `status` bucket,

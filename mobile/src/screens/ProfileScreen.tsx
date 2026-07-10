@@ -12,7 +12,7 @@ import {
   blockUser, unblockUser, getBlockedIds, submitReport, getSharedMedia,
   getMutedIds, muteConversation, unmuteConversation,
   getPremiumUserIds, joinPresence, leavePresence,
-  getDisappearing, setConversationDisappearing,
+  getDisappearing, setConversationDisappearing, isVideoMessage,
 } from '../lib/shared';
 import type { Profile, CallType, Message } from '../lib/shared';
 import { getCachedProfile, cacheProfile } from '../lib/localCache';

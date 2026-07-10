@@ -15,6 +15,7 @@ import {
   getReceipts, subscribeToReceipts, getReactions, toggleReaction, subscribeToReactions,
   createTypingChannel, editMessage, deleteMessage, forwardMessage, getMyConversations,
   messageMatchesKind, messageExpired, nextMessageExpiry, purgeExpiredMessages, getDisappearing, type SearchKind,
+  markViewOnceSeen, getViewOnceState,
 } from '@shared/api';
 import { scheduleMessage, getScheduledMessages, dispatchDueMessages } from '@shared/premiumApi';
 import { createPoll, getPolls } from '@shared/communitiesApi';
@@ -25,6 +26,7 @@ import { VoiceMessage } from './voice/VoiceMessage';
 import { ContactProfileModal } from './profile/ContactProfileModal';
 import { MediaLightbox, type MediaItem } from './media/MediaLightbox';
 import './media/MediaLightbox.css';
+import { MediaComposer } from './media/MediaComposer';
 import { getStarredIds, starMessage, unstarMessage, getHiddenMessageIds, hideMessageForMe } from '@shared/messageExtras';
 import { safeHref } from './util/safeUrl';
 import {
@@ -157,6 +159,9 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
     onTouchCancel: clearLongPress,
   });
   const [showJump, setShowJump] = useState(false);
+  // Media composer (multi-file preview + caption + quality + View Once). Photos/
+  // videos chosen via the attach button open this instead of uploading immediately.
+  const [composerFiles, setComposerFiles] = useState<File[] | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesRef = useRef<Message[]>([]);
@@ -366,27 +371,35 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
 
   // ── Media / stickers ─────────────────────────────────────────────────────────
   async function handleFileUpload(e: ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file || uploading) return;
-    const limit = isPremium ? PREMIUM_LIMITS.uploadBytes : FREE_LIMITS.uploadBytes;
-    if (file.size > limit) {
-      if (fileInputRef.current) fileInputRef.current.value = '';
-      if (!isPremium) { openUpgrade(); return; }
-      setToast('File too large.'); return;
-    }
-    setUploading(true);
-    try {
-      const { url, error } = await uploadMedia(supabase, convId, file, file.name);
-      if (error) throw error;
-      if (!url) throw new Error('No URL returned');
-      const type = file.type.startsWith('image/') ? 'image' : 'file';
-      const { message } = await sendMessage(supabase, convId, type === 'image' ? '' : file.name, type, url);
-      if (message) upsertMessage(message);
-    } catch (err: any) {
-      setToast(err.message || 'Failed to upload file');
-    } finally {
-      setUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
+    const list = e.target.files;
+    if (!list?.length || uploading) return;
+    const files = Array.from(list);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+
+    // Photos & videos open the composer (preview + caption + quality + View Once).
+    // Other files (documents) keep the immediate single-file upload path.
+    const media = files.filter((f) => f.type.startsWith('image/') || f.type.startsWith('video/'));
+    const docs = files.filter((f) => !f.type.startsWith('image/') && !f.type.startsWith('video/'));
+
+    if (media.length) { setComposerFiles(media); }
+
+    if (docs.length) {
+      const limit = isPremium ? PREMIUM_LIMITS.uploadBytes : FREE_LIMITS.uploadBytes;
+      for (const file of docs) {
+        if (file.size > limit) { if (!isPremium) { openUpgrade(); } else { setToast('File too large.'); } continue; }
+        setUploading(true);
+        try {
+          const { url, error } = await uploadMedia(supabase, convId, file, file.name);
+          if (error) throw error;
+          if (!url) throw new Error('No URL returned');
+          const { message } = await sendMessage(supabase, convId, file.name, 'file', url);
+          if (message) upsertMessage(message);
+        } catch (err: any) {
+          setToast(err.message || 'Failed to upload file');
+        } finally {
+          setUploading(false);
+        }
+      }
     }
   }
 
@@ -878,7 +891,7 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
       </AnimatePresence>
 
       <form onSubmit={handleSend} className="message-input-form">
-        <input ref={fileInputRef} type="file" onChange={handleFileUpload} style={{ display: 'none' }} disabled={uploading} />
+        <input ref={fileInputRef} type="file" multiple onChange={handleFileUpload} style={{ display: 'none' }} disabled={uploading} />
         <button type="button" onClick={() => fileInputRef.current?.click()} disabled={uploading} className="attach-btn" title="Attach file" aria-label="Attach file"><PaperclipIcon size={22} /></button>
 
         <button type="button" className={`tool-btn ${isPremium ? '' : 'locked'}`} title="Stickers" aria-label="Stickers"
@@ -957,6 +970,19 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
             index={lightboxIndex}
             onClose={() => setLightboxId(null)}
             onIndexChange={(idx) => setLightboxId(mediaItems[idx]?.id ?? null)}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {composerFiles && composerFiles.length > 0 && (
+          <MediaComposer
+            convId={convId}
+            isPremium={isPremium}
+            files={composerFiles}
+            onClose={() => setComposerFiles(null)}
+            onSent={() => { /* realtime + upsert already reflect sent messages */ }}
+            onUpgrade={openUpgrade}
           />
         )}
       </AnimatePresence>

@@ -143,6 +143,14 @@ export async function getStreakAudit(client: SupabaseClient, limit = 200): Promi
 }
 
 // ── Realtime ───────────────────────────────────────────────────────────────────
+// Monotonic suffix so every subscription gets a UNIQUE channel name. Supabase's
+// removeChannel() is async: if we reused a fixed name ('streaks-changes'), a fast
+// re-mount (leave Streaks → come back) could call .channel(name) BEFORE the prior
+// channel finished tearing down, get the SAME already-subscribed channel back, and
+// then `.on('postgres_changes', …)` throws "cannot add callbacks after subscribe()"
+// — crashing the screen. A unique name per call structurally prevents that collision.
+let streakChannelSeq = 0;
+
 /**
  * One debounced channel over the tables that change streak state (`streaks` +
  * `streak_events`) → invokes onChange to reload get_my_streaks(). Mirrors
@@ -155,7 +163,7 @@ export function subscribeStreakChanges(
   let timer: ReturnType<typeof setTimeout> | null = null;
   const fire = () => { if (timer) clearTimeout(timer); timer = setTimeout(onChange, 300); };
   const channel = client
-    .channel('streaks-changes')
+    .channel(`streaks-changes-${++streakChannelSeq}`)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'streaks' }, fire)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'streak_events' }, fire)
     .subscribe();

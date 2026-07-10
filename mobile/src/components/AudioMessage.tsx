@@ -9,10 +9,6 @@ import { useColors } from '../theme';
 interface Props {
   uri: string;
   tint: string;
-  /** Forwarded from the message bubble so long-pressing the player (play button
-   *  or scrub bar) still opens the message action menu — the whole bubble, media
-   *  included, is one continuous long-press target. */
-  onLongPress?: () => void;
 }
 
 function fmt(ms: number): string {
@@ -20,7 +16,7 @@ function fmt(ms: number): string {
   return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
 }
 
-export default function AudioMessage({ uri, tint, onLongPress }: Props) {
+export default function AudioMessage({ uri, tint }: Props) {
   const colors = useColors();
   const soundRef = useRef<Audio.Sound | null>(null);
   const barWidth = useRef(0);
@@ -101,7 +97,7 @@ export default function AudioMessage({ uri, tint, onLongPress }: Props) {
 
   return (
     <View style={styles.row}>
-      <Pressable onPress={toggle} onLongPress={onLongPress} delayLongPress={250} hitSlop={8}>
+      <Pressable onPress={toggle} hitSlop={8}>
         <Ionicons name={playing ? 'pause' : 'play'} size={26} color={tint} />
       </Pressable>
       <View style={styles.barWrap}>
@@ -109,8 +105,6 @@ export default function AudioMessage({ uri, tint, onLongPress }: Props) {
           hitSlop={{ top: 12, bottom: 12 }}
           onLayout={(e) => { barWidth.current = e.nativeEvent.layout.width; }}
           onPress={(e) => seekTo(e.nativeEvent.locationX)}
-          onLongPress={onLongPress}
-          delayLongPress={250}
         >
           <View style={[styles.barBg, { backgroundColor: colors.border }]}>
             <View

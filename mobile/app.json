@@ -2,7 +2,7 @@
   "expo": {
     "name": "FUTUREHAT",
     "slug": "futurehat",
-    "version": "2.4.8",
+    "version": "4.1.0",
     "orientation": "portrait",
     "scheme": "futurehat",
     "userInterfaceStyle": "automatic",
@@ -19,7 +19,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "dev.lakshmeshwar.futurehat",
-      "buildNumber": "29",
+      "buildNumber": "41",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSPhotoLibraryAddUsageDescription": "FUTUREHAT saves photos and media you download to your photo library.",
@@ -30,7 +30,7 @@
     },
     "android": {
       "package": "dev.lakshmeshwar.futurehat",
-      "versionCode": 29,
+      "versionCode": 41,
       "allowBackup": false,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",

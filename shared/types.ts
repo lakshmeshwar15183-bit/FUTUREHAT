@@ -6,7 +6,10 @@ export type ConversationType = 'direct' | 'group';
 // 'system' = WhatsApp-style centered info notice (e.g. disappearing-messages
 // turned on/off). System messages never disappear and are not user-editable /
 // deletable. Added in migration 0027.
-export type MessageType = 'text' | 'image' | 'file' | 'audio' | 'system';
+// 'video' is a first-class media type (migration 0031). Older videos may still
+// exist as type='file' with a video media_url — treat those as video via
+// isVideoUrl() for backward-compat.
+export type MessageType = 'text' | 'image' | 'video' | 'file' | 'audio' | 'system';
 export type ReceiptStatus = 'delivered' | 'read';
 export type ParticipantRole = 'member' | 'admin';
 

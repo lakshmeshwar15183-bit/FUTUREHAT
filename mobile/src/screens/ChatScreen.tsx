@@ -76,6 +76,7 @@ import {
   sendPush,
   markViewOnceSeen,
   getViewOnceState,
+  isVideoMessage,
 } from '../lib/shared';
 import type { Message, MessageReaction, Profile, ConversationSummary, Poll, PollVote, SearchKind, ChatSettings, ReportReason } from '../lib/shared';
 import {
@@ -94,9 +95,10 @@ import { uploadMediaFromUri } from '../lib/media';
 import { registerMediaHandler, type MediaSubmission } from '../media/mediaSendBridge';
 import { formatLastSeen, formatDaySeparator, formatTime } from '../lib/time';
 import { useColors, useTheme, spacing, radius, font, type Palette } from '../theme';
-import MessageBubble, { type TickStatus, isVideoUrl, replySummary } from '../components/MessageBubble';
+import MessageBubble, { type TickStatus, replySummary } from '../components/MessageBubble';
 import SwipeToReply from '../components/SwipeToReply';
 import MediaViewer, { type ViewerItem } from '../components/MediaViewer';
+import ForwardSheet, { type ForwardPreview } from '../components/ForwardSheet';
 import PollCard from '../components/PollCard';
 import ScheduleMessageModal from '../components/ScheduleMessageModal';
 import ErrorBoundary from '../components/ErrorBoundary';
@@ -238,7 +240,6 @@ function ChatScreenInner() {
   const [now, setNow] = useState<number>(() => Date.now());
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [selectionForward, setSelectionForward] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
   const [stickersOpen, setStickersOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
@@ -253,6 +254,10 @@ function ChatScreenInner() {
   const [activeMatch, setActiveMatch] = useState(0);
   const [forwardOpen, setForwardOpen] = useState(false);
   const [forwardList, setForwardList] = useState<ConversationSummary[]>([]);
+  // Messages queued to forward (from a message menu, multi-select, or the media
+  // viewer) + an optional media preview shown on the ForwardSheet confirm step.
+  const [forwardSources, setForwardSources] = useState<Message[]>([]);
+  const [forwardPreview, setForwardPreview] = useState<ForwardPreview | null>(null);
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [recSecs, setRecSecs] = useState(0); // live elapsed seconds while recording (web parity)
   const [sending, setSending] = useState(false);
@@ -972,18 +977,32 @@ function ChatScreenInner() {
   function exitSelection() {
     setSelectionMode(false);
     setSelectedIds(new Set());
-    setSelectionForward(false);
   }
   async function copySelected() {
     const texts = messagesRef.current.filter((m) => selectedIds.has(m.id) && m.content).map((m) => m.content as string);
     if (texts.length) await Clipboard.setStringAsync(texts.join('\n'));
     exitSelection();
   }
-  async function forwardSelectedMany() {
+  // Open the forward sheet for a set of source messages (+ optional media preview).
+  async function beginForward(sources: Message[], preview: ForwardPreview | null = null) {
+    if (!sources.length) return;
+    setForwardSources(sources);
+    setForwardPreview(preview);
+    setForwardOpen(true);
+    // Fetch recipients lazily; the sheet renders its own loading-empty state until here.
     const list = await getMyConversations(supabase);
     setForwardList(list);
-    setSelectionForward(true);
-    setForwardOpen(true);
+  }
+
+  function previewFor(m: Message): ForwardPreview | null {
+    if (m.type === 'image' && m.media_url) return { kind: 'image', url: m.media_url, caption: m.content };
+    if (m.media_url && isVideoMessage(m)) return { kind: 'video', url: m.media_url, caption: m.content };
+    return null;
+  }
+
+  async function forwardSelectedMany() {
+    const sources = messagesRef.current.filter((m) => selectedIds.has(m.id));
+    await beginForward(sources);
   }
 
   // ── Message actions ───────────────────────────────────────────────────────
@@ -1117,29 +1136,59 @@ function ChatScreenInner() {
   }
 
   async function openForward() {
-    const list = await getMyConversations(supabase);
-    setForwardList(list);
-    setForwardOpen(true);
-  }
-
-  async function doForward(targetId: string) {
-    setForwardOpen(false);
-    if (selectionForward) {
-      const srcs = messagesRef.current.filter((m) => selectedIds.has(m.id));
-      for (const m of srcs) {
-        await forwardMessage(supabase, targetId, { type: m.type, content: m.content, media_url: m.media_url });
-      }
-      exitSelection();
-      return;
-    }
     if (!selected) return;
     const src = selected;
     setSelected(null);
-    await forwardMessage(supabase, targetId, {
-      type: src.type,
-      content: src.content,
-      media_url: src.media_url,
+    await beginForward([src], previewFor(src));
+  }
+
+  // ── Media viewer actions (forward / delete a single item by its message id) ──
+  function forwardFromViewer(item: ViewerItem) {
+    const msg = messageById.get(item.id);
+    if (!msg) return;
+    void beginForward([msg], previewFor(msg));
+  }
+
+  function deleteFromViewer(item: ViewerItem) {
+    const msg = messageById.get(item.id);
+    if (!msg) return;
+    const mine = msg.sender_id === uid;
+    const buttons: any[] = [{ text: 'Cancel', style: 'cancel' }];
+    buttons.push({
+      text: 'Delete for me',
+      onPress: () => {
+        setViewerUrl(null);
+        setHiddenIds((prev) => new Set(prev).add(msg.id));
+        queueAction('hideMessage', { messageId: msg.id });
+      },
     });
+    if (mine) {
+      buttons.push({
+        text: 'Unsend',
+        style: 'destructive',
+        onPress: async () => {
+          setViewerUrl(null);
+          await deleteMessage(supabase, msg.id);
+          setMsgs((prev) => prev.map((m) => (m.id === msg.id ? { ...m, is_deleted: true } : m)));
+        },
+      });
+    }
+    Alert.alert('Delete media', 'Choose how to delete this message.', buttons);
+  }
+
+  // Forward the queued source messages to every chosen target (multi-recipient).
+  async function doForward(targetIds: string[]) {
+    const sources = forwardSources;
+    for (const targetId of targetIds) {
+      for (const m of sources) {
+        // eslint-disable-next-line no-await-in-loop
+        await forwardMessage(supabase, targetId, { type: m.type, content: m.content, media_url: m.media_url });
+      }
+    }
+    setForwardOpen(false);
+    setForwardSources([]);
+    setForwardPreview(null);
+    if (selectionMode) exitSelection();
   }
 
   const reactionsByMsg = useMemo(() => {
@@ -1217,16 +1266,28 @@ function ChatScreenInner() {
 
   // Image/video messages — backs the swipeable full-screen viewer (web MediaLightbox parity).
   const viewerItems = useMemo<ViewerItem[]>(() => messages
-    .filter((m) => !m.is_deleted && m.media_url && (m.type === 'image' || (m.type === 'file' && isVideoUrl(m.media_url))))
-    .map((m) => ({
-      id: m.id,
-      url: m.media_url!,
-      kind: m.type === 'image' ? ('image' as const) : ('video' as const),
-      caption: m.type === 'image' ? (m.content || null) : null,
-      sender: m.sender_id === uid ? 'You' : (peerNameById.get(m.sender_id) || null),
-      time: formatTime(m.created_at),
-    })),
-    [messages, uid, peerNameById]);
+    .filter((m) => !m.is_deleted && m.media_url && (m.type === 'image' || isVideoMessage(m)))
+    .map((m) => {
+      const mine = m.sender_id === uid;
+      const rc = receipts.get(m.id);
+      const status = mine
+        ? (m.pending ? 'Sending…' : rc === 'read' ? 'Read' : rc === 'delivered' ? 'Delivered' : 'Sent')
+        : null;
+      return {
+        id: m.id,
+        url: m.media_url!,
+        kind: m.type === 'image' ? ('image' as const) : ('video' as const),
+        caption: m.type === 'image' ? (m.content || null) : null,
+        sender: mine ? 'You' : (peerNameById.get(m.sender_id) || null),
+        time: formatTime(m.created_at),
+        createdAt: m.created_at,
+        mine,
+        status,
+        meta: m.media_meta ?? null,
+        viewOnce: !!m.media_meta?.viewOnce,
+      };
+    }),
+    [messages, uid, peerNameById, receipts]);
   const viewerIndex = viewerUrl ? Math.max(0, viewerItems.findIndex((v) => v.url === viewerUrl)) : -1;
 
   // Plain function (not useCallback): MessageBubble is React.memo'd with a
@@ -1809,27 +1870,25 @@ function ChatScreenInner() {
         </Pressable>
       </Modal>
 
-      {/* Forward picker */}
-      <Modal visible={forwardOpen} transparent animationType="slide" onRequestClose={() => setForwardOpen(false)}>
-        <Pressable style={styles.backdrop} onPress={() => setForwardOpen(false)}>
-          <View style={[styles.sheet, styles.forwardSheet, { paddingBottom: insets.bottom + 12 }]}>
-            <Text style={styles.sheetTitle}>Forward to</Text>
-            <FlatList
-              data={forwardList}
-              keyExtractor={(c) => c.conversation.id}
-              renderItem={({ item }) => (
-                <Pressable style={styles.forwardRow} onPress={() => doForward(item.conversation.id)}>
-                  <Text style={styles.forwardName}>{item.title}</Text>
-                </Pressable>
-              )}
-            />
-          </View>
-        </Pressable>
-      </Modal>
+      {/* Forward picker — multi-recipient with search, recents, groups & preview */}
+      <ForwardSheet
+        visible={forwardOpen}
+        onClose={() => { setForwardOpen(false); setForwardSources([]); setForwardPreview(null); }}
+        conversations={forwardList}
+        onConfirm={doForward}
+        preview={forwardPreview}
+        count={forwardSources.length}
+      />
 
       {/* Full-screen media viewer (swipe / zoom / video) */}
       {viewerIndex >= 0 && (
-        <MediaViewer items={viewerItems} index={viewerIndex} onClose={() => setViewerUrl(null)} />
+        <MediaViewer
+          items={viewerItems}
+          index={viewerIndex}
+          onClose={() => setViewerUrl(null)}
+          onForward={forwardFromViewer}
+          onDelete={deleteFromViewer}
+        />
       )}
     </Animated.View>
   );

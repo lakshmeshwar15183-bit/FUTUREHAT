@@ -2,15 +2,14 @@
 // reply preview, reaction chips, edited marker, and delivery ticks.
 import React, { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-// expo-image (not RN <Image>) so photos are disk-cached — a downloaded image then
-// opens instantly and, crucially, still opens OFFLINE (P3), same as avatars.
-import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 
 import type { Message, MessageReaction } from '../lib/shared';
+import { isVideoMessage } from '../lib/shared';
 import { formatTime } from '../lib/time';
 import { useColors, radius, font, type Palette } from '../theme';
 import AudioMessage from './AudioMessage';
+import SignedImage from './SignedImage';
 
 export type TickStatus = 'sending' | 'sent' | 'delivered' | 'read';
 
@@ -28,6 +27,7 @@ export function replySummary(m: { type: string; content: string | null; media_ur
   if (m.content && m.content.trim()) return m.content;
   if (m.type === 'image') return /\.gif(\?|#|$)/i.test(m.media_url ?? '') ? '🎞️ GIF' : '📷 Photo';
   if (m.type === 'audio') return '🎤 Voice message';
+  if (m.type === 'video') return '🎬 Video';
   if (m.type === 'file') return isVideoUrl(m.media_url) ? '🎬 Video' : '📄 Document';
   return 'Attachment';
 }
@@ -191,12 +191,11 @@ function MessageBubble({
           }
           return (
             <Pressable onPress={() => onOpenImage?.(message.media_url!)}>
-              <Image
+              <SignedImage
                 source={message.media_url}
-                style={styles.image}
-                cachePolicy="memory-disk"
+                containerStyle={styles.image}
                 contentFit="cover"
-                recyclingKey={message.media_url}
+                tint={colors.primary}
               />
               {isVO && (
                 <View style={styles.viewOnceTag}>
@@ -215,7 +214,7 @@ function MessageBubble({
           />
         )}
 
-        {message.type === 'file' && message.media_url && isVideoUrl(message.media_url) && (
+        {message.media_url && isVideoMessage(message) && (
           <Pressable
             onPress={() => onOpenImage?.(message.media_url!)}
             style={styles.videoTile}

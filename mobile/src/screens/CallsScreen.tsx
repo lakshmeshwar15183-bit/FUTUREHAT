@@ -176,6 +176,10 @@ export default function CallsScreen() {
     const isSel = selected.has(g.key);
     const missed = g.anyMissed;
     const out = g.latest.direction === 'outgoing';
+    // The real call records behind this row (newest first) — passed to the
+    // detail screen so it shows THIS call's metadata, not generic contact info.
+    const idSet = new Set(g.callIds);
+    const groupCallsList = items.filter((it) => idSet.has(it.id));
     return (
       <Pressable
         onLongPress={() => enterSelect(g.key)}
@@ -187,6 +191,7 @@ export default function CallsScreen() {
             title: g.title,
             username: g.peer_username ?? undefined,
             avatarUrl: g.peer_avatar,
+            calls: groupCallsList,
           });
         }}
         style={({ pressed }) => [styles.row, (isSel || pressed) && { backgroundColor: colors.surfaceAlt }]}
@@ -217,6 +222,7 @@ export default function CallsScreen() {
           onPress={() => (selecting ? toggle(g.key) : navigation.navigate('CallDetail', {
             conversationId: g.conversation_id, peerId: g.peer_id ?? undefined,
             title: g.title, username: g.peer_username ?? undefined, avatarUrl: g.peer_avatar,
+            calls: groupCallsList,
           }))}
         >
           <Ionicons name={g.latest.type === 'video' ? 'videocam' : 'call'} size={22} color={colors.primary} />

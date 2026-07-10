@@ -1,8 +1,9 @@
 // FUTUREHAT mobile — root component. Providers (safe-area, theme, app-lock),
 // auth gate, bottom tabs, and the full navigation stack.
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import * as Linking from 'expo-linking';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { NavigationContainer, DefaultTheme, useNavigationContainerRef } from '@react-navigation/native';
@@ -12,6 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { supabase } from './src/lib/supabase';
 import { getCurrentUser, onAuthChange } from './src/lib/shared';
+import { isRecoveryLink, parseRecoveryLink, RESET_PASSWORD_PATH } from './src/lib/authLinks';
 import { startSync } from './src/lib/sync';
 import { ThemeProvider, useTheme } from './src/theme';
 import { AppLockProvider, useAppLock } from './src/security/AppLock';
@@ -22,6 +24,7 @@ import { APP_NAME } from './src/branding';
 import type { RootStackParamList } from './src/navigation/types';
 
 import AuthScreen from './src/screens/AuthScreen';
+import ResetPasswordScreen from './src/screens/ResetPasswordScreen';
 import ConversationsScreen from './src/screens/ConversationsScreen';
 import CommunitiesScreen from './src/screens/CommunitiesScreen';
 import CallsScreen from './src/screens/CallsScreen';
@@ -98,12 +101,107 @@ function MainTabs() {
   );
 }
 
+// Deep-link config for React Navigation. `expo-linking`'s createURL() derives
+// the correct scheme for every runtime (Expo Go: `exp://…`, dev-client:
+// `dev.lakshmeshwar.futurehat://…`, standalone: `futurehat://…`), and we
+// include the app scheme as an explicit prefix so production builds route
+// `futurehat://reset-password` without any config drift.
+const LINKING_PREFIXES: string[] = [
+  Linking.createURL('/'),
+  'futurehat://',
+];
+const linkingConfig: React.ComponentProps<typeof NavigationContainer>['linking'] = {
+  prefixes: LINKING_PREFIXES,
+  config: {
+    screens: {
+      Auth: 'auth',
+      ResetPassword: RESET_PASSWORD_PATH,
+      Main: 'main',
+    },
+  },
+};
+
 function RootNavigator() {
   const { colors, mode } = useTheme();
   const { locked } = useAppLock();
   const navRef = useNavigationContainerRef<RootStackParamList>();
   const [loading, setLoading] = useState(true);
   const [signedIn, setSignedIn] = useState(false);
+  // When the deep-link handler installs a recovery session we set this so the
+  // stack re-mounts with ResetPassword as the initial route, even if the user
+  // was already signed in. Cleared once the reset flow completes.
+  const [recoveryPending, setRecoveryPending] = useState(false);
+  // Buffered incoming URL from the cold-start path — navRef isn't ready during
+  // the very first render, so we drain this once the container has mounted.
+  const pendingRecoveryError = useRef<string | null>(null);
+
+  // ── Deep-link → recovery session installer ────────────────────────────────
+  // Runs for cold start (getInitialURL) AND warm (addEventListener). The
+  // sequence is: parse the URL fragment → setSession(access, refresh) so the
+  // client is authenticated as the recovering user → mark recoveryPending so
+  // ResetPassword becomes the initial route. If the URL clearly LOOKS like a
+  // recovery link but the tokens are missing / malformed we still route to
+  // ResetPassword — it renders a "link expired" message instead of the form.
+  useEffect(() => {
+    let alive = true;
+
+    async function handleUrl(url: string | null | undefined) {
+      if (!alive || !url) return;
+      if (!isRecoveryLink(url)) return;
+      const parsed = parseRecoveryLink(url);
+      if (!parsed) {
+        pendingRecoveryError.current = 'This reset link is missing its recovery token.';
+        setRecoveryPending(true);
+        return;
+      }
+      const { error } = await supabase.auth.setSession({
+        access_token: parsed.accessToken,
+        refresh_token: parsed.refreshToken,
+      });
+      if (!alive) return;
+      if (error) {
+        pendingRecoveryError.current =
+          error.message.toLowerCase().includes('expired')
+            ? 'This reset link has expired. Request a new one from the sign-in screen.'
+            : 'This reset link is invalid or has already been used.';
+      } else {
+        pendingRecoveryError.current = null;
+      }
+      setRecoveryPending(true);
+    }
+
+    Linking.getInitialURL().then(handleUrl).catch(() => {});
+    const sub = Linking.addEventListener('url', ({ url }) => { void handleUrl(url); });
+
+    // Supabase also fires PASSWORD_RECOVERY on its own once a recovery session
+    // is installed (belt + braces — covers the case where setSession was
+    // called elsewhere or a magic-link recovery landed us in-app).
+    const { unsubscribe: offAuth } = onAuthChange(supabase, (event) => {
+      if (event === 'PASSWORD_RECOVERY') setRecoveryPending(true);
+    });
+
+    return () => {
+      alive = false;
+      sub.remove();
+      offAuth();
+    };
+  }, []);
+
+  // Once the nav container mounts + recoveryPending flips on, ensure we're on
+  // ResetPassword regardless of the current stack. We do this via navRef so we
+  // don't have to teach every ancestor about the state.
+  useEffect(() => {
+    if (!recoveryPending) return;
+    const go = () => {
+      if (!navRef.isReady()) { setTimeout(go, 50); return; }
+      navRef.reset({
+        index: 0,
+        routes: [{ name: 'ResetPassword', params: { recoveryError: pendingRecoveryError.current ?? undefined } }],
+      });
+      setRecoveryPending(false);
+    };
+    go();
+  }, [recoveryPending, navRef]);
 
   useEffect(() => {
     let active = true;
@@ -158,8 +256,13 @@ function RootNavigator() {
   return (
     <>
       <StatusBar style={colors.isLight ? 'dark' : 'light'} />
-      <NavigationContainer theme={navTheme} ref={navRef}>
+      <NavigationContainer theme={navTheme} ref={navRef} linking={linkingConfig}>
         <Stack.Navigator screenOptions={screenOptions}>
+          {/* ResetPassword is registered on BOTH sides of the auth split.
+              A recovery link installs a temp session → the user is briefly
+              "signed in" → without this the stack would jump to Main. We keep
+              the screen in both branches so the deep-link reset works
+              regardless of the surrounding auth state. */}
           {signedIn ? (
             <>
               <Stack.Screen name="Main" component={MainTabs} options={{ headerShown: false }} />
@@ -198,9 +301,13 @@ function RootNavigator() {
               <Stack.Screen name="StreakDetail" component={StreakDetailScreen} options={({ route }) => ({ title: route.params?.title || 'Streak' })} />
               <Stack.Screen name="StreakInfo" component={StreakInfoScreen} options={({ route }) => ({ title: STREAK_INFO_TITLES[route.params?.page ?? 'how'] })} />
               <Stack.Screen name="HallOfLegends" component={HallOfLegendsScreen} options={{ title: 'Hall of Legends' }} />
+              <Stack.Screen name="ResetPassword" component={ResetPasswordScreen} options={{ headerShown: false }} />
             </>
           ) : (
-            <Stack.Screen name="Auth" component={AuthScreen} options={{ headerShown: false }} />
+            <>
+              <Stack.Screen name="Auth" component={AuthScreen} options={{ headerShown: false }} />
+              <Stack.Screen name="ResetPassword" component={ResetPasswordScreen} options={{ headerShown: false }} />
+            </>
           )}
         </Stack.Navigator>
       </NavigationContainer>

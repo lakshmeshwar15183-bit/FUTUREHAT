@@ -9,7 +9,7 @@ import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { supabase } from './supabase';
-import { registerPushToken } from './shared';
+import { registerPushToken, removePushToken } from './shared';
 
 // Bump when channel definitions change so they're re-created once (never every launch).
 const CHANNELS_VERSION = '2';
@@ -28,17 +28,26 @@ export const CATEGORY = { message: 'fh_message', call: 'fh_call' } as const;
 
 const LED = '#00A884';
 
-// Foreground behaviour: show the banner + play the (system default) sound.
+// Foreground behaviour: show the banner + play the (system default) sound — EXCEPT
+// for the chat that's already open on screen (WhatsApp parity, no self-notify). This
+// runs for BOTH locally-scheduled notifications and remote FCM messages that arrive
+// while the app is foregrounded, so it's the single place we suppress the open chat.
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-  }),
+  handleNotification: async (notification) => {
+    const data = notification.request.content.data as Record<string, unknown> | undefined;
+    const convId = typeof data?.conversationId === 'string' ? data.conversationId : null;
+    const suppress = data?.type === 'message' && convId != null && convId === openConversationId;
+    return {
+      shouldShowAlert: !suppress,
+      shouldPlaySound: !suppress,
+      shouldSetBadge: true,
+    };
+  },
 });
 
 let initialized = false;
 let pushActive = false;                 // true once an FCM token is registered
+let lastToken: string | null = null;    // most recent FCM device token (for refresh/unregister)
 let openConversationId: string | null = null;
 
 /** True when FCM is configured + a device token was registered (killed-state push
@@ -112,10 +121,39 @@ export async function registerForPush(): Promise<void> {
     // Raw FCM device token — sent directly by our push Edge Function (FCM v1).
     const token = await Notifications.getDevicePushTokenAsync();
     if (token?.data) {
-      await registerPushToken(supabase, String(token.data), (token.type as any) ?? 'android');
+      lastToken = String(token.data);
+      await registerPushToken(supabase, lastToken, (token.type as any) ?? 'android');
       pushActive = true;
     }
   } catch { /* FCM not configured (no google-services.json) yet — ignore */ }
+}
+
+// FCM rotates device tokens (app data cleared, restore, periodic refresh). Keep the
+// server registry current so pushes never silently stop. Call once; returns an
+// unsubscribe. Safe no-op if FCM isn't configured.
+export function startPushTokenRefresh(): () => void {
+  try {
+    const sub = Notifications.addPushTokenListener((t) => {
+      const next = String((t as any)?.data ?? '');
+      if (!next || next === lastToken) return;
+      lastToken = next;
+      pushActive = true;
+      registerPushToken(supabase, next, ((t as any)?.type as any) ?? 'android').catch(() => {});
+    });
+    return () => { try { sub.remove(); } catch { /* ignore */ } };
+  } catch {
+    return () => {};
+  }
+}
+
+/** Drop this device's token on sign-out so a shared phone doesn't keep receiving the
+ *  previous user's messages until the next login re-registers. Best-effort. */
+export async function unregisterForPush(): Promise<void> {
+  try {
+    const token = lastToken ?? String((await Notifications.getDevicePushTokenAsync())?.data ?? '');
+    if (token) await removePushToken(supabase, token);
+  } catch { /* ignore */ }
+  finally { lastToken = null; pushActive = false; }
 }
 
 export interface MessageNotifOpts {

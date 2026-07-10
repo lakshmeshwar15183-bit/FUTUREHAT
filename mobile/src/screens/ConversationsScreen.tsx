@@ -10,6 +10,7 @@ import {
   Platform,
   Pressable,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -50,6 +51,7 @@ import {
   processMyStreaks,
   subscribeStreakChanges,
   indexStreaksByConversation,
+  getStarredMessages,
 } from '../lib/shared';
 import type { ConversationSummary, MessageSearchHit, StreakSummary } from '../lib/shared';
 import {
@@ -76,6 +78,20 @@ const animateSelection = () => LayoutAnimation.configureNext(LayoutAnimation.Pre
 // Cache-key bases for the per-user conversation flag sets, so pinned/muted/hidden
 // state hydrates instantly (offline included) and survives an app restart.
 const FLAG_KEY = { pinned: 'pinned', muted: 'muted', hidden: 'hidden' } as const;
+
+// WhatsApp/Telegram-style filter chips shown below the search bar. `all` means
+// no filter; every other value narrows the visible list. Order here is the
+// display order in the horizontal strip.
+type ChatFilter = 'all' | 'unread' | 'groups' | 'favorites' | 'pinned' | 'streaks' | 'locked';
+const FILTER_CHIPS: { key: ChatFilter; label: string }[] = [
+  { key: 'all',       label: 'All' },
+  { key: 'unread',    label: 'Unread' },
+  { key: 'groups',    label: 'Groups' },
+  { key: 'favorites', label: 'Favorites' },
+  { key: 'pinned',    label: 'Pinned' },
+  { key: 'streaks',   label: 'Streaks' },
+  { key: 'locked',    label: 'Locked' },
+];
 
 export default function ConversationsScreen() {
   const navigation = useNavigation<Nav>();
@@ -105,6 +121,13 @@ export default function ConversationsScreen() {
   const [overflowOpen, setOverflowOpen] = useState(false);
   const selectionMode = selectedIds.size > 0;
 
+  // Filter chips (All / Unread / Groups / Favorites / Pinned / Streaks / Locked)
+  // — narrow the visible list to a facet. `favIds` is the set of conversations
+  // that contain at least one starred message, so Favorites acts as a "bookmarked
+  // chats" filter without needing a new DB table.
+  const [filter, setFilter] = useState<ChatFilter>('all');
+  const [favIds, setFavIds] = useState<Set<string>>(new Set());
+
   const q = query.trim().toLowerCase();
   const convById = useMemo(() => {
     const m = new Map<string, ConversationSummary>();
@@ -123,9 +146,26 @@ export default function ConversationsScreen() {
     // Settings › Archived chats); a chat is un-hidden by unarchiving or a new msg.
     const base0 = items.filter((c) => !hiddenIds.has(c.conversation.id));
     // Locked chats stay hidden (no preview, not openable) until the Locked area is
-    // unlocked with device authentication this session.
-    const base = chatLock.unlocked ? base0 : base0.filter((c) => !chatLock.isLocked(c.conversation.id));
-    const searched = q ? base.filter((c) => c.title.toLowerCase().includes(q)) : base;
+    // unlocked with device authentication this session — EXCEPT when the Locked
+    // chip is active, which surfaces the (still-locked) rows so the user can tap
+    // through the auth prompt to reveal them.
+    const base = chatLock.unlocked || filter === 'locked'
+      ? base0
+      : base0.filter((c) => !chatLock.isLocked(c.conversation.id));
+    // Chip filters (WhatsApp/Telegram folder pattern). `all` short-circuits.
+    const faceted = base.filter((c) => {
+      const id = c.conversation.id;
+      switch (filter) {
+        case 'unread':    return c.unreadCount > 0;
+        case 'groups':    return c.conversation.type === 'group';
+        case 'favorites': return favIds.has(id);
+        case 'pinned':    return pinnedIds.has(id);
+        case 'streaks':   return (streaks[id]?.score ?? 0) > 0;
+        case 'locked':    return chatLock.isLocked(id);
+        default:          return true;
+      }
+    });
+    const searched = q ? faceted.filter((c) => c.title.toLowerCase().includes(q)) : faceted;
     // Pinned conversations float to the top (WhatsApp-style), otherwise the
     // getMyConversations order (most-recent first) is preserved.
     return [...searched].sort((a, b) => {
@@ -133,7 +173,7 @@ export default function ConversationsScreen() {
       const pb = pinnedIds.has(b.conversation.id) ? 1 : 0;
       return pb - pa;
     });
-  }, [items, q, hiddenIds, pinnedIds, chatLock]);
+  }, [items, q, hiddenIds, pinnedIds, chatLock, filter, favIds, streaks]);
 
   // Per-conversation peer helpers for direct chats (presence dot + premium badge).
   const peerOf = useCallback(
@@ -269,6 +309,11 @@ export default function ConversationsScreen() {
         .catch(() => {});
       getPremiumUserIds(supabase).then((ids) => setPremiumIds(new Set(ids))).catch(() => {});
       getServerPremium(supabase).then(setIsPremium).catch(() => {});
+      // Favorites chip — chats containing any starred message. Cached-tolerant:
+      // on failure (offline) we keep whatever we had.
+      getStarredMessages(supabase)
+        .then((rows) => setFavIds(new Set(rows.map((r) => r.conversation_id))))
+        .catch(() => {});
       // Streaks: finalise any of the caller's pending days (idempotent server-side
       // catch-up — never computes points on-device), then refresh the authoritative
       // summaries and rewrite the local cache so the emoji is instant next launch.
@@ -595,7 +640,7 @@ export default function ConversationsScreen() {
       delayLongPress={280}
     >
       <View>
-        <Avatar uri={item.avatarUrl} name={item.title} size={52} />
+        <Avatar uri={item.avatarUrl} name={item.title} size={48} />
         {peerOnline && !selected && <View style={styles.onlineDot} />}
         {/* Disappearing-messages timer indicator (WhatsApp parity) — subtle clock. */}
         {disappearing && !selected && (
@@ -703,8 +748,7 @@ export default function ConversationsScreen() {
         ItemSeparatorComponent={Separator}
         ListHeaderComponent={selectionMode ? null : (
           <View>
-            {/* Status strip (WhatsApp home parity) — hidden while searching. */}
-            {q === '' && <StatusStrip />}
+            {/* Search bar sits directly below the tab-header title. */}
             <View style={styles.searchBar}>
               <Ionicons name="search" size={16} color={colors.textMuted} />
               <TextInput
@@ -721,8 +765,44 @@ export default function ConversationsScreen() {
                 </Pressable>
               )}
             </View>
-            {/* Locked chats (0027): hidden until authenticated with device auth. */}
-            {lockedCount > 0 && q === '' && (
+            {/* Filter chips (WhatsApp/Telegram folder-style) — hidden while
+                searching so results aren't accidentally narrowed. */}
+            {q === '' && (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.chipsRow}
+                keyboardShouldPersistTaps="handled"
+              >
+                {FILTER_CHIPS.map((chip) => {
+                  const active = filter === chip.key;
+                  return (
+                    <Pressable
+                      key={chip.key}
+                      onPress={() => {
+                        // Smooth cross-fade + reflow when the chip flips.
+                        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                        setFilter(chip.key);
+                      }}
+                      style={({ pressed }) => [
+                        styles.chip,
+                        active && styles.chipActive,
+                        pressed && !active && styles.chipPressed,
+                      ]}
+                    >
+                      <Text style={[styles.chipText, active && styles.chipTextActive]}>
+                        {chip.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            )}
+            {/* Compact "My Status" row (~58dp) — below the chips, above chats. */}
+            {q === '' && <StatusStrip />}
+            {/* Locked-chats gate stays available while the Locked chip is active
+                so the user can authenticate to reveal previews inline. */}
+            {lockedCount > 0 && q === '' && (filter === 'locked' || !chatLock.unlocked) && (
               <Pressable
                 style={styles.hiddenToggle}
                 onPress={async () => {
@@ -778,9 +858,19 @@ export default function ConversationsScreen() {
           !loading ? (
             <View style={styles.empty}>
               <Ionicons name="chatbubbles-outline" size={64} color={colors.textFaint} />
-              <Text style={styles.emptyTitle}>{q ? 'No matching chats' : 'No conversations yet'}</Text>
+              <Text style={styles.emptyTitle}>
+                {q
+                  ? 'No matching chats'
+                  : filter !== 'all'
+                  ? `No ${FILTER_CHIPS.find((f) => f.key === filter)?.label.toLowerCase() ?? ''} chats`
+                  : 'No conversations yet'}
+              </Text>
               <Text style={styles.emptySub}>
-                {q ? 'Try a different search.' : 'Tap the button below to find someone and say hello.'}
+                {q
+                  ? 'Try a different search.'
+                  : filter !== 'all'
+                  ? 'Try a different filter.'
+                  : 'Tap the button below to find someone and say hello.'}
               </Text>
             </View>
           ) : null
@@ -881,11 +971,33 @@ const makeStyles = (colors: Palette) =>
     offlineText: { color: '#fff', fontSize: font.tiny, fontWeight: '600' },
     searchBar: {
       flexDirection: 'row', alignItems: 'center', gap: 8,
-      marginHorizontal: spacing(4), marginTop: spacing(2), marginBottom: spacing(2),
+      marginHorizontal: spacing(4),
+      // Tight top spacing so more chats are visible immediately (WhatsApp/Telegram parity).
+      marginTop: spacing(1.5), marginBottom: spacing(1.5),
       paddingHorizontal: 12, paddingVertical: 8,
       backgroundColor: colors.surfaceAlt, borderRadius: radius.md,
     },
     searchInput: { flex: 1, color: colors.text, fontSize: font.body, paddingVertical: 0 },
+    // Horizontal filter-chip strip. Chips are pill-shaped; the active one uses
+    // the primary tint. LayoutAnimation smooths the swap between chips.
+    chipsRow: {
+      paddingHorizontal: spacing(3),
+      paddingBottom: spacing(1.5),
+      gap: spacing(2),
+      alignItems: 'center',
+    },
+    chip: {
+      paddingHorizontal: spacing(3),
+      paddingVertical: spacing(1.5),
+      borderRadius: radius.pill,
+      backgroundColor: colors.surfaceAlt,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+    },
+    chipPressed: { opacity: 0.65 },
+    chipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+    chipText: { color: colors.textMuted, fontSize: font.small, fontWeight: '600' },
+    chipTextActive: { color: '#fff' },
     hits: { paddingBottom: spacing(2), borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, marginBottom: spacing(1) },
     hitsHead: { color: colors.textMuted, fontSize: font.tiny, fontWeight: '700', letterSpacing: 0.5, paddingHorizontal: spacing(4), paddingVertical: spacing(2) },
     hit: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing(4), paddingVertical: spacing(2) },
@@ -897,7 +1009,9 @@ const makeStyles = (colors: Palette) =>
       flexDirection: 'row',
       alignItems: 'center',
       paddingHorizontal: spacing(4),
-      paddingVertical: spacing(3),
+      // Slightly tighter row so more chats fit on screen — readability preserved
+      // via the 15/13 heading/preview pairing and the 48dp avatar.
+      paddingVertical: spacing(2.25),
     },
     rowPressed: { backgroundColor: colors.surface },
     rowSelected: { backgroundColor: colors.primary + '22' },
@@ -961,7 +1075,7 @@ const makeStyles = (colors: Palette) =>
     sep: {
       height: StyleSheet.hairlineWidth,
       backgroundColor: colors.border,
-      marginLeft: spacing(4) + 52 + spacing(3),
+      marginLeft: spacing(4) + 48 + spacing(3),
     },
     empty: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing(8) },
     emptyTitle: {

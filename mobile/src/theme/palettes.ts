@@ -33,10 +33,13 @@ export interface Palette {
 
 export const palettes: Record<ThemeMode, Palette> = {
   dark: {
-    bg: '#0B141A',
-    surface: '#111B21',
-    surfaceAlt: '#1F2C33',
-    header: '#1F2C33',
+    // Slightly cooler/deeper base with clearer elevation steps (bg → surface →
+    // surfaceAlt) and a more defined border, so cards and rows read as layered
+    // instead of flat. Text/brand/bubble colors are unchanged (already WCAG-tuned).
+    bg: '#0A1116',
+    surface: '#151E24',
+    surfaceAlt: '#24313A',
+    header: '#1A252C',
     primary: '#00A884',
     primaryDark: '#008069',
     bubbleOut: '#005C4B',
@@ -46,7 +49,7 @@ export const palettes: Record<ThemeMode, Palette> = {
     text: '#E9EDEF',
     textMuted: '#8696A0',
     textFaint: '#8E9CA8',
-    border: '#222E35',
+    border: '#2A363E',
     danger: '#F15C6D',
     accentPlus: '#F7C948',
     accentPlusText: '#F7C948',
@@ -78,20 +81,22 @@ export const palettes: Record<ThemeMode, Palette> = {
     isLight: true,
   },
   amoled: {
+    // True black background for OLED; surfaces get a touch more lift and the
+    // border is more visible so cards don't disappear into the black.
     bg: '#000000',
-    surface: '#0A0A0A',
-    surfaceAlt: '#161616',
-    header: '#0A0A0A',
+    surface: '#0C0C0C',
+    surfaceAlt: '#191919',
+    header: '#0C0C0C',
     primary: '#00A884',
     primaryDark: '#008069',
     bubbleOut: '#04503F',
-    bubbleIn: '#161616',
+    bubbleIn: '#171717',
     bubbleOutText: '#F5F5F5',
     bubbleOutMuted: '#AAC0B7',
     text: '#F5F5F5',
     textMuted: '#9AA0A6',
     textFaint: '#8A9096',
-    border: '#1A1A1A',
+    border: '#262626',
     danger: '#F15C6D',
     accentPlus: '#F7C948',
     accentPlusText: '#F7C948',

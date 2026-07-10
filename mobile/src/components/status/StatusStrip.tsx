@@ -1,8 +1,8 @@
-// FUTUREHAT mobile — horizontal Status strip (WhatsApp home-screen parity).
-// Mounted at the top of the Chats list: "My status" tile + a horizontal row of
-// recent updates with seen/unseen rings. Opens the full-screen viewer or the
-// composer. Loads instantly from cache, refreshes on focus, and stays live via
-// realtime status changes. Replaces the old dedicated Status tab.
+// FUTUREHAT mobile — horizontal Status strip. Compact home-screen row: small
+// "My status" avatar (with blue +) + horizontal row of recent updates. Opens
+// the full-screen viewer or the composer. Loads instantly from cache, refreshes
+// on focus, and stays live via realtime status changes. Height ~58dp — fits
+// snugly below the filter chips so more chats are visible.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -130,28 +130,24 @@ export default function StatusStrip() {
         contentContainerStyle={styles.row}
         keyboardShouldPersistTaps="handled"
       >
-        {/* My status tile */}
+        {/* My status tile — small avatar with a blue "+" badge */}
         <Pressable style={styles.tile} onPress={openMine} onLongPress={() => setMenuOpen(true)}>
           <View>
             <View style={[styles.ring, { borderColor: mine ? colors.primary : 'transparent' }]}>
-              <Avatar uri={mine?.profile?.avatar_url} name="Me" size={56} />
+              <Avatar uri={mine?.profile?.avatar_url} name="Me" size={42} />
             </View>
             <View style={styles.addBadge}>
-              <Ionicons name="add" size={15} color="#fff" />
+              <Ionicons name="add" size={12} color="#fff" />
             </View>
           </View>
-          <Text style={styles.tileLabel} numberOfLines={1}>My status</Text>
         </Pressable>
 
-        {/* Recent updates */}
+        {/* Recent updates — avatar-only tiles keep the row height compact */}
         {groups.map((g) => (
           <Pressable key={g.userId} style={styles.tile} onPress={() => setViewing(g)}>
             <View style={[styles.ring, { borderColor: g.allSeen ? colors.border : colors.primary }]}>
-              <Avatar uri={g.profile?.avatar_url} name={g.profile?.display_name} size={56} />
+              <Avatar uri={g.profile?.avatar_url} name={g.profile?.display_name} size={42} />
             </View>
-            <Text style={styles.tileLabel} numberOfLines={1}>
-              {firstName(g.profile?.display_name) ?? 'User'}
-            </Text>
           </Pressable>
         ))}
       </ScrollView>
@@ -232,14 +228,15 @@ const makeStyles = (colors: Palette) =>
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: colors.border,
     },
-    row: { paddingHorizontal: spacing(3), paddingVertical: spacing(2.5), gap: spacing(3) },
-    tile: { alignItems: 'center', width: 70 },
-    ring: { borderWidth: 2.5, borderRadius: 34, padding: 2 },
+    // Compact row: total height ≈ 58dp — small avatar + minimal padding.
+    row: { paddingHorizontal: spacing(3), paddingVertical: spacing(1.5), gap: spacing(2) },
+    tile: { alignItems: 'center' },
+    ring: { borderWidth: 2, borderRadius: 26, padding: 1.5 },
     addBadge: {
       position: 'absolute', bottom: -1, right: -1,
-      backgroundColor: colors.primary, width: 20, height: 20, borderRadius: 10,
+      backgroundColor: colors.primary, width: 16, height: 16, borderRadius: 8,
       alignItems: 'center', justifyContent: 'center',
-      borderWidth: 2, borderColor: colors.surface,
+      borderWidth: 1.5, borderColor: colors.surface,
     },
     tileLabel: { color: colors.textMuted, fontSize: font.tiny, marginTop: spacing(1), maxWidth: 66 },
     backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },

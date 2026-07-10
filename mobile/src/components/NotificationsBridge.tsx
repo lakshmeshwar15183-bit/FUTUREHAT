@@ -15,7 +15,7 @@ import {
   getNotificationSettings, type Message,
 } from '../lib/shared';
 import {
-  initNotifications, registerForPush, isPushActive,
+  initNotifications, registerForPush, isPushActive, startPushTokenRefresh,
   presentMessageNotification, getOpenConversation, clearConversationNotification,
 } from '../lib/notifications';
 import type { RootStackParamList } from '../navigation/types';
@@ -24,10 +24,13 @@ export default function NotificationsBridge({ navRef }: { navRef: NavigationCont
   useEffect(() => {
     let cancelled = false;
     let channel: ReturnType<typeof supabase.channel> | null = null;
+    let stopTokenRefresh: (() => void) | null = null;
 
     (async () => {
       await initNotifications();
       await registerForPush();
+      // Keep the server token registry current across FCM token rotation.
+      stopTokenRefresh = startPushTokenRefresh();
       if (cancelled) return;
 
       const me = (await getCurrentUser(supabase))?.id;
@@ -98,7 +101,12 @@ export default function NotificationsBridge({ navRef }: { navRef: NavigationCont
       }
     });
 
-    return () => { cancelled = true; if (channel) supabase.removeChannel(channel); respSub.remove(); };
+    return () => {
+      cancelled = true;
+      if (channel) supabase.removeChannel(channel);
+      respSub.remove();
+      stopTokenRefresh?.();
+    };
   }, [navRef]);
 
   return null;

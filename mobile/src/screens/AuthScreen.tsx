@@ -16,6 +16,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { supabase } from '../lib/supabase';
 import { signInWithEmail, signUpWithEmail } from '../lib/shared';
+import { resetPasswordRedirectUrl } from '../lib/authLinks';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import { APP_NAME, CREDIT } from '../branding';
 
@@ -67,8 +68,12 @@ export default function AuthScreen() {
     setBusy(true);
     try {
       if (isForgot) {
+        // Compute the redirect at call-time so Expo Go / dev-client / standalone
+        // builds all get the right scheme — hardcoding `futurehat://…` broke
+        // the dev flow because Expo Go can't handle a custom scheme. The URL
+        // used here MUST also be added to Supabase → Auth → URL Configuration.
         const { error } = await supabase.auth.resetPasswordForEmail(mail, {
-          redirectTo: 'futurehat://reset-password',
+          redirectTo: resetPasswordRedirectUrl(),
         });
         if (error) throw error;
         setNotice('Password reset link sent. Check your email.');
