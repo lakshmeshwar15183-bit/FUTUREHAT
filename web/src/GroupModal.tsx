@@ -18,8 +18,15 @@ export function GroupModal({ onClose, onCreated }: Props) {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Profile[]>([]);
   const [selectedUsers, setSelectedUsers] = useState<Profile[]>([]);
+  const [iconFile, setIconFile] = useState<File | null>(null);
+  const [iconPreview, setIconPreview] = useState<string>('');
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
+
+  function pickIcon(file: File | null) {
+    setIconFile(file);
+    setIconPreview(file ? URL.createObjectURL(file) : '');
+  }
 
   useEffect(() => {
     if (searchQuery.trim()) {
@@ -48,10 +55,26 @@ export function GroupModal({ onClose, onCreated }: Props) {
     setError('');
 
     try {
+      let avatarUrl: string | null = null;
+      if (iconFile) {
+        const { data: auth } = await supabase.auth.getUser();
+        const uid = auth.user?.id;
+        if (!uid) throw new Error('Not authenticated');
+        const ext = (iconFile.name.split('.').pop() || 'jpg').toLowerCase();
+        // avatars bucket RLS requires the first path segment to equal the uploader's id.
+        const path = `${uid}/group-${Date.now()}.${ext}`;
+        const { error: upErr } = await supabase.storage
+          .from('avatars')
+          .upload(path, iconFile, { upsert: true, contentType: iconFile.type || 'image/jpeg' });
+        if (upErr) throw upErr;
+        avatarUrl = supabase.storage.from('avatars').getPublicUrl(path).data.publicUrl;
+      }
+
       const { conversationId, error: err } = await createGroupConversation(
         supabase,
         groupName.trim(),
         selectedUsers.map((u) => u.id),
+        avatarUrl,
       );
       if (err) throw err;
       if (!conversationId) throw new Error('No conversation ID returned');
@@ -74,6 +97,19 @@ export function GroupModal({ onClose, onCreated }: Props) {
         </div>
 
         <form onSubmit={handleCreate} className="group-form">
+          <label className="group-icon-picker">
+            <div className="group-icon-preview">
+              {iconPreview ? <img src={iconPreview} alt="Group icon" /> : <span>📷</span>}
+            </div>
+            <span className="group-icon-hint">{iconFile ? 'Change icon' : 'Add group icon (optional)'}</span>
+            <input
+              type="file"
+              accept="image/*"
+              style={{ display: 'none' }}
+              onChange={(e) => pickIcon(e.target.files?.[0] || null)}
+            />
+          </label>
+
           <label>
             Group Name
             <input

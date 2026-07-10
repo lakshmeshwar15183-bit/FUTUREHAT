@@ -33,7 +33,14 @@ export function CommunitiesModal({ onClose, onOpenChannel }: {
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
   const [newDesc, setNewDesc] = useState('');
+  const [iconFile, setIconFile] = useState<File | null>(null);
+  const [iconPreview, setIconPreview] = useState<string>('');
   const [joinId, setJoinId] = useState('');
+
+  function pickIcon(file: File | null) {
+    setIconFile(file);
+    setIconPreview(file ? URL.createObjectURL(file) : '');
+  }
 
   function flash(m: string) { setToast(m); setTimeout(() => setToast(null), 2400); }
 
@@ -52,9 +59,23 @@ export function CommunitiesModal({ onClose, onOpenChannel }: {
 
   async function handleCreate() {
     if (!newName.trim()) return flash('Name your community.');
-    const { community, error } = await createCommunity(supabase, newName.trim(), newDesc.trim() || undefined);
+    let avatarUrl: string | null = null;
+    if (iconFile) {
+      const { data: auth } = await supabase.auth.getUser();
+      const uid = auth.user?.id;
+      if (!uid) return flash('Not authenticated.');
+      const ext = (iconFile.name.split('.').pop() || 'jpg').toLowerCase();
+      // avatars bucket RLS requires the first path segment to equal the uploader's id.
+      const path = `${uid}/community-${Date.now()}.${ext}`;
+      const { error: upErr } = await supabase.storage
+        .from('avatars')
+        .upload(path, iconFile, { upsert: true, contentType: iconFile.type || 'image/jpeg' });
+      if (upErr) return flash(upErr.message || 'Could not upload icon.');
+      avatarUrl = supabase.storage.from('avatars').getPublicUrl(path).data.publicUrl;
+    }
+    const { community, error } = await createCommunity(supabase, newName.trim(), newDesc.trim() || undefined, avatarUrl);
     if (error || !community) return flash(error?.message || 'Could not create community.');
-    setNewName(''); setNewDesc(''); setCreating(false);
+    setNewName(''); setNewDesc(''); pickIcon(null); setCreating(false);
     await load();
     setActive(community);
   }
@@ -99,6 +120,13 @@ export function CommunitiesModal({ onClose, onOpenChannel }: {
             <div className="comm-create">
               {creating ? (
                 <>
+                  <label className="comm-icon-picker">
+                    <div className="comm-icon-preview">
+                      {iconPreview ? <img src={iconPreview} alt="Community icon" /> : <span>📷</span>}
+                    </div>
+                    <span>{iconFile ? 'Change icon' : 'Add icon (optional)'}</span>
+                    <input type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => pickIcon(e.target.files?.[0] || null)} />
+                  </label>
                   <input className="comm-input" placeholder="Community name" value={newName} onChange={(e) => setNewName(e.target.value)} maxLength={60} />
                   <input className="comm-input" placeholder="Description (optional)" value={newDesc} onChange={(e) => setNewDesc(e.target.value)} maxLength={140} />
                   <div className="comm-row">

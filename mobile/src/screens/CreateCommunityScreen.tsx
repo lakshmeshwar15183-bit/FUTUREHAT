@@ -48,8 +48,12 @@ export default function CreateCommunityScreen() {
     if (!avatarUri) return null;
     try {
       setUploading(true);
+      const { data: auth } = await supabase.auth.getUser();
+      const uid = auth.user?.id;
+      if (!uid) throw new Error('not authenticated');
       const ext = avatarUri.split('.').pop() || 'jpg';
-      const fileName = `community-${Date.now()}.${ext}`;
+      // avatars bucket RLS requires the first path segment to equal the uploader's id.
+      const fileName = `${uid}/community-${Date.now()}.${ext}`;
       const fileBase64 = await FileSystem.readAsStringAsync(avatarUri, {
         encoding: FileSystem.EncodingType.Base64,
       });
