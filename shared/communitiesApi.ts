@@ -57,12 +57,13 @@ export async function createCommunity(
   client: SupabaseClient,
   name: string,
   description?: string,
+  avatarUrl?: string | null,
 ): Promise<{ community: Community | null; error: Error | null }> {
   const user = await getCurrentUser(client);
   if (!user) return { community: null, error: new Error('not authenticated') };
   const { data, error } = await client
     .from('communities')
-    .insert({ name, description: description ?? null, owner_id: user.id })
+    .insert({ name, description: description ?? null, avatar_url: avatarUrl, owner_id: user.id })
     .select()
     .single();
   if (error || !data) return { community: null, error };
