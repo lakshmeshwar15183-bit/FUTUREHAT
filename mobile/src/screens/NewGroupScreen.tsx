@@ -1,9 +1,10 @@
-// Lumixo mobile — create a group conversation: pick members, name it, go.
+// Lumixo mobile — create a group conversation: pick members, name it, add icon, go.
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Image,
   Pressable,
   StyleSheet,
   Text,
@@ -13,6 +14,8 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system';
 
 import { supabase } from '../lib/supabase';
 import { searchProfiles, createGroupConversation } from '../lib/shared';
@@ -33,6 +36,8 @@ export default function NewGroupScreen() {
   const [results, setResults] = useState<Profile[]>([]);
   const [selected, setSelected] = useState<Profile[]>([]);
   const [creating, setCreating] = useState(false);
+  const [avatarUri, setAvatarUri] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
     const q = query.trim();
@@ -59,17 +64,62 @@ export default function NewGroupScreen() {
     );
   }
 
+  async function pickAvatar() {
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) return;
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+      if (!res.canceled && res.assets?.[0]) {
+        setAvatarUri(res.assets[0].uri);
+      }
+    } catch {
+      Alert.alert('Error', 'Could not pick image');
+    }
+  }
+
+  async function uploadAvatar(): Promise<string | null> {
+    if (!avatarUri) return null;
+    try {
+      setUploading(true);
+      const ext = avatarUri.split('.').pop() || 'jpg';
+      const fileName = `group-${Date.now()}.${ext}`;
+      const fileBase64 = await FileSystem.readAsStringAsync(avatarUri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      const { data, error } = await supabase.storage
+        .from('avatars')
+        .upload(fileName, Buffer.from(fileBase64, 'base64'), {
+          contentType: `image/${ext === 'png' ? 'png' : 'jpeg'}`,
+        });
+      if (error) throw error;
+      const { data: urlData } = supabase.storage
+        .from('avatars')
+        .getPublicUrl(data.path);
+      return urlData?.publicUrl || null;
+    } catch (err) {
+      Alert.alert('Upload failed', 'Could not upload group icon');
+      return null;
+    } finally {
+      setUploading(false);
+    }
+  }
+
   async function create() {
-    if (!name.trim() || selected.length === 0 || creating) return;
+    if (!name.trim() || selected.length === 0 || creating || uploading) return;
     setCreating(true);
+    const avatarUrl = await uploadAvatar();
     const { conversationId, error } = await createGroupConversation(
       supabase,
       name.trim(),
       selected.map((s) => s.id),
+      avatarUrl,
     );
     setCreating(false);
-    // Web surfaces creation failures inline (GroupModal.tsx:61-62,129); mobile
-    // previously returned silently, leaving the user staring at an unchanged form.
     if (error || !conversationId) {
       Alert.alert('Could not create group', error?.message || 'Please try again.');
       return;
@@ -79,13 +129,25 @@ export default function NewGroupScreen() {
 
   return (
     <View style={styles.container}>
-      <TextInput
-        style={styles.nameInput}
-        placeholder="Group name"
-        placeholderTextColor={colors.textFaint}
-        value={name}
-        onChangeText={setName}
-      />
+      <View style={styles.headerSection}>
+        <Pressable style={styles.avatarPicker} onPress={pickAvatar} disabled={uploading}>
+          {avatarUri ? (
+            <Image source={{ uri: avatarUri }} style={styles.avatarImage} />
+          ) : (
+            <View style={[styles.avatarImage, styles.avatarPlaceholder]}>
+              <Ionicons name="image-outline" size={32} color={colors.textMuted} />
+            </View>
+          )}
+          {uploading && <ActivityIndicator style={styles.uploadSpinner} color={colors.primary} />}
+        </Pressable>
+        <TextInput
+          style={styles.nameInput}
+          placeholder="Group name"
+          placeholderTextColor={colors.textFaint}
+          value={name}
+          onChangeText={setName}
+        />
+      </View>
 
       {selected.length > 0 && (
         <FlatList
@@ -153,12 +215,39 @@ export default function NewGroupScreen() {
 const makeStyles = (colors: Palette) =>
   StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.bg },
-    nameInput: {
-      color: colors.text,
+    headerSection: {
       backgroundColor: colors.surface,
-      paddingHorizontal: spacing(4),
-      paddingVertical: spacing(3.5),
+      padding: spacing(4),
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing(4),
+    },
+    avatarPicker: {
+      position: 'relative',
+    },
+    avatarImage: {
+      width: 60,
+      height: 60,
+      borderRadius: 30,
+    },
+    avatarPlaceholder: {
+      backgroundColor: colors.surfaceAlt,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    uploadSpinner: {
+      position: 'absolute',
+      right: 0,
+      bottom: 0,
+      backgroundColor: colors.surface,
+      borderRadius: 12,
+      padding: 2,
+    },
+    nameInput: {
+      flex: 1,
+      color: colors.text,
       fontSize: font.heading,
+      fontWeight: '600',
     },
     chips: { maxHeight: 80, paddingHorizontal: spacing(2), paddingVertical: spacing(2) },
     chip: { width: 60, alignItems: 'center', marginHorizontal: spacing(1) },

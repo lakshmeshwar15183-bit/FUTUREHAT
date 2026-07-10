@@ -11,7 +11,8 @@
 -- bypassing RLS during the writes it makes on the caller's behalf.
 create or replace function public.create_group_conversation(
   p_name       text,
-  p_member_ids uuid[]
+  p_member_ids uuid[],
+  p_avatar_url text default null
 )
 returns uuid
 language plpgsql
@@ -31,8 +32,8 @@ begin
     raise exception 'group name is required';
   end if;
 
-  insert into public.conversations (type, name, created_by)
-  values ('group', trim(p_name), me)
+  insert into public.conversations (type, name, avatar_url, created_by)
+  values ('group', trim(p_name), p_avatar_url, me)
   returning id into conv;
 
   -- Creator is admin (0001 role check allows 'member' | 'admin').

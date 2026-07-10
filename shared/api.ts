@@ -131,6 +131,7 @@ export async function createGroupConversation(
   client: SupabaseClient,
   name: string,
   participantIds: UUID[],
+  avatarUrl?: string | null,
 ): Promise<{ conversationId: UUID | null; error: Error | null }> {
   // Delegates to the SECURITY DEFINER RPC (migration 0033). The previous
   // client-side two-step (insert conversation, then bulk-insert participants)
@@ -140,6 +141,7 @@ export async function createGroupConversation(
   const { data, error } = await client.rpc('create_group_conversation', {
     p_name: name,
     p_member_ids: participantIds,
+    p_avatar_url: avatarUrl,
   });
   if (error) return { conversationId: null, error: new Error(error.message) };
   return { conversationId: (data as UUID) ?? null, error: null };
