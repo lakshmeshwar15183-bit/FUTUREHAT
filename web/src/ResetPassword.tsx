@@ -1,4 +1,4 @@
-// FUTUREHAT web — recovery-link landing page.
+// Lumixo web — recovery-link landing page.
 //
 // Trigger: the user clicked "Reset password" in an email. Supabase redirects
 // them to `${SITE_URL}/reset-password#access_token=…&refresh_token=…&type=recovery`.
@@ -80,7 +80,7 @@ export function ResetPasswordScreen({ hasRecoverySession, onDone }: Props) {
         animate={{ opacity: 1, y: 0, scale: 1 }}
         transition={spring}
       >
-        <h1 className="auth-logo">FUTUREHAT</h1>
+        <h1 className="auth-logo">Lumixo</h1>
         <p className="auth-tagline">Choose a new password</p>
 
         {!hasRecoverySession ? (

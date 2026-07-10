@@ -1,4 +1,4 @@
-// FUTUREHAT web — Chat view: messages, realtime, media, reactions, typing,
+// Lumixo web — Chat view: messages, realtime, media, reactions, typing,
 // presence, reply/forward/edit/delete, premium ghost mode, scheduling, AI, stickers.
 
 import { useState, useEffect, useRef, useMemo, type FormEvent, type ChangeEvent, type ReactNode, type MouseEvent as ReactMouseEvent } from 'react';

@@ -1,4 +1,4 @@
-// FUTUREHAT — Notification settings (WhatsApp-style). Stored in the existing
+// Lumixo — Notification settings (WhatsApp-style). Stored in the existing
 // `user_preferences.extra.notifications` jsonb bag (mirrors shared/privacyApi.ts),
 // so they sync with the user's profile and restore on any device after login.
 // Tone/ringtone default to 'default' = the DEVICE SYSTEM DEFAULT sound; a custom

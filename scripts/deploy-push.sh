@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# FUTUREHAT — deploy the `push` Edge Function + set its FCM secret.
+# Lumixo — deploy the `push` Edge Function + set its FCM secret.
 # The ONLY input this needs is a Supabase personal access token (browser-issued),
 # because deploying functions / setting secrets goes through the Supabase Management
 # API — the DB password can't authenticate it. Everything else is already in place.

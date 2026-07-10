@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — Chats tab. Loads getMyConversations on focus, shows
+// Lumixo mobile — Chats tab. Loads getMyConversations on focus, shows
 // title/avatar/last-message/unread, and routes into a thread.
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -472,7 +472,7 @@ export default function ConversationsScreen() {
         clearSelection();
         Alert.alert(
           'Pin limit reached',
-          `Free accounts can pin up to ${FREE_LIMITS.pinnedChats} chats. Upgrade to FUTUREHAT+ for unlimited pins.`,
+          `Free accounts can pin up to ${FREE_LIMITS.pinnedChats} chats. Upgrade to Lumixo+ for unlimited pins.`,
           [{ text: 'Not now', style: 'cancel' }, { text: 'Upgrade', onPress: () => navigation.navigate('Premium') }],
         );
         return;

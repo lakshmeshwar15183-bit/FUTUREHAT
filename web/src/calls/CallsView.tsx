@@ -1,4 +1,4 @@
-// FUTUREHAT web — Calls module (WhatsApp parity with mobile CallsScreen).
+// Lumixo web — Calls module (WhatsApp parity with mobile CallsScreen).
 // A modal reached from the sidebar phone icon. Grouped call history, instant
 // search, multi-select with an action bar, per-row + bulk delete (delete-for-me),
 // overflow menu (Clear Call Log / Scheduled Calls / Call Settings), empty state,
@@ -107,7 +107,7 @@ export function CallsView({ onClose }: { onClose: () => void }) {
   async function place(conv: ConversationSummary, type: CallType) {
     setPicker(false);
     const peer = conv.participants.find((p) => p.id !== meRef.current) ?? conv.participants[0];
-    startCall(conv.conversation.id, type, conv.title || peer?.display_name || 'FUTUREHAT user');
+    startCall(conv.conversation.id, type, conv.title || peer?.display_name || 'Lumixo user');
   }
 
   return (

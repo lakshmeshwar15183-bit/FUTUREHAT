@@ -1,4 +1,4 @@
-// FUTUREHAT+ — premium data-access layer (subscriptions, preferences, pins,
+// Lumixo+ — premium data-access layer (subscriptions, preferences, pins,
 // scheduled messages). Framework-agnostic; web and mobile share it.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -83,7 +83,7 @@ export async function activateSubscription(
 }
 
 // Cancel = "don't renew." We flag cancel_at_period_end but KEEP status='active'
-// so the user retains FUTUREHAT+ until current_period_end (matching the UI promise
+// so the user retains Lumixo+ until current_period_end (matching the UI promise
 // "Cancels at period end"). is_premium()/isSubscriptionActive() both expire on the
 // date, so access drops automatically when the period ends — no status flip needed.
 export async function cancelSubscription(

@@ -1,9 +1,9 @@
-// FUTUREHAT — full-screen media viewer (WhatsApp-grade). Swipe/arrow between
+// Lumixo — full-screen media viewer (WhatsApp-grade). Swipe/arrow between
 // images & videos, wheel/double-click/pinch zoom with pan, download, share,
 // a media counter, and a hero scale-in entrance. Self-contained and reusable:
 // pass a list of media items and the active index.
 //
-// Branding note: chrome is FUTUREHAT's own; behaviour mirrors WhatsApp.
+// Branding note: chrome is Lumixo's own; behaviour mirrors WhatsApp.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -121,7 +121,7 @@ export function MediaLightbox({ items, index, onClose, onIndexChange }: Props) {
       const blob = await res.blob();
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = item.caption || currentUrl.split('/').pop()?.split('?')[0] || `futurehat-media-${item.id}`;
+      a.download = item.caption || currentUrl.split('/').pop()?.split('?')[0] || `lumixo-media-${item.id}`;
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(a.href), 4000);
       flash('Saved');
@@ -132,7 +132,7 @@ export function MediaLightbox({ items, index, onClose, onIndexChange }: Props) {
 
   async function share() {
     if (!currentUrl) { flash(currentLoading ? 'Loading…' : 'Could not load media'); return; }
-    const data = { title: 'FUTUREHAT media', text: item.caption || 'Shared on FUTUREHAT', url: currentUrl };
+    const data = { title: 'Lumixo media', text: item.caption || 'Shared on Lumixo', url: currentUrl };
     try {
       if (navigator.share) await navigator.share(data);
       else { await navigator.clipboard.writeText(currentUrl); flash('Link copied'); }

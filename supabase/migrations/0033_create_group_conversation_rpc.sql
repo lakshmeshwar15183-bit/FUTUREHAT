@@ -1,4 +1,4 @@
--- FUTUREHAT — atomic group-conversation creation
+-- Lumixo — atomic group-conversation creation
 --
 -- Fixes group creation, which broke after migration 0015 tightened the
 -- "add participants" RLS check. The new check contains a subquery on

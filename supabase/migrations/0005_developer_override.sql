@@ -1,7 +1,7 @@
 -- 0005_developer_override.sql — Permanent developer override (lifetime Premium + Admin)
 -- ============================================================================
 -- WHAT THIS DOES
---   Grants lifetime FUTUREHAT+ Premium and Admin/developer privileges to a fixed
+--   Grants lifetime Lumixo+ Premium and Admin/developer privileges to a fixed
 --   allowlist of emails, bypassing all payment / subscription / Razorpay checks —
 --   for those emails ONLY. Every other user follows the normal flow unchanged.
 --
@@ -131,7 +131,7 @@ set search_path = public
 as $$
 begin
   insert into public.profiles (id, phone, display_name)
-  values (new.id, new.phone, coalesce(new.raw_user_meta_data->>'display_name', 'FUTUREHAT user'))
+  values (new.id, new.phone, coalesce(new.raw_user_meta_data->>'display_name', 'Lumixo user'))
   on conflict (id) do nothing;
   -- Developer accounts get lifetime premium immediately, no payment required.
   perform public.provision_developer(new.id);
@@ -150,7 +150,7 @@ begin
     join public.developer_accounts d on lower(u.email) = lower(d.email)
   loop
     insert into public.profiles (id, display_name)
-    values (r.id, 'FUTUREHAT Developer')
+    values (r.id, 'Lumixo Developer')
     on conflict (id) do nothing;
     perform public.provision_developer(r.id);
   end loop;

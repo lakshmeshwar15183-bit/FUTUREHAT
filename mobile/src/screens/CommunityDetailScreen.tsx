@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — inside a community: its channels and events.
+// Lumixo mobile — inside a community: its channels and events.
 // Channels reuse the conversations/messages stack, so opening one is just a Chat.
 import React, { useCallback, useMemo, useState } from 'react';
 import { Alert, FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';

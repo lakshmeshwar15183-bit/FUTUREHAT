@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — WhatsApp-style swipe-to-reply + long-press. Wrap any
+// Lumixo mobile — WhatsApp-style swipe-to-reply + long-press. Wrap any
 // message row: drag it to the right to reply, or press-and-hold to open the
 // message actions / reaction menu. BOTH gestures live in react-native-gesture-
 // handler so a single native touch-arbiter coordinates them (and the vertical

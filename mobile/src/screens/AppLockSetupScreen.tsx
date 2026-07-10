@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — configure app lock: enable with a PIN, toggle biometrics,
+// Lumixo mobile — configure app lock: enable with a PIN, toggle biometrics,
 // or turn it off.
 import React, { useMemo, useState } from 'react';
 import { Alert, Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
@@ -29,7 +29,7 @@ export default function AppLockSetupScreen() {
       return;
     }
     await enable(pin, useBio && biometricAvailable);
-    Alert.alert('App lock enabled', 'FUTUREHAT will lock when you leave the app.');
+    Alert.alert('App lock enabled', 'Lumixo will lock when you leave the app.');
     navigation.goBack();
   }
 
@@ -44,7 +44,7 @@ export default function AppLockSetupScreen() {
         <Ionicons name="shield-checkmark" size={44} color={colors.primary} />
         <Text style={styles.title}>App lock</Text>
         <Text style={styles.sub}>
-          Require a PIN{biometricAvailable ? ' or biometrics' : ''} to open FUTUREHAT.
+          Require a PIN{biometricAvailable ? ' or biometrics' : ''} to open Lumixo.
         </Text>
       </View>
 

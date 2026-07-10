@@ -1,7 +1,7 @@
-// FUTUREHAT — Chat Lock data-access (0027). Framework-agnostic; web + mobile share it.
+// Lumixo — Chat Lock data-access (0027). Framework-agnostic; web + mobile share it.
 //
 // A locked chat is secured by the DEVICE's own secure authentication (biometric /
-// device PIN) — NEVER by a secret stored inside FUTUREHAT. This layer only tracks:
+// device PIN) — NEVER by a secret stored inside Lumixo. This layer only tracks:
 //   • WHICH conversations the user locked   → locked_conversations (per-user rows)
 //   • auto-lock timing + master enable       → user_preferences.extra.chatLock
 // so the choice + preferences sync across the user's devices. The actual

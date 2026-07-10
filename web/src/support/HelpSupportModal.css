@@ -1,4 +1,4 @@
-/* FUTUREHAT — Help & Support modal. Self-contained styling (theme-aware via
+/* Lumixo — Help & Support modal. Self-contained styling (theme-aware via
    --fh-* vars) so it renders correctly no matter which CSS chunks have loaded. */
 
 .modal-backdrop {

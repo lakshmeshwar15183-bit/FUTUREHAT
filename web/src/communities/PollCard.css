@@ -1,4 +1,4 @@
-/* FUTUREHAT — inline poll card styling, theme-aware via --fh-* vars. */
+/* Lumixo — inline poll card styling, theme-aware via --fh-* vars. */
 
 .poll-card {
   border: 1px solid var(--fh-border);

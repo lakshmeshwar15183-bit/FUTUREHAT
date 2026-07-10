@@ -1,4 +1,4 @@
-// FUTUREHAT web — Auth screen with interactive mascot + motion.
+// Lumixo web — Auth screen with interactive mascot + motion.
 
 import { useState, type FormEvent } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -78,7 +78,7 @@ export function AuthScreen() {
         <div className="auth-mascot">
           <Mascot gaze={gaze} coverEyes={pwFocused} happy={happy} />
         </div>
-        <h1 className="auth-logo">FUTUREHAT</h1>
+        <h1 className="auth-logo">Lumixo</h1>
         <p className="auth-tagline">Real-time messaging, reimagined</p>
 
         <form onSubmit={handleSubmit} className="auth-form">

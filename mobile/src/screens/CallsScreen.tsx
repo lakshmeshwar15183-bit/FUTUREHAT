@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — Calls tab: WhatsApp-style call history.
+// Lumixo mobile — Calls tab: WhatsApp-style call history.
 //   • Grouped history (repeated calls from one contact → "Name (n)"), newest
 //     first, incoming/outgoing/missed direction + voice/video icons, WA timestamps.
 //   • Long-press → multi-select with a top action bar (count · select all · delete).

@@ -1,4 +1,4 @@
-// FUTUREHAT web — voice/video calling over WebRTC. Shares the calls data layer
+// Lumixo web — voice/video calling over WebRTC. Shares the calls data layer
 // and signaling channel with mobile (@shared/callsApi). Renders a call overlay
 // (incoming / outgoing / in-call) and exposes startCall() via context.
 //
@@ -359,7 +359,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
       // Browser notification when the tab isn't focused (WhatsApp Web parity).
       showCallNotification({
         conversationId: incoming.conversation_id,
-        title: p?.display_name || 'FUTUREHAT',
+        title: p?.display_name || 'Lumixo',
         video: incoming.type === 'video',
         icon: p?.avatar_url ?? null,
       });

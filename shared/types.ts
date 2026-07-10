@@ -1,4 +1,4 @@
-// FUTUREHAT — shared domain types (mirror the Postgres schema in supabase/migrations)
+// Lumixo — shared domain types (mirror the Postgres schema in supabase/migrations)
 
 export type UUID = string;
 
@@ -142,7 +142,7 @@ export interface ConversationSummary {
   avatarUrl: string | null;
 }
 
-// ── Premium (FUTUREHAT+) ──────────────────────────────────────────────────────
+// ── Premium (Lumixo+) ──────────────────────────────────────────────────────
 
 export type PlanId = 'monthly' | 'yearly';
 export type SubscriptionStatus = 'active' | 'cancelled' | 'expired' | 'past_due';
@@ -329,7 +329,7 @@ export type PushKind = 'message' | 'group' | 'call' | 'missed_call' | 'status' |
 // ── Chat Lock (0027) ────────────────────────────────────────────────────────────
 // Per-chat lock secured entirely by the DEVICE's own authentication (Android
 // BiometricPrompt / iOS LocalAuthentication → biometric, else device PIN/password).
-// FUTUREHAT never stores a PIN, password, or biometric — it only records WHICH
+// Lumixo never stores a PIN, password, or biometric — it only records WHICH
 // conversations the user chose to lock (locked_conversations) so the choice syncs
 // across their devices. Auto-lock timing + the master enable live in
 // user_preferences.extra.chatLock so they sync too.

@@ -1,4 +1,4 @@
-// FUTUREHAT — Create group chat modal
+// Lumixo — Create group chat modal
 
 import { useState, useEffect, type FormEvent } from 'react';
 import { supabase } from './supabase';

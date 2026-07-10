@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — Status composer (WhatsApp-style).
+// Lumixo mobile — Status composer (WhatsApp-style).
 // One modal that handles all three post types via an initial `mode`:
 //   text  — typed status with background + text colour (emoji via keyboard)
 //   media — pick photo/video (library or camera), preview, add a caption

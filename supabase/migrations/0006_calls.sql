@@ -1,4 +1,4 @@
--- FUTUREHAT — voice/video calling. The `calls` row tracks ring/accept/end state
+-- Lumixo — voice/video calling. The `calls` row tracks ring/accept/end state
 -- and doubles as call history; the actual WebRTC SDP/ICE signaling rides on a
 -- per-call Supabase realtime *broadcast* channel ("call:<id>"), so no payload is
 -- persisted here. Idempotent. Uses public.is_member() from 0001_init.

@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — full-screen media viewer (WhatsApp / Telegram-grade).
+// Lumixo mobile — full-screen media viewer (WhatsApp / Telegram-grade).
 //  • Horizontal swipe paging between images & videos (pager locks while zoomed).
 //  • Pinch-zoom, double-tap-to-zoom toward the tap point, pan-while-zoomed with
 //    edge clamping, all on Reanimated for 60fps.
@@ -27,6 +27,7 @@ import * as Haptics from 'expo-haptics';
 import { GestureDetector, Gesture, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, {
   Easing, useAnimatedStyle, useSharedValue, withTiming, runOnJS,
+  useAnimatedReaction,
 } from 'react-native-reanimated';
 
 import type { MediaMeta } from '../lib/shared';
@@ -84,28 +85,57 @@ function ZoomableImage({
   const ty = useSharedValue(0);
   const savedTx = useSharedValue(0);
   const savedTy = useSharedValue(0);
+  const isGesturing = useSharedValue(false);
 
-  const clamp = (v: number, max: number) => Math.max(-max, Math.min(max, v));
+  const isValidScale = (s: number): boolean => isFinite(s) && s >= 1 && s <= 6;
+  const isValidTransform = (v: number): boolean => isFinite(v) && Math.abs(v) < 10000;
+
+  const clamp = (v: number, max: number) => {
+    if (!isFinite(v) || !isFinite(max) || max <= 0) return 0;
+    return Math.max(-max, Math.min(max, v));
+  };
 
   const reset = () => {
     scale.value = withTiming(1);
     tx.value = withTiming(0);
     ty.value = withTiming(0);
-    savedScale.value = 1; savedTx.value = 0; savedTy.value = 0;
+    savedScale.value = 1;
+    savedTx.value = 0;
+    savedTy.value = 0;
+    isGesturing.value = false;
     onZoomChange(false);
   };
 
+  const safeClampScale = (val: number): number => {
+    if (!isFinite(val)) return 1;
+    return Math.max(1, Math.min(val, 6));
+  };
+
   const pinch = Gesture.Pinch()
-    .onUpdate((e) => { scale.value = Math.max(1, Math.min(savedScale.value * e.scale, 6)); })
+    .onUpdate((e) => {
+      if (isGesturing.value === false) isGesturing.value = true;
+      if (!isFinite(e.scale) || e.scale <= 0) return;
+      if (!isFinite(savedScale.value) || savedScale.value < 1) savedScale.value = 1;
+      const newScale = safeClampScale(savedScale.value * e.scale);
+      if (isValidScale(newScale)) scale.value = newScale;
+    })
     .onEnd(() => {
-      savedScale.value = scale.value;
-      if (scale.value <= 1.02) { runOnJS(reset)(); }
-      else {
-        // Re-clamp pan to the new zoom bounds.
-        const maxX = (SCREEN_W * (scale.value - 1)) / 2;
-        const maxY = (MEDIA_H * (scale.value - 1)) / 2;
-        tx.value = clamp(tx.value, maxX); ty.value = clamp(ty.value, maxY);
-        savedTx.value = tx.value; savedTy.value = ty.value;
+      isGesturing.value = false;
+      const finalScale = scale.value;
+      if (!isFinite(finalScale)) {
+        runOnJS(reset)();
+        return;
+      }
+      savedScale.value = finalScale;
+      if (finalScale <= 1.02) {
+        runOnJS(reset)();
+      } else if (isValidScale(finalScale)) {
+        const maxX = (SCREEN_W * (finalScale - 1)) / 2;
+        const maxY = (MEDIA_H * (finalScale - 1)) / 2;
+        tx.value = clamp(tx.value, maxX);
+        ty.value = clamp(ty.value, maxY);
+        savedTx.value = tx.value;
+        savedTy.value = ty.value;
         runOnJS(onZoomChange)(true);
       }
     });
@@ -113,42 +143,82 @@ function ZoomableImage({
   const pan = Gesture.Pan()
     .minPointers(1)
     .onUpdate((e) => {
-      if (scale.value <= 1) return;
-      const maxX = (SCREEN_W * (scale.value - 1)) / 2;
-      const maxY = (MEDIA_H * (scale.value - 1)) / 2;
-      tx.value = clamp(savedTx.value + e.translationX, maxX);
-      ty.value = clamp(savedTy.value + e.translationY, maxY);
+      const currentScale = scale.value;
+      if (currentScale <= 1 || !isValidScale(currentScale)) return;
+      if (!isFinite(e.translationX) || !isFinite(e.translationY)) return;
+      const maxX = (SCREEN_W * (currentScale - 1)) / 2;
+      const maxY = (MEDIA_H * (currentScale - 1)) / 2;
+      const newTx = clamp(savedTx.value + e.translationX, maxX);
+      const newTy = clamp(savedTy.value + e.translationY, maxY);
+      if (isValidTransform(newTx) && isValidTransform(newTy)) {
+        tx.value = newTx;
+        ty.value = newTy;
+      }
     })
-    .onEnd(() => { savedTx.value = tx.value; savedTy.value = ty.value; });
+    .onEnd(() => {
+      savedTx.value = tx.value;
+      savedTy.value = ty.value;
+    });
 
   const doubleTap = Gesture.Tap()
     .numberOfTaps(2)
     .onEnd((e) => {
-      if (scale.value > 1) { runOnJS(reset)(); return; }
+      if (scale.value > 1) {
+        runOnJS(reset)();
+        return;
+      }
       const target = 2.6;
-      // Keep the tapped point stationary: translate = offsetFromCenter * (1 - scale).
+      if (!isFinite(e.x) || !isFinite(e.y)) return;
       const offX = e.x - SCREEN_W / 2;
       const offY = e.y - MEDIA_H / 2;
       const maxX = (SCREEN_W * (target - 1)) / 2;
       const maxY = (MEDIA_H * (target - 1)) / 2;
       const dstX = clamp(offX * (1 - target), maxX);
       const dstY = clamp(offY * (1 - target), maxY);
-      tx.value = withTiming(dstX);
-      ty.value = withTiming(dstY);
-      scale.value = withTiming(target);
-      savedScale.value = target; savedTx.value = dstX; savedTy.value = dstY;
-      runOnJS(onZoomChange)(true);
+      if (isValidTransform(dstX) && isValidTransform(dstY)) {
+        tx.value = withTiming(dstX);
+        ty.value = withTiming(dstY);
+        scale.value = withTiming(target);
+        savedScale.value = target;
+        savedTx.value = dstX;
+        savedTy.value = dstY;
+        runOnJS(onZoomChange)(true);
+      }
     });
 
-  const singleTap = Gesture.Tap().numberOfTaps(1).onEnd(() => { runOnJS(onSingleTap)(); });
+  const singleTap = Gesture.Tap()
+    .numberOfTaps(1)
+    .onEnd(() => { runOnJS(onSingleTap)(); });
 
   // Double-tap wins over single-tap; pinch/pan run alongside.
   const taps = Gesture.Exclusive(doubleTap, singleTap);
   const composed = Gesture.Simultaneous(pinch, pan, taps);
 
-  const style = useAnimatedStyle(() => ({
-    transform: [{ translateX: tx.value }, { translateY: ty.value }, { scale: scale.value }],
-  }));
+  const style = useAnimatedStyle(() => {
+    const s = scale.value;
+    const x = tx.value;
+    const y = ty.value;
+    if (!isValidScale(s) || !isValidTransform(x) || !isValidTransform(y)) {
+      return { transform: [{ translateX: 0 }, { translateY: 0 }, { scale: 1 }] };
+    }
+    return { transform: [{ translateX: x }, { translateY: y }, { scale: s }] };
+  });
+
+  useAnimatedReaction(
+    () => scale.value,
+    (s) => {
+      if (!isFinite(s) || s < 1 || s > 6) {
+        scale.value = 1;
+        tx.value = 0;
+        ty.value = 0;
+        savedScale.value = 1;
+        savedTx.value = 0;
+        savedTy.value = 0;
+        isGesturing.value = false;
+        runOnJS(onZoomChange)(false);
+      }
+    },
+  );
 
   return (
     <GestureDetector gesture={composed}>
@@ -278,7 +348,7 @@ export default function MediaViewer({ items, index, onClose, onForward, onDelete
     const src = await resolveUrl(it);
     const clean = it.url.split('?')[0];
     const ext = clean.split('.').pop()?.slice(0, 5) || (it.kind === 'video' ? 'mp4' : 'jpg');
-    const target = `${FileSystem.cacheDirectory}futurehat-${it.id}.${ext}`;
+    const target = `${FileSystem.cacheDirectory}lumixo-${it.id}.${ext}`;
     const { uri } = await FileSystem.downloadAsync(src, target);
     return uri;
   }, [resolveUrl]);

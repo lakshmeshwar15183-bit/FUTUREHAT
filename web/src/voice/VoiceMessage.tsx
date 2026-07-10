@@ -1,4 +1,4 @@
-// FUTUREHAT — voice message playback bubble: play/pause, a lightweight progress
+// Lumixo — voice message playback bubble: play/pause, a lightweight progress
 // waveform, and elapsed/total time. Pure <audio>; no external deps. Used for
 // messages of type 'audio'.
 

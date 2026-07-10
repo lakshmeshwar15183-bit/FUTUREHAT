@@ -1,4 +1,4 @@
-// FUTUREHAT — appearance engine. Themes/fonts/bubbles/wallpapers are applied by
+// Lumixo — appearance engine. Themes/fonts/bubbles/wallpapers are applied by
 // setting CSS variables + data attributes on <html>; premium.css reacts to them.
 // Free users are always pinned to the base options (premium values are ignored
 // until the user is premium) so gating is enforced even if a stored pref leaks.

@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — Diagnostics & app info. Shows environment details and lets
+// Lumixo mobile — Diagnostics & app info. Shows environment details and lets
 // the user share a diagnostic report to attach to a support ticket. Standalone.
 import React, { useCallback, useMemo, useState } from 'react';
 import {

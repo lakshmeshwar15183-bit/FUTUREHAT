@@ -1,4 +1,4 @@
-/* FUTUREHAT+ — premium appearance reactions + shared polish utilities.
+/* Lumixo+ — premium appearance reactions + shared polish utilities.
    Driven by data attributes set on <html> by theme/themes.ts. */
 
 /* ── Animated wallpapers (applied to the chat surface) ─────────────────────── */
@@ -74,7 +74,7 @@
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-/* ── FUTUREHAT+ badge ─────────────────────────────────────────────────────── */
+/* ── Lumixo+ badge ─────────────────────────────────────────────────────── */
 .fh-badge {
   display: inline-flex;
   align-items: center;

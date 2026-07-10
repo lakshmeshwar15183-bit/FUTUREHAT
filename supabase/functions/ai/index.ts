@@ -1,4 +1,4 @@
-// FUTUREHAT+ AI — Supabase Edge Function (Deno). Proxies premium AI actions to
+// Lumixo+ AI — Supabase Edge Function (Deno). Proxies premium AI actions to
 // the Anthropic API. The user's auth JWT is verified, and premium status is
 // checked server-side before any model call, so the feature can't be bypassed.
 //
@@ -82,7 +82,7 @@ Deno.serve(async (req) => {
     if (!userData.user) return json({ error: 'Unauthorized' }, 401);
 
     const { data: premium } = await supabase.rpc('is_premium', { uid: userData.user.id });
-    if (!premium) return json({ error: 'FUTUREHAT+ required' }, 403);
+    if (!premium) return json({ error: 'Lumixo+ required' }, 403);
 
     const body = (await req.json()) as Body;
     const { system, user } = buildPrompt(body);

@@ -1,4 +1,4 @@
-// FUTUREHAT+ — upgrade page. Plans, full feature grid, and a real checkout that
+// Lumixo+ — upgrade page. Plans, full feature grid, and a real checkout that
 // activates the subscription in the database on success.
 
 import { useState } from 'react';
@@ -81,7 +81,7 @@ export function UpgradeModal({ onClose }: { onClose: () => void }) {
           <motion.div className="upgrade-crest" initial={{ scale: 0.6, rotate: -10 }} animate={{ scale: 1, rotate: 0 }} transition={spring}>
             ✦
           </motion.div>
-          <h1>FUTUREHAT<span className="plus">+</span></h1>
+          <h1>Lumixo<span className="plus">+</span></h1>
           <p>Premium enhancements. Every core feature stays free, forever.</p>
         </div>
 
@@ -89,14 +89,14 @@ export function UpgradeModal({ onClose }: { onClose: () => void }) {
           {done ? (
             <motion.div key="done" className="upgrade-success" initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }}>
               <div className="success-check">🎉</div>
-              <h2>Welcome to FUTUREHAT+</h2>
+              <h2>Welcome to Lumixo+</h2>
               <p>Your premium features are now unlocked.</p>
               <button className="upgrade-cta" onClick={onClose}>Start exploring</button>
             </motion.div>
           ) : isPremium ? (
             <motion.div key="member" className="upgrade-member" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
               <div className="member-status">
-                <span className="fh-badge">✦ FUTUREHAT+</span>
+                <span className="fh-badge">✦ Lumixo+</span>
                 <p>
                   {subscription?.plan === 'yearly' ? 'Yearly' : 'Monthly'} plan ·
                   {subscription?.cancel_at_period_end ? ' ends ' : ' renews '}
@@ -136,7 +136,7 @@ export function UpgradeModal({ onClose }: { onClose: () => void }) {
                 </motion.button>
               ) : (
                 <button type="button" className="upgrade-cta soon" onClick={() => setShowSoon(true)}>
-                  Get FUTUREHAT+ <span className="soon-tag">🟡 Available soon</span>
+                  Get Lumixo+ <span className="soon-tag">🟡 Available soon</span>
                 </button>
               )}
               <div className="pay-note">

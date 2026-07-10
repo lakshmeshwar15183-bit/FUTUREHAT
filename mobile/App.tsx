@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — root component. Providers (safe-area, theme, app-lock),
+// Lumixo mobile — root component. Providers (safe-area, theme, app-lock),
 // auth gate, bottom tabs, and the full navigation stack.
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
@@ -106,7 +106,13 @@ function MainTabs() {
 // `dev.lakshmeshwar.futurehat://…`, standalone: `futurehat://…`), and we
 // include the app scheme as an explicit prefix so production builds route
 // `futurehat://reset-password` without any config drift.
+// The https origin is the primary reset-link prefix (Android App Link / iOS
+// Universal Link): a verified link opens the app here, and React Navigation
+// routes `/reset-password` to the ResetPassword screen. The app-scheme prefixes
+// remain for dev builds and the non-verified fallback path.
+const SITE_URL = (process.env.EXPO_PUBLIC_SITE_URL || 'https://futurehat-app.netlify.app').replace(/\/+$/, '');
 const LINKING_PREFIXES: string[] = [
+  SITE_URL,
   Linking.createURL('/'),
   'futurehat://',
 ];

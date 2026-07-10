@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — Help & Support: FAQ, contact, ticket submission and a
+// Lumixo mobile — Help & Support: FAQ, contact, ticket submission and a
 // "My tickets" list of previously submitted tickets. Covers the master-list
 // Support & Trust items: help center, FAQ, contact support, bug report,
 // feedback, ban appeal and grievance redressal.
@@ -29,7 +29,7 @@ const FAQ: { q: string; a: string }[] = [
   { q: 'How do communities work?', a: 'Communities group people into channels. Create one from the Communities tab; each channel is a full chat with messages, media and calls.' },
   { q: 'Are my messages private?', a: `${APP_NAME} secures messages in transit and at rest. Group and community messages are visible to their members only.` },
   { q: 'How do I block or mute someone?', a: 'Open a chat or profile and choose Block or Mute. Blocked users can no longer message you; muted chats stop notifying you.' },
-  { q: 'How do I get FUTUREHAT+?', a: `Go to Settings → ${APP_NAME}+ to subscribe. Premium unlocks themes, wallpapers, AI replies, scheduling and more.` },
+  { q: 'How do I get Lumixo+?', a: `Go to Settings → ${APP_NAME}+ to subscribe. Premium unlocks themes, wallpapers, AI replies, scheduling and more.` },
   { q: 'I was banned — can I appeal?', a: 'Yes. Submit a ticket below with the “Ban appeal” type and describe your case. We review every appeal.' },
 ];
 

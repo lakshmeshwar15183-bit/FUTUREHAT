@@ -1,4 +1,4 @@
-// FUTUREHAT — recent contacts / previously-chatted-users history.
+// Lumixo — recent contacts / previously-chatted-users history.
 // Framework-agnostic; both web and mobile import this.
 //
 // Backed by public.recent_contacts (migration 0028). This list is INDEPENDENT

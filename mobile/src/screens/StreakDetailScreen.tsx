@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — one pair's streak detail: big tier emoji, score, progress to
+// Lumixo mobile — one pair's streak detail: big tier emoji, score, progress to
 // the next tier, milestone history, and the recent score-change ledger (Streak
 // History). Server-authoritative reads via get_streak(). Loading/empty/error.
 import React, { useCallback, useMemo, useState } from 'react';
@@ -97,7 +97,7 @@ export default function StreakDetailScreen() {
                 </Text>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.mTitle}>
-                    {m.kind === 'diamond' ? 'Diamond — 1 month FUTUREHAT+'
+                    {m.kind === 'diamond' ? 'Diamond — 1 month Lumixo+'
                       : m.kind === 'hall_of_legends' ? 'Hall of Legends'
                       : 'Moderator milestone'}
                   </Text>

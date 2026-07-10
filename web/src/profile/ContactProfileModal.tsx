@@ -1,4 +1,4 @@
-// FUTUREHAT — contact / user profile screen (Telegram-style): big avatar, name,
+// Lumixo — contact / user profile screen (Telegram-style): big avatar, name,
 // @username, about, last seen, phone, and Message / Mute / Call / Video actions,
 // plus an overflow with Share contact, Block and Report. Self-contained — block/
 // report/mute are handled internally via supportApi; Message/Call/Video are
@@ -47,7 +47,7 @@ export function ContactProfileModal({ profile, online, isPremium, conversationId
   // Disappearing messages (0022): per-chat timer, 0 = off else 3600..28800 (1–8h).
   const [disappearSecs, setDisappearSecs] = useState(0);
   // Chat Lock (0027): this chat locked behind the device's own auth (fingerprint /
-  // face / PIN). No secret is stored by FUTUREHAT.
+  // face / PIN). No secret is stored by Lumixo.
   const [locked, setLocked] = useState(false);
   const [lockAvailable, setLockAvailable] = useState(false);
   // Moderator badge (0023): profiles.role is world-readable; fetch it lightly.
@@ -142,8 +142,8 @@ export function ContactProfileModal({ profile, online, isPremium, conversationId
   function shareContact() {
     setMenuOpen(false);
     const handle = profile.username ? `@${profile.username}` : profile.id.slice(0, 8);
-    const text = `${profile.display_name || 'FUTUREHAT user'} (${handle}) on FUTUREHAT`;
-    if (navigator.share) navigator.share({ title: 'FUTUREHAT contact', text }).catch(() => {});
+    const text = `${profile.display_name || 'Lumixo user'} (${handle}) on Lumixo`;
+    if (navigator.share) navigator.share({ title: 'Lumixo contact', text }).catch(() => {});
     else { navigator.clipboard?.writeText(text).then(() => flash('Contact copied')).catch(() => flash('Copy failed')); }
   }
 
@@ -173,9 +173,9 @@ export function ContactProfileModal({ profile, online, isPremium, conversationId
             {disappearSecs > 0 && <span className="contact-disappear-badge" title="Disappearing messages on">⏳</span>}
           </div>
           <div className="contact-name">
-            {profile.display_name || 'FUTUREHAT user'}
-            {isPremium && <span className="contact-badge" title="FUTUREHAT+">✦</span>}
-            {isModerator && <span className="mod-badge" title="FUTUREHAT Moderator">🛡 MOD</span>}
+            {profile.display_name || 'Lumixo user'}
+            {isPremium && <span className="contact-badge" title="Lumixo+">✦</span>}
+            {isModerator && <span className="mod-badge" title="Lumixo Moderator">🛡 MOD</span>}
           </div>
           <div className="contact-presence">{presence}</div>
         </div>

@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — FUTUREHAT+ premium. Shows plans + feature list and
+// Lumixo mobile — Lumixo+ premium. Shows plans + feature list and
 // activates a subscription. Reuses the shared premium API and presets.
 //
 // NOTE: like the web app, in-app purchase billing (Google Play Billing) is not
@@ -57,7 +57,7 @@ export default function PremiumScreen() {
       Alert.alert('Could not activate', error.message);
       return;
     }
-    Alert.alert('Welcome to FUTUREHAT+', 'Premium features are now unlocked.');
+    Alert.alert('Welcome to Lumixo+', 'Premium features are now unlocked.');
     load();
   }
 
@@ -81,7 +81,7 @@ export default function PremiumScreen() {
         <Ionicons name="diamond" size={48} color={colors.accentPlusText} />
         <Text style={styles.heroTitle}>{APP_NAME}+</Text>
         <Text style={styles.heroSub}>
-          {active ? 'Your premium is active. Enjoy everything.' : 'Unlock the full FUTUREHAT experience.'}
+          {active ? 'Your premium is active. Enjoy everything.' : 'Unlock the full Lumixo experience.'}
         </Text>
       </View>
 

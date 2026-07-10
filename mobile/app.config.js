@@ -1,4 +1,4 @@
-// FUTUREHAT — dynamic Expo config. app.json holds the full static config; this layer
+// Lumixo — dynamic Expo config. app.json holds the full static config; this layer
 // only ADDS the native Firebase files needed for FCM push, and ONLY when they're
 // actually present. That way the repo builds fine before you add the credentials, and
 // the moment you drop in google-services.json / GoogleService-Info.plist, the next

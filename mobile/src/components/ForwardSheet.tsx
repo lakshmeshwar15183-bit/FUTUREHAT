@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — production forward flow. Pick one OR many chats (search +
+// Lumixo mobile — production forward flow. Pick one OR many chats (search +
 // Recent + Direct + Groups, multi-select) → preview what's being forwarded →
 // Send. Generic: used by the media viewer AND ChatScreen's message-selection
 // forward. It only resolves recipients and calls onConfirm(ids); the caller owns

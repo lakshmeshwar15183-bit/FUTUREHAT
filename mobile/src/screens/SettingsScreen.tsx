@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — Settings tab. Profile header, grouped settings rows,
+// Lumixo mobile — Settings tab. Profile header, grouped settings rows,
 // owner credit footer, and sign out.
 import React, { useCallback, useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -102,7 +102,7 @@ export default function SettingsScreen() {
               ? `${APP_NAME}+ · Lifetime membership`
               : premium
               ? `${APP_NAME}+ member`
-              : profile?.about || 'Hey there! I am using FUTUREHAT.'}
+              : profile?.about || 'Hey there! I am using Lumixo.'}
           </Text>
         </View>
         <Ionicons name="chevron-forward" size={22} color={colors.textFaint} />
@@ -117,9 +117,9 @@ export default function SettingsScreen() {
           </View>
           <Text style={styles.premiumSub}>
             {admin
-              ? 'Developer · lifetime FUTUREHAT+ + Admin'
+              ? 'Developer · lifetime Lumixo+ + Admin'
               : premium
-              ? 'Thanks for supporting FUTUREHAT'
+              ? 'Thanks for supporting Lumixo'
               : 'Themes, AI, scheduling & more'}
           </Text>
         </View>
@@ -139,10 +139,10 @@ export default function SettingsScreen() {
               ? navigation.navigate('AppLockSetup')
               : Alert.alert(
                   'App lock',
-                  'Require a PIN / Face ID when opening FUTUREHAT. This is a FUTUREHAT+ feature.',
+                  'Require a PIN / Face ID when opening Lumixo. This is a Lumixo+ feature.',
                   [
                     { text: 'Not now', style: 'cancel' },
-                    { text: 'See FUTUREHAT+', onPress: () => navigation.navigate('Premium') },
+                    { text: 'See Lumixo+', onPress: () => navigation.navigate('Premium') },
                   ],
                 )
           }

@@ -1,4 +1,4 @@
-// FUTUREHAT — Profile settings modal
+// Lumixo — Profile settings modal
 
 import { useState, useEffect, useMemo, type FormEvent } from 'react';
 import { useAuth } from './AuthContext';
@@ -121,7 +121,7 @@ export function ProfileModal({ onClose }: Props) {
             <textarea
               value={about}
               onChange={(e) => setAbout(e.target.value)}
-              placeholder="Hey there! I am using FUTUREHAT."
+              placeholder="Hey there! I am using Lumixo."
               rows={3}
             />
           </label>

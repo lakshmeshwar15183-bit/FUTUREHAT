@@ -1,4 +1,4 @@
-// FUTUREHAT — Owner/Admin dashboard. A responsive tabbed console over the admin
+// Lumixo — Owner/Admin dashboard. A responsive tabbed console over the admin
 // RPCs in 0013_owner_admin.sql. Gated behind getServerAdmin; owner-only tabs are
 // additionally hidden unless isOwner AND re-checked server-side by each RPC. The
 // original Overview / Reports / Tickets behavior is preserved intact.

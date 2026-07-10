@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — Admin ▸ User detail + actions. Native drilldown from the
+// Lumixo mobile — Admin ▸ User detail + actions. Native drilldown from the
 // Admin dashboard's Users tab. Mirrors web AdminUsers.tsx: every button calls a
 // server RPC (via @shared/adminApi) that re-checks privilege and writes an
 // audit_log row — this screen only decides what to *offer*. Owner accounts are
@@ -104,7 +104,7 @@ export default function AdminUserDetailScreen() {
               {u.verified && <Ionicons name="checkmark-circle" size={16} color={colors.primary} />}
               {u.owner && <Text style={styles.ownerBadge}>OWNER</Text>}
               {u.role === 'moderator' && <Text style={styles.modBadge}>🛡 MOD</Text>}
-              {u.premium && <Text style={styles.premiumBadge}>FUTUREHAT+</Text>}
+              {u.premium && <Text style={styles.premiumBadge}>Lumixo+</Text>}
             </View>
             <Text style={styles.sub}>@{u.username || '—'} · {u.role}</Text>
           </View>
@@ -117,7 +117,7 @@ export default function AdminUserDetailScreen() {
             <View style={{ flex: 1, marginLeft: spacing(2.5) }}>
               <Text style={styles.protectedTitle}>Owner account — protected</Text>
               <Text style={styles.protectedBody}>
-                This is the permanent FUTUREHAT Owner. It cannot be banned, suspended, disabled,
+                This is the permanent Lumixo Owner. It cannot be banned, suspended, disabled,
                 locked, logged out, deleted, demoted, un-verified, or otherwise modified.
               </Text>
             </View>
@@ -196,7 +196,7 @@ export default function AdminUserDetailScreen() {
               label="Assign Moderator" disabled={disabled}
               onPress={() => confirmThen(
                 'Assign Moderator?',
-                `Appoint ${u.display_name || 'this user'} as an official FUTUREHAT Moderator? They will be notified and gain the Moderator Dashboard.`,
+                `Appoint ${u.display_name || 'this user'} as an official Lumixo Moderator? They will be notified and gain the Moderator Dashboard.`,
                 () => assignModerator(supabase, u.id), 'Moderator assigned',
               )}
               colors={colors}

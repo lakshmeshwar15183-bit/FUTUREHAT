@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — the recovery-link landing page. The user tapped
+// Lumixo mobile — the recovery-link landing page. The user tapped
 // "Reset password" in their email → the app opened via a deep link with the
 // recovery tokens in the fragment. App.tsx has already:
 //   • parsed the tokens out of the URL,

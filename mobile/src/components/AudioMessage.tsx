@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — inline voice/audio message player (expo-av).
+// Lumixo mobile — inline voice/audio message player (expo-av).
 import React, { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';

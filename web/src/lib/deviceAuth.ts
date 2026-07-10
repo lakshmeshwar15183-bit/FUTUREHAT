@@ -1,8 +1,8 @@
-// FUTUREHAT web — device authentication for Chat Lock. This is the web analogue of
+// Lumixo web — device authentication for Chat Lock. This is the web analogue of
 // the mobile biometric gate: it uses the platform authenticator (Touch ID / Windows
 // Hello / Android fingerprint/face — falling back to the device PIN) via WebAuthn.
 //
-// FUTUREHAT never stores a PIN, password, or biometric. On first use we register a
+// Lumixo never stores a PIN, password, or biometric. On first use we register a
 // platform credential (the OS prompts for fingerprint/face/PIN) and remember ONLY
 // its credential id in localStorage, per user. Unlocking re-runs user-verification
 // against that credential — the same "prove it's you on this device" gesture
@@ -69,11 +69,11 @@ export const deviceAuth = {
         const cred = (await navigator.credentials.create({
           publicKey: {
             challenge,
-            rp: { name: 'FUTUREHAT', id: location.hostname },
+            rp: { name: 'Lumixo', id: location.hostname },
             user: {
               id: new TextEncoder().encode(uid),
-              name: 'FUTUREHAT',
-              displayName: 'FUTUREHAT',
+              name: 'Lumixo',
+              displayName: 'Lumixo',
             },
             pubKeyCredParams: [
               { type: 'public-key', alg: -7 },

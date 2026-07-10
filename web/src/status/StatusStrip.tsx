@@ -1,5 +1,5 @@
-// FUTUREHAT web — horizontal Status strip (WhatsApp home-screen parity).
-// Mounted under the FUTUREHAT sidebar header: "My status" tile + a horizontal row
+// Lumixo web — horizontal Status strip (WhatsApp home-screen parity).
+// Mounted under the Lumixo sidebar header: "My status" tile + a horizontal row
 // of recent updates with seen/unseen rings. Opens the full-screen viewer or the
 // composer. Refreshes on mount and stays live via realtime status changes.
 import { useState, useEffect, useCallback, useRef } from 'react';

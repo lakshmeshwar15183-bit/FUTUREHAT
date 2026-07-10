@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — Privacy settings. Visibility controls (last seen, photo,
+// Lumixo mobile — Privacy settings. Visibility controls (last seen, photo,
 // about, links, status, groups, calls, avatar), read receipts, and a blocked-
 // contacts manager. Standalone screen; persists via privacyApi / supportApi.
 // Wire into RootStackParamList + SettingsScreen on recovery (see PHASE4 log).
@@ -68,7 +68,7 @@ export default function PrivacyScreen() {
 
   function toggleGhost(v: boolean) {
     if (!isPremium) {
-      Alert.alert('FUTUREHAT+', 'Ghost mode is a premium feature. Upgrade to FUTUREHAT+ to use it.');
+      Alert.alert('Lumixo+', 'Ghost mode is a premium feature. Upgrade to Lumixo+ to use it.');
       return;
     }
     setGhostMode(v);

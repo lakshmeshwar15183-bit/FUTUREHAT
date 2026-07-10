@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — sign in / sign up / forgot password. Reuses the shared
+// Lumixo mobile — sign in / sign up / forgot password. Reuses the shared
 // auth helpers; the App-level onAuthChange listener drives navigation on success.
 import React, { useMemo, useState } from 'react';
 import {

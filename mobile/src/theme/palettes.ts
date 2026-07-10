@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — colour palettes for each theme mode. Keys are identical
+// Lumixo mobile — colour palettes for each theme mode. Keys are identical
 // across palettes so screens can switch themes without touching layout code.
 
 export type ThemeMode = 'dark' | 'light' | 'amoled';

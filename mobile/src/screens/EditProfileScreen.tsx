@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — edit my profile: avatar, display name, username, about.
+// Lumixo mobile — edit my profile: avatar, display name, username, about.
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -140,7 +140,7 @@ export default function EditProfileScreen() {
           style={[styles.input, styles.about]}
           value={about}
           onChangeText={setAbout}
-          placeholder="Hey there! I am using FUTUREHAT."
+          placeholder="Hey there! I am using Lumixo."
           placeholderTextColor={colors.textFaint}
           multiline
         />

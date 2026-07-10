@@ -1,4 +1,4 @@
-// FUTUREHAT — privacy visibility + chat/general settings. These are stored in
+// Lumixo — privacy visibility + chat/general settings. These are stored in
 // the existing `user_preferences.extra` jsonb bag (namespaced), so no new table
 // is required. Visibility values are persisted for every client; server-side
 // enforcement of cross-user visibility (e.g. hiding last-seen from others) is a

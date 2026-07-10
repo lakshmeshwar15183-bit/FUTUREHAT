@@ -1,4 +1,4 @@
-/* FUTUREHAT web — Status (strip + extended viewer/composer + audience).
+/* Lumixo web — Status (strip + extended viewer/composer + audience).
    Reuses the story-player / tray / compose styles from StatusView.css, then
    adds the horizontal strip, audio stage, caption, composer and audience picker. */
 @import '../StatusView.css';

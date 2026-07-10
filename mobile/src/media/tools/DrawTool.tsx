@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — Draw tool (Phase B), Skia-backed. Brushes: pen, highlighter,
+// Lumixo mobile — Draw tool (Phase B), Skia-backed. Brushes: pen, highlighter,
 // neon, arrow, blur, eraser. Color picker, stroke-width slider, undo/redo. The
 // image + strokes are flattened to a new URI via a Skia canvas snapshot so the sent
 // photo has the drawing baked in.

@@ -1,4 +1,4 @@
-/* FUTUREHAT — Calls module (web). Theme-aware via --fh-* vars. */
+/* Lumixo — Calls module (web). Theme-aware via --fh-* vars. */
 
 .calls-modal {
   position: relative; width: min(460px, 100%); height: min(80vh, 720px);

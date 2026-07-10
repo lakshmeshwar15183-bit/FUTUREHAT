@@ -1,4 +1,4 @@
-// FUTUREHAT web — Settings › Streaks panel. Mirrors the mobile Streaks section:
+// Lumixo web — Settings › Streaks panel. Mirrors the mobile Streaks section:
 // a hub with the user's active streaks, the info pages (How it works, Qualifying
 // activities, Levels, Rewards, Penalties, Restrictions, Moderator selection) and
 // the Hall of Legends. Server-authoritative reads via shared/streakApi; the emoji
@@ -107,7 +107,7 @@ function Hub({ setView, onOpenChat, onClose }: {
               >
                 <div className="sp-row-name">
                   <span className="streak-emoji" aria-hidden>{s.tier}</span>{' '}
-                  {s.peer_name ?? (s.peer_username ? `@${s.peer_username}` : 'FUTUREHAT user')}
+                  {s.peer_name ?? (s.peer_username ? `@${s.peer_username}` : 'Lumixo user')}
                   <span className="streak-score"> · {s.score}</span>
                 </div>
                 <div className="sp-row-desc">
@@ -179,7 +179,7 @@ function Detail({ conversationId, title, onBack }: { conversationId: string; tit
                     <div className="sp-row" key={i}>
                       <div className="sp-row-main">
                         <div className="sp-row-name">
-                          {m.kind === 'diamond' ? '💎 Diamond — 1 month FUTUREHAT+' : m.kind === 'hall_of_legends' ? '🏆 Hall of Legends' : '🛡 Moderator milestone'}
+                          {m.kind === 'diamond' ? '💎 Diamond — 1 month Lumixo+' : m.kind === 'hall_of_legends' ? '🏆 Hall of Legends' : '🛡 Moderator milestone'}
                         </div>
                         <div className="sp-row-desc">
                           Reached at {m.achieved_score} · {new Date(m.achieved_at).toLocaleDateString()}{m.reward_granted ? ' · reward granted' : ''}
@@ -251,7 +251,7 @@ function Legends({ onBack }: { onBack: () => void }) {
               <div className="sp-row" key={h.streak_id}>
                 <div className="sp-row-main">
                   <div className="sp-row-name">
-                    🏆 {(h.user_a_name ?? h.user_a_username ?? 'FUTUREHAT user')} &amp; {(h.user_b_name ?? h.user_b_username ?? 'FUTUREHAT user')}
+                    🏆 {(h.user_a_name ?? h.user_a_username ?? 'Lumixo user')} &amp; {(h.user_b_name ?? h.user_b_username ?? 'Lumixo user')}
                   </div>
                   <div className="sp-row-desc">Legends since {new Date(h.achieved_at).toLocaleDateString()} · now {h.current_score} {h.current_tier}</div>
                 </div>
@@ -282,7 +282,7 @@ const PAGES: Record<Exclude<InfoPage, 'levels'>, Block[]> = {
     { h: 'What does NOT count', bullets: ['Five separate one-word messages (a single message must itself have 5+ words)', 'Failed, unsent or draft messages', 'Missed, rejected, unanswered or cancelled calls', 'Ringing time — only connected time counts, and it must exceed 15 seconds'] },
   ],
   rewards: [
-    { h: '💎 Diamond — 365 points', p: 'The first time your pair reaches 365, you both receive one month of FUTUREHAT+ Premium, free. If you already have Premium, the month is added on top — it never shortens what you already have.' },
+    { h: '💎 Diamond — 365 points', p: 'The first time your pair reaches 365, you both receive one month of Lumixo+ Premium, free. If you already have Premium, the month is added on top — it never shortens what you already have.' },
     { h: 'Once per pair, ever', p: 'Each milestone reward is granted a single time for the lifetime of the pair. You cannot lose points and re-earn the same reward.' },
     { h: '🛡 Moderator milestone — 367 points', p: 'Just past Diamond, the pair becomes eligible for the Moderator reward. See “Moderator selection”.' },
     { h: '🏆 Hall of Legends — 730 points', p: 'Around two years of streak earns your pair a permanent place in the Hall of Legends.' },

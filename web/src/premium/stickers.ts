@@ -1,4 +1,4 @@
-// FUTUREHAT+ — premium stickers. Each sticker is a self-contained SVG rendered to
+// Lumixo+ — premium stickers. Each sticker is a self-contained SVG rendered to
 // a data URI and sent as an image message, so there's no storage/schema dependency.
 
 interface StickerDef { id: string; emoji: string; bg: string; }

@@ -1,4 +1,4 @@
-// FUTUREHAT — Archived chats: lists conversations the user has archived, with
+// Lumixo — Archived chats: lists conversations the user has archived, with
 // unarchive and open actions. Self-contained (getMyConversations + archived ids
 // from accountApi). Opening hands the conversation id to the parent via onOpen
 // (wired during recovery). Backed by 0010_account_privacy.archived_conversations.

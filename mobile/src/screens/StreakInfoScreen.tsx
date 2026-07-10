@@ -1,6 +1,6 @@
-// FUTUREHAT mobile — Streaks info pages (How it works, Qualifying activities,
+// Lumixo mobile — Streaks info pages (How it works, Qualifying activities,
 // Levels, Rewards, Penalties & demotions, Restrictions & anti-abuse, Moderator
-// selection). Data-driven so every page shares the FUTUREHAT design language.
+// selection). Data-driven so every page shares the Lumixo design language.
 import React, { useMemo } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useRoute, type RouteProp } from '@react-navigation/native';
@@ -54,7 +54,7 @@ const PAGES: Record<StreakInfoPage, Block[]> = {
   ],
   levels: [], // rendered specially below
   rewards: [
-    { h: '💎 Diamond — 365 points', p: 'The first time your pair reaches 365, you BOTH receive one month of FUTUREHAT+ Premium, free. If you already have Premium, the month is ADDED on top — it never shortens what you already have.' },
+    { h: '💎 Diamond — 365 points', p: 'The first time your pair reaches 365, you BOTH receive one month of Lumixo+ Premium, free. If you already have Premium, the month is ADDED on top — it never shortens what you already have.' },
     { h: 'Once per pair, ever', p: 'Each milestone reward is granted a single time for the lifetime of the pair. You cannot lose points and re-earn the same reward by reaching the milestone again.' },
     { h: '🛡 Moderator milestone — 367 points', p: 'Just past Diamond, the pair becomes eligible for the Moderator reward. See “Moderator selection”.' },
     { h: '🏆 Hall of Legends — 730 points', p: 'Around two years of streak earns your pair a permanent place in the Hall of Legends.' },

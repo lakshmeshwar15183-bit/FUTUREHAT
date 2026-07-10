@@ -1,4 +1,4 @@
-// FUTUREHAT — Help & Support: FAQ, ticket submission (support/bug/feedback/
+// Lumixo — Help & Support: FAQ, ticket submission (support/bug/feedback/
 // appeal/grievance), my tickets, and trust & safety / legal info. Mirrors the
 // Android HelpSupport screen so web reaches parity with mobile.
 
@@ -13,7 +13,7 @@ import './HelpSupportModal.css';
 
 const FAQ: { q: string; a: string }[] = [
   { q: 'How do I start a new chat?', a: 'Tap ➕ in the sidebar, search a person by name or @username, and open the conversation.' },
-  { q: 'What is FUTUREHAT+?', a: 'A premium membership unlocking themes, wallpapers, AI tools, message scheduling, app lock, ghost mode and more.' },
+  { q: 'What is Lumixo+?', a: 'A premium membership unlocking themes, wallpapers, AI tools, message scheduling, app lock, ghost mode and more.' },
   { q: 'How do reactions and replies work?', a: 'Hover a message to react with an emoji, reply with a quote, forward, edit or delete your own messages.' },
   { q: 'Are my chats private?', a: 'Conversations are protected by row-level security — only participants can read them. See the privacy info below.' },
   { q: 'How do I block or report someone?', a: 'Open a direct chat header menu (•••) to block the user or report abuse. Reports go to our safety team.' },
@@ -139,7 +139,7 @@ export function HelpSupportModal({ onClose }: { onClose: () => void }) {
                 <li>📜 Grievance officer: complaints acknowledged within 48 hours, resolved within 15 days.</li>
                 <li>📄 Terms of Service · Privacy Policy · Community Guidelines apply to all members.</li>
               </ul>
-              <div className="help-credit">FUTUREHAT — developed by {OWNER}</div>
+              <div className="help-credit">Lumixo — developed by {OWNER}</div>
             </section>
           </div>
         ) : (

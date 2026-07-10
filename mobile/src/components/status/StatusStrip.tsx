@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — horizontal Status strip. Compact home-screen row: small
+// Lumixo mobile — horizontal Status strip. Compact home-screen row: small
 // "My status" avatar (with blue +) + horizontal row of recent updates. Opens
 // the full-screen viewer or the composer. Loads instantly from cache, refreshes
 // on focus, and stays live via realtime status changes. Height ~58dp — fits
@@ -134,26 +134,24 @@ export default function StatusStrip() {
             picker if no status yet); the "+" badge is its own Pressable that
             ALWAYS opens the picker so users can post additional statuses. */}
         <View style={styles.tile}>
-          <View>
-            <Pressable
-              onPress={openMine}
-              onLongPress={() => setMenuOpen(true)}
-              style={({ pressed }) => (pressed ? { opacity: 0.7 } : null)}
-            >
-              <View style={[styles.ring, { borderColor: mine ? colors.primary : 'transparent' }]}>
-                <Avatar uri={mine?.profile?.avatar_url} name="Me" size={42} />
-              </View>
-            </Pressable>
-            <Pressable
-              style={({ pressed }) => [styles.addBadge, pressed && { opacity: 0.7 }]}
-              onPress={() => setMenuOpen(true)}
-              hitSlop={8}
-              accessibilityLabel="Add status"
-              accessibilityRole="button"
-            >
-              <Ionicons name="add" size={12} color="#fff" />
-            </Pressable>
-          </View>
+          <Pressable
+            onPress={openMine}
+            onLongPress={() => setMenuOpen(true)}
+            style={({ pressed }) => (pressed ? { opacity: 0.7 } : null)}
+          >
+            <View style={[styles.ring, { borderColor: mine ? colors.primary : 'transparent' }]}>
+              <Avatar uri={mine?.profile?.avatar_url} name="Me" size={42} />
+            </View>
+          </Pressable>
+          <Pressable
+            style={({ pressed }) => [styles.addBadge, pressed && { opacity: 0.7 }]}
+            onPress={() => setMenuOpen(true)}
+            hitSlop={8}
+            accessibilityLabel="Add status"
+            accessibilityRole="button"
+          >
+            <Ionicons name="add" size={12} color="#fff" />
+          </Pressable>
         </View>
 
         {/* Recent updates — avatar-only tiles keep the row height compact */}

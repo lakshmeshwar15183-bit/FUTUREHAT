@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — auth callback URL helpers.
+// Lumixo mobile — auth callback URL helpers.
 // Supabase email links (reset password / magic link / email confirm) redirect
 // back to a URL we control. That URL has to work in EVERY environment we run
 // in — Expo Go (exp://…), dev-client, standalone `futurehat://` builds, and
@@ -15,15 +15,21 @@ import * as Linking from 'expo-linking';
  *  route matcher and the outgoing redirectTo can never drift apart. */
 export const RESET_PASSWORD_PATH = 'reset-password';
 
-/** Build a redirect URL for the given auth callback path. Prefers the app-scheme
- *  URL (works even without network / on airplane mode). If EXPO_PUBLIC_SITE_URL
- *  is set we also expose an https variant so consumers can pick the right one
- *  per platform. */
+/** Build the redirect URL sent to Supabase for the reset-password email.
+ *
+ *  Production strategy = App Link with web fallback: we send the HTTPS site URL
+ *  (`https://<site>/reset-password`). On a device where the app is installed and
+ *  the Android App Link is verified (via /.well-known/assetlinks.json), tapping
+ *  the email link opens the app directly; otherwise it opens the web reset page.
+ *  Either way the recovery tokens ride in the URL fragment, which both the app
+ *  (parseRecoveryLink) and the web app read.
+ *
+ *  When EXPO_PUBLIC_SITE_URL is unset (local dev / Expo Go), we fall back to the
+ *  runtime app-scheme URL from Linking.createURL() — e.g. `futurehat://…` in a
+ *  standalone build or `exp://192.168.x.x:8081/--/…` under Expo Go — so the flow
+ *  still works without any hosted web page. */
 export function resetPasswordRedirectUrl(): string {
-  // Linking.createURL yields e.g. `futurehat://reset-password` in a standalone
-  // build and `exp://192.168.x.x:8081/--/reset-password` under Expo Go, so the
-  // same code path works in every environment without extra config.
-  return Linking.createURL(RESET_PASSWORD_PATH);
+  return resetPasswordSiteUrl() ?? Linking.createURL(RESET_PASSWORD_PATH);
 }
 
 /** Optional HTTPS fallback (universal link) — only usable when EXPO_PUBLIC_SITE_URL

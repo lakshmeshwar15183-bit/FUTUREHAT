@@ -1,9 +1,9 @@
-// FUTUREHAT — Supabase client factory shared by web and mobile.
+// Lumixo — Supabase client factory shared by web and mobile.
 // Each platform passes its own URL/key and (for mobile) a storage adapter.
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
-export interface FutureHatClientOptions {
+export interface LumixoClientOptions {
   url: string;
   anonKey: string;
   /** Storage adapter — web uses window.localStorage by default; mobile passes AsyncStorage. */
@@ -14,10 +14,10 @@ export interface FutureHatClientOptions {
   };
 }
 
-export function createFutureHatClient(opts: FutureHatClientOptions): SupabaseClient {
+export function createLumixoClient(opts: LumixoClientOptions): SupabaseClient {
   if (!opts.url || !opts.anonKey) {
     throw new Error(
-      'FUTUREHAT: missing Supabase URL or anon key. Check your .env configuration.',
+      'Lumixo: missing Supabase URL or anon key. Check your .env configuration.',
     );
   }
   return createClient(opts.url, opts.anonKey, {

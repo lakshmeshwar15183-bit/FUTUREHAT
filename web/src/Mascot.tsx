@@ -1,4 +1,4 @@
-// FUTUREHAT — "Hatsy", the login mascot. A top-hat character whose eyes track
+// Lumixo — "Hatsy", the login mascot. A top-hat character whose eyes track
 // what you type and who covers its eyes while you enter your password.
 
 import { motion } from 'framer-motion';

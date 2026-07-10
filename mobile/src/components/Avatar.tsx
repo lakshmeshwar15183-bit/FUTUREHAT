@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — circular avatar with graceful initials fallback.
+// Lumixo mobile — circular avatar with graceful initials fallback.
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 // expo-image gives memory+disk caching so avatars in long lists aren't re-fetched

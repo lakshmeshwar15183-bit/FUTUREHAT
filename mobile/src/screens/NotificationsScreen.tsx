@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — Notification settings (WhatsApp layout). Grouped MESSAGE /
+// Lumixo mobile — Notification settings (WhatsApp layout). Grouped MESSAGE /
 // CALLS / STATUS / GROUPS sections stored in user_preferences.extra.notifications
 // (synced to the profile → restore on any device). Notification tone / ringtone
 // use the DEVICE SYSTEM DEFAULT sound; the tone rows open Android's per-channel

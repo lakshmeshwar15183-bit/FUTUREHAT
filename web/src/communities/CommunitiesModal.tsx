@@ -1,4 +1,4 @@
-// FUTUREHAT — Communities: list & create communities, browse channels (each
+// Lumixo — Communities: list & create communities, browse channels (each
 // backed by a conversation) and events (create + RSVP). Opening a channel hands
 // its conversation id back to the app, which selects it in the main chat.
 // Parity with the Android Communities tab + CommunityDetail screen.

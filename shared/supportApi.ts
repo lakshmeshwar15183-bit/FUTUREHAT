@@ -1,4 +1,4 @@
-// FUTUREHAT — trust & safety data layer: reports, support tickets, blocks, mutes.
+// Lumixo — trust & safety data layer: reports, support tickets, blocks, mutes.
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { UUID, ReportReason } from './types.js';
 import { getCurrentUser } from './api.js';

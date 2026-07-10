@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — an expo-image that resolves private-bucket media through a
+// Lumixo mobile — an expo-image that resolves private-bucket media through a
 // signed url (fixes the "black screen" bug) and NEVER shows a bare black frame:
 // while the url resolves or the bitmap decodes it shows a spinner on a neutral
 // backdrop; on failure (including a stall) it shows a tappable retry button.

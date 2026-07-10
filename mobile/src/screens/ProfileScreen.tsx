@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — view a user's profile. Shows avatar/name/username/about
+// Lumixo mobile — view a user's profile. Shows avatar/name/username/about
 // and contextual actions (message / call, or edit when it's me).
 import React, { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Image, Linking, Modal, Pressable, ScrollView, Share, StyleSheet, Switch, Text, View } from 'react-native';
@@ -48,7 +48,7 @@ export default function ProfileScreen() {
   const locked = !!convId && chatLock.isLocked(convId);
 
   // Toggle Chat Lock for this conversation. Enabling requires device auth (WhatsApp
-  // parity); FUTUREHAT never stores the credential — the OS verifies it.
+  // parity); Lumixo never stores the credential — the OS verifies it.
   async function toggleChatLock(value: boolean) {
     if (!convId) return;
     if (value) {
@@ -183,7 +183,7 @@ export default function ProfileScreen() {
 
   function shareContact() {
     const handle = profile?.username ? `@${profile.username}` : params.userId.slice(0, 8);
-    Share.share({ message: `${profile?.display_name ?? 'FUTUREHAT user'} (${handle}) on FUTUREHAT` });
+    Share.share({ message: `${profile?.display_name ?? 'Lumixo user'} (${handle}) on Lumixo` });
   }
 
   async function message() {
@@ -222,7 +222,7 @@ export default function ProfileScreen() {
           )}
         </View>
         <View style={styles.nameRow}>
-          <Text style={styles.name}>{profile?.display_name ?? 'FUTUREHAT user'}</Text>
+          <Text style={styles.name}>{profile?.display_name ?? 'Lumixo user'}</Text>
           {isPremium && (
             <Ionicons name="star" size={18} color={colors.primary} style={styles.premiumBadge} />
           )}
@@ -256,7 +256,7 @@ export default function ProfileScreen() {
       )}
 
       <Section title="About">
-        <Text style={styles.about}>{profile?.about || 'Hey there! I am using FUTUREHAT.'}</Text>
+        <Text style={styles.about}>{profile?.about || 'Hey there! I am using Lumixo.'}</Text>
       </Section>
 
       {!!profile?.phone && (
@@ -289,7 +289,7 @@ export default function ProfileScreen() {
             <View style={styles.disappearTextWrap}>
               <Text style={styles.actionRowText}>{locked ? 'On' : 'Off'}</Text>
               <Text style={styles.disappearHint}>
-                Require fingerprint, face, or your device PIN to open this chat. FUTUREHAT never stores your PIN or biometrics.
+                Require fingerprint, face, or your device PIN to open this chat. Lumixo never stores your PIN or biometrics.
               </Text>
             </View>
             <Switch

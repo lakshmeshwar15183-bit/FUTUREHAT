@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — background sync + offline outbox.
+// Lumixo mobile — background sync + offline outbox.
 //
 // Two jobs:
 //  1) Flush the outbox: any message composed while offline (or whose send failed)

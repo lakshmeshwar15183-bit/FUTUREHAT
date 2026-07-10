@@ -1,4 +1,4 @@
-// FUTUREHAT+ — payment provider abstraction.
+// Lumixo+ — payment provider abstraction.
 //
 // The app talks to payments through this interface only, so swapping or adding a
 // gateway (Razorpay, Stripe, …) never touches the upgrade UI. The browser-specific

@@ -1,4 +1,4 @@
--- 0029_streaks.sql — FUTUREHAT relationship Streak System.
+-- 0029_streaks.sql — Lumixo relationship Streak System.
 -- ============================================================================
 -- ADDITIVE ONLY + idempotent (create ... if not exists / drop policy if exists /
 -- create or replace). Server-authoritative: clients can NEVER set a score, claim
@@ -264,7 +264,7 @@ $$;
 -- 6) REWARD HELPERS (server-only; safe & idempotent)
 -- ─────────────────────────────────────────────────────────────────────────────
 
--- Grant/EXTEND one month of FUTUREHAT+ WITHOUT ever shortening an existing sub:
+-- Grant/EXTEND one month of Lumixo+ WITHOUT ever shortening an existing sub:
 -- extend from greatest(existing_end, now()) + 1 month. Unlike admin_grant_premium
 -- (0013), which OVERWRITES current_period_end and could shorten a longer sub, this
 -- only ever moves the end date forward. Keeps the existing plan on conflict.
@@ -349,7 +349,7 @@ begin
   select * into v_s from public.streaks where id = p_streak;
   if not found then return; end if;
 
-  -- DIAMOND (first time reaching 365) → 1 month FUTUREHAT+ for BOTH users.
+  -- DIAMOND (first time reaching 365) → 1 month Lumixo+ for BOTH users.
   if v_s.score >= 365 then
     insert into public.streak_milestones (streak_id, kind, achieved_score, meta)
     values (p_streak, 'diamond', v_s.score,
@@ -362,9 +362,9 @@ begin
       update public.streak_milestones set reward_granted = true, reward_granted_at = now()
         where streak_id = p_streak and kind = 'diamond';
       perform public._streak_notify(v_s.user_lo, '💎 Diamond achieved!',
-        'You and your streak partner reached 365 — Diamond! Enjoy 1 month of FUTUREHAT+ on us.');
+        'You and your streak partner reached 365 — Diamond! Enjoy 1 month of Lumixo+ on us.');
       perform public._streak_notify(v_s.user_hi, '💎 Diamond achieved!',
-        'You and your streak partner reached 365 — Diamond! Enjoy 1 month of FUTUREHAT+ on us.');
+        'You and your streak partner reached 365 — Diamond! Enjoy 1 month of Lumixo+ on us.');
       insert into public.audit_log (user_id, action, target, meta)
       values (null, 'streak_diamond_reward', p_streak::text,
         jsonb_build_object('users', jsonb_build_array(v_s.user_lo, v_s.user_hi)));
@@ -407,7 +407,7 @@ begin
           set reward_granted = true, reward_granted_at = now(),
               meta = meta || jsonb_build_object('moderator', v_cand)
           where streak_id = p_streak and kind = 'mod_eligible';
-        perform public._streak_notify(v_cand, '🛡 You are now a FUTUREHAT Moderator',
+        perform public._streak_notify(v_cand, '🛡 You are now a Lumixo Moderator',
           'Your legendary streak earned you Moderator status. Please use it responsibly.',
           'mod_appointed');
         perform public._streak_notify(v_other, '🛡 Moderator selected',
@@ -433,9 +433,9 @@ begin
     get diagnostics v_ins = row_count;
     if v_ins > 0 then
       perform public._streak_notify(v_s.user_lo, '🏆 Hall of Legends!',
-        'Two years of streak — you are now FUTUREHAT legends. 🏆');
+        'Two years of streak — you are now Lumixo legends. 🏆');
       perform public._streak_notify(v_s.user_hi, '🏆 Hall of Legends!',
-        'Two years of streak — you are now FUTUREHAT legends. 🏆');
+        'Two years of streak — you are now Lumixo legends. 🏆');
     end if;
   end if;
 end;

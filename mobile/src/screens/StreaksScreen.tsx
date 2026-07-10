@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — Settings › Streaks hub. Lists the user's active relationship
+// Lumixo mobile — Settings › Streaks hub. Lists the user's active relationship
 // streaks (server-authoritative score → tier emoji), links to per-pair detail, the
 // info pages, and Hall of Legends. Offline-first: hydrates from local cache, then
 // refreshes in the background. Loading / empty / error states included.
@@ -122,7 +122,7 @@ export default function StreaksScreen() {
               <Avatar uri={s.peer_avatar} name={s.peer_name ?? s.peer_username ?? '?'} size={46} />
               <View style={styles.rowBody}>
                 <Text style={styles.rowName} numberOfLines={1}>
-                  {s.peer_name ?? (s.peer_username ? `@${s.peer_username}` : 'FUTUREHAT user')}
+                  {s.peer_name ?? (s.peer_username ? `@${s.peer_username}` : 'Lumixo user')}
                 </Text>
                 <Text style={styles.rowSub} numberOfLines={1}>
                   {s.completed_today

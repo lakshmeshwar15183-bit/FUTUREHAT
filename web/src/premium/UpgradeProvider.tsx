@@ -1,4 +1,4 @@
-// FUTUREHAT+ — lets any component open the upgrade page. Mounts the modal once.
+// Lumixo+ — lets any component open the upgrade page. Mounts the modal once.
 
 import { createContext, useContext, useState, useCallback, lazy, Suspense, type ReactNode } from 'react';
 import { AnimatePresence } from 'framer-motion';

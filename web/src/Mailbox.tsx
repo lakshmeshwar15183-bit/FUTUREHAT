@@ -1,4 +1,4 @@
-// FUTUREHAT — user Mailbox. The official inbox that surfaces the notifications
+// Lumixo — user Mailbox. The official inbox that surfaces the notifications
 // written into user_warnings (0017/0023): moderator appointment / removal and
 // official warnings. Every user has one. Opening the mailbox marks everything
 // seen (clears the Settings badge). Read-only for the user; the records are
@@ -61,7 +61,7 @@ export function Mailbox({ onClose, onSeen }: { onClose: () => void; onSeen?: () 
         ) : error ? (
           <div className="admin-warn">{error}</div>
         ) : items.length === 0 ? (
-          <div className="admin-empty">No messages yet. Official FUTUREHAT notices appear here.</div>
+          <div className="admin-empty">No messages yet. Official Lumixo notices appear here.</div>
         ) : (
           <div className="mailbox-list">
             {items.map((m) => (
@@ -85,9 +85,9 @@ export function Mailbox({ onClose, onSeen }: { onClose: () => void; onSeen?: () 
 
 function defaultTitle(kind: string): string {
   switch (kind) {
-    case 'warning': return 'Official FUTUREHAT Warning';
-    case 'mod_appointed': return 'You are now a FUTUREHAT Moderator';
+    case 'warning': return 'Official Lumixo Warning';
+    case 'mod_appointed': return 'You are now a Lumixo Moderator';
     case 'mod_removed': return 'Moderator role removed';
-    default: return 'FUTUREHAT notice';
+    default: return 'Lumixo notice';
   }
 }

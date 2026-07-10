@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — single re-export barrel for the monorepo `shared/` package.
+// Lumixo mobile — single re-export barrel for the monorepo `shared/` package.
 // Metro resolves these relative paths via watchFolders (see metro.config.js);
 // TypeScript resolves them via the @shared/* path alias / relative source.
 export * from '../../../shared/api';
@@ -19,5 +19,5 @@ export * from '../../../shared/pushApi';
 export * from '../../../shared/streakApi';
 export * from '../../../shared/premium/plans';
 export * from '../../../shared/premium/features';
-export { createFutureHatClient } from '../../../shared/client';
-export type { FutureHatClientOptions, SupabaseClient } from '../../../shared/client';
+export { createLumixoClient } from '../../../shared/client';
+export type { LumixoClientOptions, SupabaseClient } from '../../../shared/client';

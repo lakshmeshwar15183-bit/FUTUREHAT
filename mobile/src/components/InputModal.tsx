@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — cross-platform prompt modal (Android has no Alert.prompt).
+// Lumixo mobile — cross-platform prompt modal (Android has no Alert.prompt).
 import React, { useMemo, useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useColors, spacing, radius, font, type Palette } from '../theme';

@@ -1,0 +1,11 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appID": "TEAMID.dev.lakshmeshwar.futurehat",
+        "paths": ["/reset-password", "/reset-password/*"]
+      }
+    ]
+  }
+}

@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — Status audience picker (WhatsApp "Status privacy").
+// Lumixo mobile — Status audience picker (WhatsApp "Status privacy").
 // Choose who can see a status: Everyone / My contacts / Except… / Only share with…
 // The Except/Only modes reveal a searchable multi-select of contacts (people you
 // share a direct conversation with). The chosen list is snapshotted per-post
@@ -31,7 +31,7 @@ interface Props {
 }
 
 const OPTIONS: { key: StatusAudience; label: string; sub: string; icon: keyof typeof Ionicons.glyphMap }[] = [
-  { key: 'everyone', label: 'Everyone', sub: 'Anyone on FUTUREHAT can see', icon: 'earth-outline' },
+  { key: 'everyone', label: 'Everyone', sub: 'Anyone on Lumixo can see', icon: 'earth-outline' },
   { key: 'contacts', label: 'My contacts', sub: 'People you chat with', icon: 'people-outline' },
   { key: 'except', label: 'My contacts except…', sub: 'Hide from some contacts', icon: 'remove-circle-outline' },
   { key: 'only', label: 'Only share with…', sub: 'Show to selected contacts', icon: 'checkmark-circle-outline' },
@@ -175,7 +175,7 @@ export default function AudiencePicker({ visible, audience, memberIds, onClose, 
               <Pressable style={styles.contactRow} onPress={() => toggle(item.id)}>
                 <Avatar uri={item.avatar_url} name={item.display_name} size={44} />
                 <Text style={styles.contactName} numberOfLines={1}>
-                  {item.display_name ?? 'FUTUREHAT user'}
+                  {item.display_name ?? 'Lumixo user'}
                 </Text>
                 <View style={[styles.check, on && { backgroundColor: colors.primary, borderColor: colors.primary }]}>
                   {on && <Ionicons name="checkmark" size={15} color="#fff" />}

@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — a poll rendered inside a chat thread. Shows live tallies
+// Lumixo mobile — a poll rendered inside a chat thread. Shows live tallies
 // with progress bars; tap an option to (un)vote. Respects single/multiple choice.
 import React, { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';

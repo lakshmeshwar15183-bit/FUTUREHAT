@@ -1,4 +1,4 @@
-// FUTUREHAT web — full-screen Status viewer (WhatsApp-grade).
+// Lumixo web — full-screen Status viewer (WhatsApp-grade).
 // Auto-advancing progress bars, tap/keyboard nav, hold-to-pause, image/text/
 // video/audio, captions, mute toggle, next-image preload, reply-as-DM, delete
 // (own), and a live "seen by" list driven by realtime views.
@@ -277,7 +277,7 @@ export function StatusViewer({
                   ) : (
                     <div className="story-viewer-avatar fallback">{(v.profile?.display_name || '?')[0]}</div>
                   )}
-                  <span className="story-viewer-name">{v.profile?.display_name || 'FUTUREHAT user'}</span>
+                  <span className="story-viewer-name">{v.profile?.display_name || 'Lumixo user'}</span>
                   <span className="story-viewer-time">{timeAgo(v.viewed_at)}</span>
                 </div>
               ))}

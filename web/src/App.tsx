@@ -1,4 +1,4 @@
-// FUTUREHAT web — main app (conversation list + chat) with premium wiring.
+// Lumixo web — main app (conversation list + chat) with premium wiring.
 
 import { useState, useEffect, useRef, useMemo, lazy, Suspense, type MouseEvent } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -396,10 +396,10 @@ function AppInner() {
     <div className={`app ${selectedConvId ? 'chat-open' : ''}`} onClick={() => { setMenuFor(null); setShowMenu(false); }}>
       <div className="sidebar">
         <div className="sidebar-header">
-          <h2>🎩 FUTUREHAT{isPremium && <PremiumBadge compact />}</h2>
+          <h2>🎩 Lumixo{isPremium && <PremiumBadge compact />}</h2>
           <div className="sidebar-actions">
             {!isPremium && (
-              <button onClick={openUpgrade} className="icon-btn upgrade-pill" title="Upgrade to FUTUREHAT+" aria-label="Upgrade to FUTUREHAT+">✦</button>
+              <button onClick={openUpgrade} className="icon-btn upgrade-pill" title="Upgrade to Lumixo+" aria-label="Upgrade to Lumixo+">✦</button>
             )}
             <button onClick={() => setShowCommunities(true)} className="icon-btn" title="Communities" aria-label="Communities"><CommunitiesIcon /></button>
             <button onClick={() => setShowCalls(true)} className="icon-btn" title="Calls" aria-label="Calls"><PhoneIcon /></button>
@@ -435,7 +435,7 @@ function AppInner() {
           </div>
         </div>
 
-        {/* Status strip (WhatsApp home parity) — under the FUTUREHAT header. */}
+        {/* Status strip (WhatsApp home parity) — under the Lumixo header. */}
         <StatusStrip />
 
         <AnimatePresence>
@@ -475,7 +475,7 @@ function AppInner() {
                         <div className="avatar">{r.contact.display_name?.[0] || '?'}</div>
                         <div className="result-info">
                           <div className="result-name">
-                            {r.contact.display_name || 'FUTUREHAT user'}
+                            {r.contact.display_name || 'Lumixo user'}
                             {premiumUserIds.has(r.contact.id) && <PremiumBadge compact />}
                           </div>
                           <div className="result-username">@{r.contact.username || r.contact.id.slice(0, 8)}</div>
@@ -621,7 +621,7 @@ function AppInner() {
           ) : (
             <motion.div key="empty" className="empty-chat" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
               <motion.div className="empty-chat-icon" animate={{ y: [0, -8, 0] }} transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}>💬</motion.div>
-              <h3>Welcome to FUTUREHAT</h3>
+              <h3>Welcome to Lumixo</h3>
               <p>Select a conversation or start a new chat</p>
             </motion.div>
           )}

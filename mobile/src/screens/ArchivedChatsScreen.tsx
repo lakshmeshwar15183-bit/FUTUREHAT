@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — Archived chats. Lists archived conversations with unarchive
+// Lumixo mobile — Archived chats. Lists archived conversations with unarchive
 // and open. Standalone; backed by 0010 archived_conversations + accountApi.
 import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';

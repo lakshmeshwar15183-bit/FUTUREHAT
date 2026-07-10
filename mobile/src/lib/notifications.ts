@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — notification engine. WhatsApp-style Android channels + local
+// Lumixo mobile — notification engine. WhatsApp-style Android channels + local
 // notification presentation. Sounds are the DEVICE SYSTEM DEFAULT (channel
 // `sound: 'default'`) — nothing is bundled and no picker is shown; users tune a
 // channel's sound/vibration/LED from Android's own per-channel settings. Killed-

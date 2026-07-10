@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — full-screen Status viewer (WhatsApp-grade).
+// Lumixo mobile — full-screen Status viewer (WhatsApp-grade).
 // Auto-advancing progress bars, tap-to-nav, hold-to-pause, swipe-down to dismiss.
 // Supports image / text / video / audio, captions, mute toggle, next-media preload,
 // reply-as-DM, delete (own), and a live "seen by" list driven by realtime views.
@@ -270,7 +270,7 @@ export default function StatusViewer({
       <View style={styles.viewerHeader}>
         <Avatar uri={group.profile?.avatar_url} name={isMine ? 'Me' : group.profile?.display_name} size={36} />
         <View style={styles.viewerHeaderText}>
-          <Text style={styles.viewerName}>{isMine ? 'My status' : group.profile?.display_name ?? 'FUTUREHAT user'}</Text>
+          <Text style={styles.viewerName}>{isMine ? 'My status' : group.profile?.display_name ?? 'Lumixo user'}</Text>
           <Text style={styles.viewerTime}>{formatLastSeen(current.created_at)}</Text>
         </View>
         {hasSound && (
@@ -360,7 +360,7 @@ export default function StatusViewer({
               {viewers.map((v) => (
                 <View key={v.viewer_id} style={styles.viewerItem}>
                   <Avatar uri={v.profile?.avatar_url} name={v.profile?.display_name} size={32} />
-                  <Text style={styles.viewerItemName}>{v.profile?.display_name ?? 'FUTUREHAT user'}</Text>
+                  <Text style={styles.viewerItemName}>{v.profile?.display_name ?? 'Lumixo user'}</Text>
                   <Text style={styles.viewerItemTime}>{formatLastSeen(v.viewed_at)}</Text>
                 </View>
               ))}

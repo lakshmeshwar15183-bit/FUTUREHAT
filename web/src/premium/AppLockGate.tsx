@@ -1,4 +1,4 @@
-// FUTUREHAT+ — App lock. When enabled (premium), the app is hidden behind a PIN
+// Lumixo+ — App lock. When enabled (premium), the app is hidden behind a PIN
 // (and device biometrics via WebAuthn when available) until unlocked this session.
 
 import { useEffect, useState, type ReactNode } from 'react';
@@ -107,7 +107,7 @@ export function AppLockGate({ children }: { children: ReactNode }) {
       >
         <div style={{ fontSize: 40 }}>🔐</div>
         <h2 style={{ margin: '10px 0 4px' }}>
-          {mode === 'create' ? 'Set a PIN' : 'FUTUREHAT locked'}
+          {mode === 'create' ? 'Set a PIN' : 'Lumixo locked'}
         </h2>
         <p style={{ color: 'var(--fh-muted)', fontSize: 13, marginBottom: 18 }}>
           {mode === 'create' ? 'Create a PIN to protect your chats' : 'Enter your PIN to continue'}

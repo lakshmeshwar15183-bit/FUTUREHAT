@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — Storage & data: on-device storage usage, clear cached media,
+// Lumixo mobile — Storage & data: on-device storage usage, clear cached media,
 // data-saver for calls, low-data mode, and auto-download controls. Standalone;
 // the toggles are stored in user_preferences.extra.storage. Storage usage is
 // computed from the app's expo-file-system cache directory (no new dependency —

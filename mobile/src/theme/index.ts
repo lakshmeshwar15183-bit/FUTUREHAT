@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — theme barrel.
+// Lumixo mobile — theme barrel.
 export { palettes, spacing, radius, font } from './palettes';
 export type { Palette, ThemeMode } from './palettes';
 export {

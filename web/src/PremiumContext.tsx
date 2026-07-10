@@ -1,4 +1,4 @@
-// FUTUREHAT+ — premium state: subscription, preferences, gating, and the live
+// Lumixo+ — premium state: subscription, preferences, gating, and the live
 // set of premium users (for badges). Applies appearance preferences to the DOM.
 
 import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from 'react';

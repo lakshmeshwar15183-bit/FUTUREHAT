@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — Scheduled Calls. List upcoming scheduled calls, schedule a
+// Lumixo mobile — Scheduled Calls. List upcoming scheduled calls, schedule a
 // new one with a contact (voice/video + a time preset), and cancel. Persisted in
 // public.scheduled_calls (0024) + realtime. Reached from the Calls overflow menu.
 import React, { useCallback, useEffect, useMemo, useState } from 'react';

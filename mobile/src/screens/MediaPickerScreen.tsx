@@ -1,7 +1,7 @@
-// FUTUREHAT mobile — full-screen media picker (WhatsApp-class), replacing the old
+// Lumixo mobile — full-screen media picker (WhatsApp-class), replacing the old
 // bottom-sheet gallery. Loads recent photos+videos newest-first, virtualized +
 // infinite-scroll, cached thumbnails (expo-image), an album switcher ("Recent ▼"),
-// and ordered multi-select with yellow numbered circles. FUTUREHAT branding/theme.
+// and ordered multi-select with yellow numbered circles. Lumixo branding/theme.
 //
 // Native: uses expo-media-library (added in 0030 phase; requires a native rebuild —
 // see mobile/BUILD_ANDROID.md). Degrades to a clear permission state if denied.
@@ -201,7 +201,7 @@ export default function MediaPickerScreen() {
       <View style={[styles.container, styles.center]}>
         <Ionicons name="images-outline" size={56} color={colors.textFaint} />
         <Text style={styles.emptyTitle}>Photos access needed</Text>
-        <Text style={styles.emptySub}>Allow FUTUREHAT to access your photos and videos to share them here.</Text>
+        <Text style={styles.emptySub}>Allow Lumixo to access your photos and videos to share them here.</Text>
         <Pressable style={styles.permBtn} onPress={() => MediaLibrary.requestPermissionsAsync().then((r) => { if (r.granted) { setPerm('granted'); loadPage(null, true); } })}>
           <Text style={styles.permBtnText}>Allow access</Text>
         </Pressable>

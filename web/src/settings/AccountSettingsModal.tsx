@@ -1,4 +1,4 @@
-// FUTUREHAT — Account & Security: email/password change, phone number, two-step
+// Lumixo — Account & Security: email/password change, phone number, two-step
 // verification (Supabase TOTP MFA), login/security history, data export, and
 // account deletion with a 30-day recovery window. Self-contained; persists via
 // accountApi + Supabase auth. Wiring into Settings is deferred (recovery list).

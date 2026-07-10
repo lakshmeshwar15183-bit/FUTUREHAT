@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — rough upload-size estimate per quality tier, so the preview
+// Lumixo mobile — rough upload-size estimate per quality tier, so the preview
 // screen can show "~2.3 MB" before sending (WhatsApp-style). These are heuristics,
 // not exact encoder output — real size is known only after compression (Phase B/C).
 

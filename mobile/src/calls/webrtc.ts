@@ -1,6 +1,6 @@
 // build-stamp: 2026-07-03T0840 — bump to invalidate Metro's per-file transform
 // cache so EXPO_PUBLIC_TURN_* is re-inlined (cache key is source-hash, not env).
-// FUTUREHAT mobile — WebRTC call engine. Wraps a single RTCPeerConnection and
+// Lumixo mobile — WebRTC call engine. Wraps a single RTCPeerConnection and
 // drives the SDP/ICE handshake over the shared Supabase signaling channel.
 // Audio uses echo-cancellation + noise-suppression constraints; InCallManager
 // handles speaker routing, ringtone and the proximity sensor.

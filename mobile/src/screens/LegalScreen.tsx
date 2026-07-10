@@ -1,5 +1,5 @@
-// FUTUREHAT mobile — Legal center: Terms, Privacy Policy, Community Guidelines.
-// Original FUTUREHAT content. Standalone.
+// Lumixo mobile — Legal center: Terms, Privacy Policy, Community Guidelines.
+// Original Lumixo content. Standalone.
 import React, { useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
@@ -25,13 +25,13 @@ export default function LegalScreen() {
         {tab === 'terms' && (
           <>
             <Text style={styles.h}>Terms of Service</Text>
-            <Text style={styles.p}>By using FUTUREHAT you agree to use the service lawfully and respectfully. You are responsible for the content you send and for keeping your account secure.</Text>
+            <Text style={styles.p}>By using Lumixo you agree to use the service lawfully and respectfully. You are responsible for the content you send and for keeping your account secure.</Text>
             <Text style={styles.h2}>Acceptable use</Text>
             <Text style={styles.p}>Do not harass, defraud, distribute malware, infringe rights, or share illegal content. Accounts violating these terms may be suspended.</Text>
             <Text style={styles.h2}>Premium</Text>
             <Text style={styles.p}>Paid features are billed per your chosen plan. Cancelling stops future renewals; access continues until the period ends.</Text>
             <Text style={styles.h2}>Liability</Text>
-            <Text style={styles.p}>FUTUREHAT is provided “as is”. To the extent permitted by law, we are not liable for indirect or consequential damages.</Text>
+            <Text style={styles.p}>Lumixo is provided “as is”. To the extent permitted by law, we are not liable for indirect or consequential damages.</Text>
           </>
         )}
         {tab === 'privacy' && (
@@ -49,7 +49,7 @@ export default function LegalScreen() {
         {tab === 'guidelines' && (
           <>
             <Text style={styles.h}>Community Guidelines</Text>
-            <Text style={styles.p}>FUTUREHAT is for everyone. Keep it safe and welcoming:</Text>
+            <Text style={styles.p}>Lumixo is for everyone. Keep it safe and welcoming:</Text>
             <Text style={styles.li}>• Be respectful — no harassment, hate speech, or threats.</Text>
             <Text style={styles.li}>• No spam, scams, or deceptive behaviour.</Text>
             <Text style={styles.li}>• No illegal content or promotion of violence.</Text>
@@ -58,7 +58,7 @@ export default function LegalScreen() {
             <Text style={styles.p}>Violations may lead to removal, suspension, or a ban. You can appeal via Help &amp; Support.</Text>
           </>
         )}
-        <Text style={styles.foot}>FUTUREHAT v{APP_VERSION} · {CREDIT}</Text>
+        <Text style={styles.foot}>Lumixo v{APP_VERSION} · {CREDIT}</Text>
       </ScrollView>
     </View>
   );

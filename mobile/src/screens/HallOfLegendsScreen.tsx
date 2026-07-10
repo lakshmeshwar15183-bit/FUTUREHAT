@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — Hall of Legends. Legendary streak pairs (🏆, 730+). Server-
+// Lumixo mobile — Hall of Legends. Legendary streak pairs (🏆, 730+). Server-
 // authoritative eligibility (get_hall_of_legends), keyset pagination, offline cache,
 // and loading / empty / error states.
 import React, { useCallback, useMemo, useState } from 'react';
@@ -73,7 +73,7 @@ export default function HallOfLegendsScreen() {
       </View>
       <View style={styles.rowBody}>
         <Text style={styles.names} numberOfLines={1}>
-          {(item.user_a_name ?? item.user_a_username ?? 'FUTUREHAT user')} & {(item.user_b_name ?? item.user_b_username ?? 'FUTUREHAT user')}
+          {(item.user_a_name ?? item.user_a_username ?? 'Lumixo user')} & {(item.user_b_name ?? item.user_b_username ?? 'Lumixo user')}
         </Text>
         <Text style={styles.sub}>
           Legends since {new Date(item.achieved_at).toLocaleDateString()} · now {item.current_score} {item.current_tier}

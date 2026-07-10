@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — Call detail: the specific call(s) behind a history row plus
+// Lumixo mobile — Call detail: the specific call(s) behind a history row plus
 // per-contact actions. Shows the REAL metadata of the tapped call log — type,
 // direction/status, date, time range and connected duration — computed from the
 // stored call record (started_at / answered_at / ended_at), never hardcoded.

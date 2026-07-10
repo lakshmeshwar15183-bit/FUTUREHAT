@@ -1,4 +1,4 @@
--- FUTUREHAT — Status/Stories + Storage buckets & policies
+-- Lumixo — Status/Stories + Storage buckets & policies
 
 -- ---------------------------------------------------------------------------
 -- statuses : ephemeral 24h stories

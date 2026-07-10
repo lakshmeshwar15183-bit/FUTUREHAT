@@ -1,4 +1,4 @@
-// FUTUREHAT — per-user message extras: star/bookmark and "delete for me".
+// Lumixo — per-user message extras: star/bookmark and "delete for me".
 // Backed by 0011_message_extras (starred_messages, hidden_messages). All calls
 // degrade gracefully (return empty / no-op) if the migration isn't applied yet.
 import type { SupabaseClient } from '@supabase/supabase-js';

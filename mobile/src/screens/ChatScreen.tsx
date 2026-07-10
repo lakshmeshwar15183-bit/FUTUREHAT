@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — the chat thread. Realtime messages, media + voice,
+// Lumixo mobile — the chat thread. Realtime messages, media + voice,
 // reactions, reply/edit/delete/forward, typing, presence and read receipts.
 // All data flows through the shared API; this screen is presentation + glue.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -740,7 +740,7 @@ function ChatScreenInner() {
     if (!isPremium) {
       Alert.alert(
         'File too large',
-        `Free accounts can send files up to ${Math.round(FREE_LIMITS.uploadBytes / (1024 * 1024))} MB. Upgrade to FUTUREHAT+ to send files up to ${Math.round(PREMIUM_LIMITS.uploadBytes / (1024 * 1024))} MB.`,
+        `Free accounts can send files up to ${Math.round(FREE_LIMITS.uploadBytes / (1024 * 1024))} MB. Upgrade to Lumixo+ to send files up to ${Math.round(PREMIUM_LIMITS.uploadBytes / (1024 * 1024))} MB.`,
         [{ text: 'Not now', style: 'cancel' }, { text: 'Upgrade', onPress: () => navigation.navigate('Premium') }],
       );
     } else {
@@ -1070,7 +1070,7 @@ function ChatScreenInner() {
     setSelected(null);
     Alert.alert(
       'Report message',
-      'Report this message to the FUTUREHAT moderators?',
+      'Report this message to the Lumixo moderators?',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -1618,28 +1618,28 @@ function ChatScreenInner() {
             />
             <AttachOption
               icon="happy"
-              label={isPremium ? 'Stickers' : 'Stickers · FUTUREHAT+'}
+              label={isPremium ? 'Stickers' : 'Stickers · Lumixo+'}
               color="#F45D9C"
               onPress={() => {
                 setAttachOpen(false);
                 if (isPremium) setStickersOpen(true);
                 else
-                  Alert.alert('Stickers', 'Premium stickers are a FUTUREHAT+ feature.', [
+                  Alert.alert('Stickers', 'Premium stickers are a Lumixo+ feature.', [
                     { text: 'Not now', style: 'cancel' },
-                    { text: 'See FUTUREHAT+', onPress: () => navigation.navigate('Premium') },
+                    { text: 'See Lumixo+', onPress: () => navigation.navigate('Premium') },
                   ]);
               }}
             />
             <AttachOption
               icon="time"
-              label={isPremium ? 'Schedule message' : 'Schedule · FUTUREHAT+'}
+              label={isPremium ? 'Schedule message' : 'Schedule · Lumixo+'}
               color="#7A6FF0"
               onPress={() => {
                 setAttachOpen(false);
                 if (!isPremium) {
-                  Alert.alert('Schedule message', 'Scheduled messages are a FUTUREHAT+ feature.', [
+                  Alert.alert('Schedule message', 'Scheduled messages are a Lumixo+ feature.', [
                     { text: 'Not now', style: 'cancel' },
-                    { text: 'See FUTUREHAT+', onPress: () => navigation.navigate('Premium') },
+                    { text: 'See Lumixo+', onPress: () => navigation.navigate('Premium') },
                   ]);
                   return;
                 }
@@ -1814,7 +1814,7 @@ function ChatScreenInner() {
       <Modal visible={emojiPickerOpen} transparent animationType="fade" onRequestClose={() => setEmojiPickerOpen(false)}>
         <Pressable style={styles.backdrop} onPress={() => setEmojiPickerOpen(false)}>
           <Pressable style={[styles.sheet, styles.emojiPickerSheet, { paddingBottom: insets.bottom + 16 }]} onPress={(e) => e.stopPropagation()}>
-            <Text style={styles.sheetTitle}>React{!isPremium ? '  ·  extras are FUTUREHAT+' : ''}</Text>
+            <Text style={styles.sheetTitle}>React{!isPremium ? '  ·  extras are Lumixo+' : ''}</Text>
             <View style={styles.emojiGrid}>
               {MORE_EMOJI.map((e) => {
                 // Free tier reacts with the 6 quick emojis; the rest are premium
@@ -1830,7 +1830,7 @@ function ChatScreenInner() {
                         setEmojiPickerOpen(false);
                         Alert.alert(
                           'Premium reaction',
-                          'Upgrade to FUTUREHAT+ to react with the full emoji set.',
+                          'Upgrade to Lumixo+ to react with the full emoji set.',
                           [{ text: 'Not now', style: 'cancel' }, { text: 'Upgrade', onPress: () => navigation.navigate('Premium') }],
                         );
                         return;

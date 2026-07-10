@@ -1,4 +1,4 @@
-// FUTUREHAT — Owner/Admin data-access layer. Framework-agnostic; web + mobile
+// Lumixo — Owner/Admin data-access layer. Framework-agnostic; web + mobile
 // share it. Every function here calls a SECURITY DEFINER RPC (or an RLS-guarded
 // table) from 0013_owner_admin.sql that RE-CHECKS the caller's privilege server-
 // side, so these wrappers are a convenience, NOT the security boundary. Client
@@ -99,7 +99,7 @@ export async function adminDeleteAccount(client: SupabaseClient, target: UUID, r
 }
 
 // Assign / remove Moderator, or demote to User. The 'admin' (and 'owner') roles are
-// PERMANENT and can never be assigned or transferred through the app — FUTUREHAT has a
+// PERMANENT and can never be assigned or transferred through the app — Lumixo has a
 // single hardcoded owner/admin (the developer allowlist). The server-side admin_set_role
 // (migration 0025) rejects any role other than 'user'/'moderator'; this type mirrors that.
 export async function adminSetRole(client: SupabaseClient, target: UUID, role: 'user' | 'moderator'): Promise<void> {

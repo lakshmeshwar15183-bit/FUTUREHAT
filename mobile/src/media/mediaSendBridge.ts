@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — tiny decoupled bridge so the full-screen MediaPreview editor
+// Lumixo mobile — tiny decoupled bridge so the full-screen MediaPreview editor
 // can hand finished attachments back to the owning ChatScreen WITHOUT threading a
 // function through navigation params (which React Navigation warns against and which
 // breaks serialization/deep-links). ChatScreen registers a handler while focused;

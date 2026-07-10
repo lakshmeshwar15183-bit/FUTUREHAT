@@ -1,11 +1,11 @@
-// FUTUREHAT mobile — premium color themes + chat wallpapers. Ported 1:1 from the
+// Lumixo mobile — premium color themes + chat wallpapers. Ported 1:1 from the
 // web theme engine (web/src/theme/themes.ts THEMES + WALLPAPERS) so a theme/wallpaper
 // chosen on either platform renders the same and persists to the SAME shared
 // `user_preferences.theme` / `user_preferences.wallpaper` columns.
 //
 // A color theme layers a full palette over the base light/dark/amoled MODE. The
 // free 'default' theme means "use the mode palette"; the five named palettes are
-// premium and are only applied when the account is FUTUREHAT+ (gating mirrors the
+// premium and are only applied when the account is Lumixo+ (gating mirrors the
 // web `applyPreferences` premium guard).
 import { palettes, type Palette } from './palettes';
 

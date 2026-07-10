@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — flatten text/sticker overlays onto the base image (Phase B),
+// Lumixo mobile — flatten text/sticker overlays onto the base image (Phase B),
 // producing a single PNG URI with everything baked in, so the sent photo carries the
 // edits. Uses an offscreen Skia surface. Emoji/sticker-image/text are drawn at the
 // overlay transforms mapped from stage space to source-pixel space.

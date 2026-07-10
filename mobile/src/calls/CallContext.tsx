@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — call orchestration. Exposes startCall() to the app, listens
+// Lumixo mobile — call orchestration. Exposes startCall() to the app, listens
 // for incoming calls, and renders the incoming-ring + in-call overlays at root.
 import React, {
   createContext,
@@ -98,7 +98,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
         void presentCallNotification({
           callId: call.id,
           conversationId: call.conversation_id,
-          title: peer?.display_name ?? 'FUTUREHAT',
+          title: peer?.display_name ?? 'Lumixo',
           video: call.type === 'video',
         });
       }
@@ -143,7 +143,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       void sendPush(supabase, {
         conversationId,
         kind: 'call',
-        title: peer?.display_name ?? 'FUTUREHAT',
+        title: peer?.display_name ?? 'Lumixo',
         body: type === 'video' ? 'Incoming video call' : 'Incoming voice call',
         data: { callId: call.id, video: String(type === 'video') },
       });
@@ -225,7 +225,7 @@ function IncomingCallView({
     <View style={[StyleSheet.absoluteFill, styles.ringContainer]}>
       <Text style={styles.incomingLabel}>Incoming {type} call</Text>
       <Avatar uri={peer?.avatar_url} name={peer?.display_name} size={120} />
-      <Text style={styles.peerName}>{peer?.display_name ?? 'FUTUREHAT user'}</Text>
+      <Text style={styles.peerName}>{peer?.display_name ?? 'Lumixo user'}</Text>
       <View style={styles.ringActions}>
         <CircleButton icon="call" color="#2BD167" label="Accept" onPress={onAccept} />
         <CircleButton icon="close" color="#F15C6D" label="Decline" onPress={onDecline} />
@@ -370,7 +370,7 @@ function ActiveCallView({
 
   // Minimized floating bubble — a compact, draggable window onto the call. It is
   // NOT an absoluteFill, so touches outside it pass through to the app beneath,
-  // which is exactly what lets the user keep using FUTUREHAT during a call.
+  // which is exactly what lets the user keep using Lumixo during a call.
   if (minimized) {
     return (
       <Animated.View
@@ -436,7 +436,7 @@ function ActiveCallView({
       </View>
 
       <View style={[styles.callHeader, { top: insets.top + 16 }]}>
-        <Text style={styles.callPeer}>{call.peer?.display_name ?? 'FUTUREHAT user'}</Text>
+        <Text style={styles.callPeer}>{call.peer?.display_name ?? 'Lumixo user'}</Text>
         <Text style={styles.callStatus}>{status}</Text>
       </View>
 

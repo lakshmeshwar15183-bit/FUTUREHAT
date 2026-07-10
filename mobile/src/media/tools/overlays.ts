@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — shared overlay model for the media editor (Phase B). Text and
+// Lumixo mobile — shared overlay model for the media editor (Phase B). Text and
 // sticker layers are positioned/scaled/rotated on top of the image and flattened
 // into the final URI when the user sends. Kept framework-agnostic so both the
 // TextTool and StickerTool produce the same shape and the preview can render them.

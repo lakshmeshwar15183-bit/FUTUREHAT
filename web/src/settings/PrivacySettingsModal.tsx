@@ -1,4 +1,4 @@
-// FUTUREHAT — Privacy settings: last seen / photo / about / links / status /
+// Lumixo — Privacy settings: last seen / photo / about / links / status /
 // groups / calls / avatar visibility, read receipts, and a blocked-contacts
 // manager. Self-contained: persists via privacyApi (user_preferences.extra) and
 // supportApi. Wiring into the main Settings screen is deferred (recovery list).

@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — Video editor (Phase C). Trim (in/out handles over a thumbnail
+// Lumixo mobile — Video editor (Phase C). Trim (in/out handles over a thumbnail
 // filmstrip), mute toggle, cover-thumbnail selection, HD/quality, duration +
 // estimated-size display, and caption/View-Once (carried up to the preview).
 //

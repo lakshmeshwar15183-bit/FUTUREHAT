@@ -1,7 +1,7 @@
-// FUTUREHAT mobile — Text & Sticker overlay editor (Phase B). Hosts draggable,
+// Lumixo mobile — Text & Sticker overlay editor (Phase B). Hosts draggable,
 // pinch-scalable, rotatable text and sticker layers over the image. Text supports
 // multiple fonts, bold/italic, alignment, background, opacity and multiple layers.
-// Stickers come from emoji + the FUTUREHAT sticker pack, with recently-used and
+// Stickers come from emoji + the Lumixo sticker pack, with recently-used and
 // favorites. On done it returns the image URI + the overlay list; the preview
 // flattens them into the final photo via a Skia snapshot (see mediaFlatten.ts).
 //
@@ -184,7 +184,7 @@ export default function OverlayEditor({
               <View style={styles.stickGrid}>
                 {EMOJIS.map((e) => <StickerCell key={e} content={e} onPick={() => addSticker(e, true)} onFav={() => toggleFav(e)} faved={favs.includes(e)} colors={colors} />)}
               </View>
-              <Text style={styles.stickHead}>FUTUREHAT stickers</Text>
+              <Text style={styles.stickHead}>Lumixo stickers</Text>
               <View style={styles.stickGrid}>
                 {STICKERS.map((s) => <StickerCell key={s.id} content={s.url} emoji={s.emoji} onPick={() => addSticker(s.url, false)} onFav={() => toggleFav(s.url)} faved={favs.includes(s.url)} colors={colors} />)}
               </View>

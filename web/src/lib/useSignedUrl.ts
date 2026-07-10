@@ -1,4 +1,4 @@
-// FUTUREHAT web — resolve a stored media_url into a displayable (signed) url.
+// Lumixo web — resolve a stored media_url into a displayable (signed) url.
 // The `media` bucket is PRIVATE, so a public url returns 403 and renders as a
 // broken image in the browser with no reliable onerror payload. Mirrors the
 // mobile hook (mobile/src/lib/useSignedUrl.ts) so both platforms behave the same:

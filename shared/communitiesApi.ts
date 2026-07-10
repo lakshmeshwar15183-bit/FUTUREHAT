@@ -1,4 +1,4 @@
-// FUTUREHAT — communities, channels, polls and events (framework-agnostic).
+// Lumixo — communities, channels, polls and events (framework-agnostic).
 // Channels reuse the conversations/messages stack: creating a channel creates a
 // backing conversation, so every chat feature works inside a channel for free.
 import type { SupabaseClient } from '@supabase/supabase-js';

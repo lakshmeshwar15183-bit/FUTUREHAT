@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — media preview & editor shell. Opens after picking; the user
+// Lumixo mobile — media preview & editor shell. Opens after picking; the user
 // reviews each attachment, adds a caption, picks quality (Standard/HD/Original) with
 // a live size estimate, optionally enables View Once, then Sends. The drawing/crop/
 // text/sticker tools are Phase B (require @shopify/react-native-skia + a native

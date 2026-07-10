@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — user Mailbox. The official inbox surfacing user_warnings
+// Lumixo mobile — user Mailbox. The official inbox surfacing user_warnings
 // notifications (0017/0023): moderator appointment / removal, official warnings,
 // and once-per-lifetime streak milestone rewards (Diamond / Hall of Legends).
 // Everyday streak +1 / tier / penalty events are silent (0032) — this screen
@@ -49,10 +49,10 @@ function visualFor(item: MailboxItem, colors: Palette): Visual {
 
 function defaultTitle(kind: string): string {
   switch (kind) {
-    case 'warning': return 'Official FUTUREHAT Warning';
-    case 'mod_appointed': return 'You are now a FUTUREHAT Moderator';
+    case 'warning': return 'Official Lumixo Warning';
+    case 'mod_appointed': return 'You are now a Lumixo Moderator';
     case 'mod_removed': return 'Moderator role removed';
-    default: return 'FUTUREHAT notice';
+    default: return 'Lumixo notice';
   }
 }
 
@@ -111,7 +111,7 @@ export default function MailboxScreen() {
           </View>
           <Text style={styles.emptyTitle}>No new notifications</Text>
           <Text style={styles.emptySub}>
-            Friend requests, community invites, security alerts, and official FUTUREHAT
+            Friend requests, community invites, security alerts, and official Lumixo
             notices appear here.
           </Text>
         </View>

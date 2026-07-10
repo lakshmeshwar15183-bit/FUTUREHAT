@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — create a group conversation: pick members, name it, go.
+// Lumixo mobile — create a group conversation: pick members, name it, go.
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -128,7 +128,7 @@ export default function NewGroupScreen() {
           return (
             <Pressable style={styles.row} onPress={() => toggle(item)}>
               <Avatar uri={item.avatar_url} name={item.display_name ?? item.username} size={44} />
-              <Text style={styles.name}>{item.display_name ?? 'FUTUREHAT user'}</Text>
+              <Text style={styles.name}>{item.display_name ?? 'Lumixo user'}</Text>
               <Ionicons
                 name={on ? 'checkmark-circle' : 'ellipse-outline'}
                 size={24}

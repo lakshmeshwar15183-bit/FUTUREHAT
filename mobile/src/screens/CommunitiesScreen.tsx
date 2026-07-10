@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — Communities tab: list the communities you're in, create new.
+// Lumixo mobile — Communities tab: list the communities you're in, create new.
 import React, { useCallback, useMemo, useState } from 'react';
 import { Alert, FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';

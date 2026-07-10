@@ -1,4 +1,4 @@
-// FUTUREHAT — Streak System data layer (framework-agnostic; web + mobile share it).
+// Lumixo — Streak System data layer (framework-agnostic; web + mobile share it).
 //
 // Relationship streaks between the TWO users of a direct conversation. Everything
 // authoritative — the score, the +1/-3, tier, milestones (Diamond premium, the

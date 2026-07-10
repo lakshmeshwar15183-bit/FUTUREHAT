@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — theme & appearance picker. A live mock-chat preview at the
+// Lumixo mobile — theme & appearance picker. A live mock-chat preview at the
 // top reflects the selected mode / color theme / wallpaper instantly (premium
 // themes can be previewed even when locked), and the pickers below switch the
 // live palette and let premium members choose a font, chat-bubble style and app
@@ -170,7 +170,7 @@ export default function AppearanceScreen() {
       {showUpsell && (
         <Pressable style={styles.upsell} onPress={() => navigation.navigate('Premium')}>
           <Ionicons name="lock-closed" size={13} color={colors.accentPlusText} />
-          <Text style={styles.upsellText}>Preview only — unlock this with FUTUREHAT+</Text>
+          <Text style={styles.upsellText}>Preview only — unlock this with Lumixo+</Text>
           <Ionicons name="chevron-forward" size={14} color={colors.accentPlusText} />
         </Pressable>
       )}
@@ -350,12 +350,12 @@ export default function AppearanceScreen() {
   );
 }
 
-// FUTUREHAT+ tag used on premium section headers.
+// Lumixo+ tag used on premium section headers.
 function PlusTag({ colors }: { colors: Palette }) {
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
       <Ionicons name="sparkles" size={11} color={colors.accentPlusText} />
-      <Text style={{ color: colors.accentPlusText, fontSize: font.tiny, fontWeight: '800' }}>FUTUREHAT+</Text>
+      <Text style={{ color: colors.accentPlusText, fontSize: font.tiny, fontWeight: '800' }}>Lumixo+</Text>
     </View>
   );
 }

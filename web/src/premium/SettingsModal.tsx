@@ -1,4 +1,4 @@
-// FUTUREHAT — Settings: appearance, privacy, subscription, and app info.
+// Lumixo — Settings: appearance, privacy, subscription, and app info.
 // Premium-only options are gated inline; selecting one while free opens upgrade.
 
 import { useState, useCallback, useEffect, lazy, Suspense } from 'react';
@@ -84,14 +84,14 @@ export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin, onModer
             </div>
             <div className="settings-profile-meta">
               <div className="settings-profile-name">
-                {profile?.display_name || 'FUTUREHAT user'}
+                {profile?.display_name || 'Lumixo user'}
                 {isPremium && <PremiumBadge compact />}
-                {isModerator && !isAdmin && <span className="mod-badge" title="FUTUREHAT Moderator">🛡 MOD</span>}
+                {isModerator && !isAdmin && <span className="mod-badge" title="Lumixo Moderator">🛡 MOD</span>}
                 {isAdmin && <span className="dev-badge">DEV</span>}
               </div>
               {profile?.username && <div className="settings-profile-handle">@{profile.username}</div>}
               <div className="membership-sub">
-                {isAdmin ? 'FUTUREHAT+ · Lifetime membership' : isPremium ? 'FUTUREHAT+ member' : 'Free plan'}
+                {isAdmin ? 'Lumixo+ · Lifetime membership' : isPremium ? 'Lumixo+ member' : 'Free plan'}
               </div>
             </div>
           </div>
@@ -104,10 +104,10 @@ export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin, onModer
               <div className="membership-label">
                 Membership {isPremium && <PremiumBadge compact />}
                 {isAdmin && <span className="dev-badge">DEV</span>}
-                {!isPremium && !isAdmin && <span className="soon-tag">FUTUREHAT+ · Available soon</span>}
+                {!isPremium && !isAdmin && <span className="soon-tag">Lumixo+ · Available soon</span>}
               </div>
               <div className="membership-sub">
-                {isAdmin ? 'Developer · lifetime FUTUREHAT+ + Admin' : isPremium ? 'FUTUREHAT+ active' : 'Free plan · premium launching soon'}
+                {isAdmin ? 'Developer · lifetime Lumixo+ + Admin' : isPremium ? 'Lumixo+ active' : 'Free plan · premium launching soon'}
               </div>
             </div>
             <button className="settings-cta" onClick={openUpgrade}>
@@ -202,7 +202,7 @@ export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin, onModer
           <div className="toggle-row" onClick={() => toggle('app_lock')}>
             <div>
               <div className="toggle-name">🔐 App lock</div>
-              <div className="toggle-sub">Require a PIN / Face ID when opening FUTUREHAT</div>
+              <div className="toggle-sub">Require a PIN / Face ID when opening Lumixo</div>
             </div>
             <span className={`switch ${isPremium && preferences.app_lock ? 'on' : ''}`}><i /></span>
           </div>
@@ -259,7 +259,7 @@ export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin, onModer
         {/* About */}
         <section className="settings-section about">
           <h3>ℹ️ About</h3>
-          <div className="about-row"><span>App</span><span>FUTUREHAT</span></div>
+          <div className="about-row"><span>App</span><span>Lumixo</span></div>
           <div className="about-row"><span>Version</span><span>{APP_VERSION}</span></div>
           <div className="about-row"><span>Developer</span><span>{OWNER}</span></div>
           <div className="about-credit">Developed by {OWNER}</div>

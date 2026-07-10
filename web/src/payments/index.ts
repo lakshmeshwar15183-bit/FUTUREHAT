@@ -1,4 +1,4 @@
-// FUTUREHAT+ — payment provider factory. Selects a real gateway when configured,
+// Lumixo+ — payment provider factory. Selects a real gateway when configured,
 // otherwise the functional ManualProvider. Add new gateways here only.
 
 import type { PaymentProvider } from '@shared/payments/provider';

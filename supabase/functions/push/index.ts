@@ -1,4 +1,4 @@
-// FUTUREHAT — push fan-out Edge Function (Deno). This is the KILLED-STATE delivery
+// Lumixo — push fan-out Edge Function (Deno). This is the KILLED-STATE delivery
 // path: the sender's app calls sendPush() (shared/pushApi.ts) after a message/call;
 // this function looks up the recipients' registered FCM device tokens and delivers a
 // real push notification via the Firebase Cloud Messaging HTTP v1 API. Because it's a
@@ -124,7 +124,7 @@ Deno.serve(async (req) => {
       prefsByUser.set(r.user_id, (r.extra?.notifications ?? {}) as Prefs);
     }
     const lockedUsers = new Set((lockRows ?? []).map((r: { user_id: string }) => r.user_id));
-    const senderName = (senderProfile as { display_name?: string } | null)?.display_name ?? 'FUTUREHAT';
+    const senderName = (senderProfile as { display_name?: string } | null)?.display_name ?? 'Lumixo';
     const isGroup = ((conv as { type?: string } | null)?.type ?? 'direct') === 'group';
     const convName = (conv as { name?: string | null } | null)?.name ?? 'Group';
 
@@ -154,7 +154,7 @@ Deno.serve(async (req) => {
       if (isCall || b.kind === 'system' || b.kind === 'status') {
         title = b.title; bodyText = b.body;
       } else if (locked) {
-        title = 'FUTUREHAT'; bodyText = 'New message';           // never reveal a locked chat
+        title = 'Lumixo'; bodyText = 'New message';           // never reveal a locked chat
       } else if (isGroup) {
         title = `${convName}: ${senderName}`;
         bodyText = previewOff ? 'New message' : (b.body || 'New message');

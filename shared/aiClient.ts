@@ -1,4 +1,4 @@
-// FUTUREHAT+ — client for the `ai` edge function. Shared by web and mobile.
+// Lumixo+ — client for the `ai` edge function. Shared by web and mobile.
 // All calls require an authenticated, premium user (enforced server-side).
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -9,7 +9,7 @@ async function call(client: SupabaseClient, body: Record<string, unknown> & { ac
   const { data, error } = await client.functions.invoke('ai', { body });
   if (error) {
     // On a non-2xx, supabase-js sets `error` and leaves `data` null — the server's
-    // JSON body (e.g. {"error":"FUTUREHAT+ required"}) lives in error.context (a Response).
+    // JSON body (e.g. {"error":"Lumixo+ required"}) lives in error.context (a Response).
     let msg = error.message || 'AI request failed';
     const ctx = (error as any).context;
     if (ctx && typeof ctx.json === 'function') {

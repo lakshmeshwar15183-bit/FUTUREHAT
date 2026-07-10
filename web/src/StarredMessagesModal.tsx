@@ -1,4 +1,4 @@
-// FUTUREHAT — "Starred messages" browser. Read-only list of every message the
+// Lumixo — "Starred messages" browser. Read-only list of every message the
 // user has starred, across all chats (WhatsApp-style), backed by the additive
 // get_starred_messages() RPC (0014). Purely additive: the in-chat star toggle is
 // unchanged; this just gives the stars a home you can browse and jump from.

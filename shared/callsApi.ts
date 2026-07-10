@@ -1,4 +1,4 @@
-// FUTUREHAT — calling data layer (framework-agnostic; web + mobile share it).
+// Lumixo — calling data layer (framework-agnostic; web + mobile share it).
 //
 // The `calls` row tracks ring/accept/end state and call history. The actual
 // WebRTC handshake (SDP offer/answer + ICE candidates) is exchanged over a
@@ -170,7 +170,7 @@ export function groupCalls(items: CallHistoryItem[]): CallGroup[] {
   const groups: CallGroup[] = [];
   for (const it of items) {
     const title = it.peer_name || it.conversation_name
-      || (it.peer_username ? `@${it.peer_username}` : 'FUTUREHAT user');
+      || (it.peer_username ? `@${it.peer_username}` : 'Lumixo user');
     const last = groups[groups.length - 1];
     const missed = it.status === 'missed' || it.status === 'declined';
     if (last && last.conversation_id === it.conversation_id) {

@@ -1,4 +1,4 @@
-// FUTUREHAT — minimal service worker. Its only job is to make the app
+// Lumixo — minimal service worker. Its only job is to make the app
 // installable ("Add to Home Screen"). It deliberately does NOT cache hashed
 // build assets (that risks serving stale chunks after a deploy); every request
 // falls through to the network. A future iteration can add a precache with a

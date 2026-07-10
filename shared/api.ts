@@ -1,4 +1,4 @@
-// FUTUREHAT — shared data-access layer
+// Lumixo — shared data-access layer
 // All chat, auth, and realtime operations. Framework-agnostic; web and mobile both import this.
 
 import type {

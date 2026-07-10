@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — file I/O adapter between native pickers (which hand back
+// Lumixo mobile — file I/O adapter between native pickers (which hand back
 // local `file://` URIs) and the shared Supabase upload helpers (which take raw
 // bytes). This is platform glue, not business logic — the bucket/path/URL rules
 // all live in `shared/api.ts`.

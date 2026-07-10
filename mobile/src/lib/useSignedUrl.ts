@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — resolve a stored media_url into a displayable (signed) url.
+// Lumixo mobile — resolve a stored media_url into a displayable (signed) url.
 // The `media` bucket is PRIVATE, so a public url returns 403 and renders as a
 // black frame in expo-image with no reliable onError signal. This hook:
 //   • passes data-uris / stickers / external urls through unchanged;

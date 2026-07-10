@@ -1,4 +1,4 @@
-// FUTUREHAT+ — Razorpay checkout (web). Implements the shared PaymentProvider.
+// Lumixo+ — Razorpay checkout (web). Implements the shared PaymentProvider.
 // Activates only when VITE_RAZORPAY_KEY_ID is set; otherwise the app falls back
 // to the ManualProvider so the upgrade flow stays fully functional in dev.
 //
@@ -41,7 +41,7 @@ export class RazorpayWebProvider implements PaymentProvider {
         key: this.keyId,
         amount: plan.amountPaise,
         currency: 'INR',
-        name: 'FUTUREHAT+',
+        name: 'Lumixo+',
         description: `${plan.label} subscription`,
         prefill: { name: ctx.displayName, email: ctx.email },
         theme: { color: '#00a884' },

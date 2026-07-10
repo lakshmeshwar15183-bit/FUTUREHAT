@@ -1,4 +1,4 @@
-// FUTUREHAT — account, archived chats, social links, deletion & security events.
+// Lumixo — account, archived chats, social links, deletion & security events.
 // Framework-agnostic (web + mobile). Backs the 0010_account_privacy migration.
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { UUID } from './types.js';

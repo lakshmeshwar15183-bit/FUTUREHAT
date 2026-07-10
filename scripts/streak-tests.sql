@@ -1,4 +1,4 @@
--- streak-tests.sql — self-contained assertions for the FUTUREHAT Streak System
+-- streak-tests.sql — self-contained assertions for the Lumixo Streak System
 -- (migration 0029_streaks.sql). Runs entirely inside ONE transaction and ROLLS
 -- BACK at the end, so it never mutates real data. Every check RAISEs EXCEPTION on
 -- failure, so a non-zero exit / visible error means a regression.

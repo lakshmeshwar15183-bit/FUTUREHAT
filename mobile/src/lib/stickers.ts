@@ -1,4 +1,4 @@
-// FUTUREHAT+ — premium stickers (ported verbatim from web/src/premium/stickers.ts
+// Lumixo+ — premium stickers (ported verbatim from web/src/premium/stickers.ts
 // for parity). Each sticker is a self-contained SVG rendered to a data URI and
 // sent as an image message, so there's no storage/schema dependency. expo-image
 // renders the SVG data URI directly.

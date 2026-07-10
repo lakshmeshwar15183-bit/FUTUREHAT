@@ -1,4 +1,4 @@
-// FUTUREHAT — Admin ▸ operational tabs: Calls, Messages, Feature Flags, App
+// Lumixo — Admin ▸ operational tabs: Calls, Messages, Feature Flags, App
 // management (announcements + kill-switch), Database Health, Audit Log, and the
 // global search. Owner-only surfaces (flags, app mgmt, audit) are gated here AND
 // server-side by the RPCs in 0013.

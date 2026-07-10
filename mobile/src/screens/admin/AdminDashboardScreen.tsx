@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — Owner/Admin dashboard. Native tabbed console over the same
+// Lumixo mobile — Owner/Admin dashboard. Native tabbed console over the same
 // admin RPCs the web dashboard uses (0013_owner_admin.sql), reached from Settings
 // (gated by getServerAdmin). Owner-only tabs (Feature Flags / App / Audit) are
 // hidden unless getServerOwner AND re-checked server-side by each RPC. Mirrors

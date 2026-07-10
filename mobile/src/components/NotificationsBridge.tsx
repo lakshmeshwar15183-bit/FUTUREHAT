@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — notifications bridge. Mounted once for signed-in users. It:
+// Lumixo mobile — notifications bridge. Mounted once for signed-in users. It:
 //   • initialises the Android channels + registers the FCM token (killed-state),
 //   • when FCM is NOT active, presents LOCAL message notifications from realtime
 //     so the app still notifies while open / backgrounded / minimised,
@@ -65,10 +65,10 @@ export default function NotificationsBridge({ navRef }: { navRef: NavigationCont
             const convName = (conv as { name?: string | null } | null)?.name ?? 'Group';
             const showPreview = (s ? s.messagePreview : true) && !isLocked;
             const title = isLocked
-              ? 'FUTUREHAT'
+              ? 'Lumixo'
               : isGroup
                 ? `${convName}: ${sender?.display_name ?? 'Someone'}`
-                : (sender?.display_name ?? 'FUTUREHAT');
+                : (sender?.display_name ?? 'Lumixo');
             const body = showPreview ? previewOf(m) : 'New message';
             await presentMessageNotification({ conversationId: m.conversation_id, title, body, isGroup });
           })

@@ -1,4 +1,4 @@
-// FUTUREHAT — generic React error boundary. Without one, ANY exception thrown
+// Lumixo — generic React error boundary. Without one, ANY exception thrown
 // while rendering a screen unmounts the whole React tree and leaves a BLANK
 // screen (the reported "chat randomly goes blank" bug: an intermittent render
 // throw in the message list / a modal / a bubble had nothing to catch it). This

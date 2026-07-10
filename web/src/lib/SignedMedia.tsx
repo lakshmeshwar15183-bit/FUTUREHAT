@@ -1,4 +1,4 @@
-// FUTUREHAT web — drop-in replacements for <img> / <video> / file <a> that
+// Lumixo web — drop-in replacements for <img> / <video> / file <a> that
 // resolve stored media_url values through a signed URL (the `media` bucket is
 // private, so raw public urls return 403 and render as broken images). While
 // signing is in flight we show a tiny neutral spinner tile; on failure we show

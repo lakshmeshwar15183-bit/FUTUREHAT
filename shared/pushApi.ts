@@ -1,4 +1,4 @@
-// FUTUREHAT — push notification transport. Registers this device's FCM token so
+// Lumixo — push notification transport. Registers this device's FCM token so
 // the `push` Edge Function can deliver notifications when the app is killed, and
 // exposes sendPush() which the sender calls after a message/call so a killed
 // recipient still gets notified. All best-effort: if FCM (google-services.json)

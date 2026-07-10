@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — Crop / rotate / flip tool (Phase B). Aspect presets (free,
+// Lumixo mobile — Crop / rotate / flip tool (Phase B). Aspect presets (free,
 // 1:1, 16:9, 9:16, 4:3), rotate 90°, flip H/V, pinch-zoom + pan of the image under
 // a fixed crop frame, high-quality export via expo-image-manipulator.
 //

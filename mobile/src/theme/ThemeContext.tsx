@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — theme provider. Holds the active palette, persists the
+// Lumixo mobile — theme provider. Holds the active palette, persists the
 // user's choices, and exposes a hook every screen uses to build styles.
 //
 // Two independent dimensions compose into the live palette:

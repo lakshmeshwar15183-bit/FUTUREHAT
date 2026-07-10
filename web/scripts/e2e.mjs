@@ -1,4 +1,4 @@
-// FUTUREHAT — end-to-end verification against the LIVE backend.
+// Lumixo — end-to-end verification against the LIVE backend.
 // Pure Supabase client (HTTPS) — same operations the app performs. No admin DB.
 // Creates two throwaway users and runs the full flow. (Test users remain in the
 // project; a cleanup query is printed at the end.)
@@ -171,7 +171,7 @@ async function main() {
 
 async function finish() {
   await cleanupUsers(createdIds);
-  console.log('\n──────── FUTUREHAT E2E RESULTS ────────');
+  console.log('\n──────── Lumixo E2E RESULTS ────────');
   for (const r of results) console.log(r);
   console.log(`\n${pass} passed, ${fail} failed, ${skip} skipped`);
   if (!adminClient) console.log(`\nCleanup (SQL editor): delete from auth.users where email like 'fh.e2e.%@gmail.com';`);

@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — "Starred messages" browser. Read-only list of every message
+// Lumixo mobile — "Starred messages" browser. Read-only list of every message
 // the user has starred, across all chats (WhatsApp-style), backed by the additive
 // get_starred_messages() RPC (0014). Mirrors web StarredMessagesModal. Tapping a
 // row opens that conversation. Degrades to an empty state if the RPC isn't applied.

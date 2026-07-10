@@ -1,4 +1,4 @@
-// FUTUREHAT web — media composer (graceful subset of the mobile editor). The web
+// Lumixo web — media composer (graceful subset of the mobile editor). The web
 // platform can't run Skia/native crop/video-trim, so web ships what browsers do well:
 // multi-file selection, a grid preview, per-file caption, quality (Standard/HD/
 // Original via a <canvas> re-encode for images), and View Once. Videos upload as-is.

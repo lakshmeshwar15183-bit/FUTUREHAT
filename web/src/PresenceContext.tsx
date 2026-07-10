@@ -1,4 +1,4 @@
-// FUTUREHAT — global online/offline presence via Supabase Realtime Presence.
+// Lumixo — global online/offline presence via Supabase Realtime Presence.
 // Exposes the set of currently-online user ids and keeps last_seen fresh.
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';

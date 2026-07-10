@@ -1,4 +1,4 @@
-// FUTUREHAT — Admin ▸ Reports. Lists message reports (via admin_list_reports,
+// Lumixo — Admin ▸ Reports. Lists message reports (via admin_list_reports,
 // 0017) with reporter, reported user, message content, conversation and status,
 // and the full moderation toolbar: Review / Dismiss / Resolve / Ban / Delete
 // message / Warn / View conversation / Jump to message. Subscribes to the

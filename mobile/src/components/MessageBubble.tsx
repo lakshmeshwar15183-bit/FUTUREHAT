@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — a single chat bubble. Handles text/image/video/audio/file,
+// Lumixo mobile — a single chat bubble. Handles text/image/video/audio/file,
 // reply preview, reaction chips, edited marker, and delivery ticks.
 import React, { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';

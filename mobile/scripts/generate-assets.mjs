@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — generate original branded icon/splash/notification assets.
+// Lumixo mobile — generate original branded icon/splash/notification assets.
 // Pure-vector mark (no copyrighted imagery): a teal gradient tile with a white
 // speech bubble containing a bold "F". Run: node scripts/generate-assets.mjs
 import sharp from 'sharp';

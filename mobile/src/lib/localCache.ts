@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — local-first cache (the "read from local DB, sync later"
+// Lumixo mobile — local-first cache (the "read from local DB, sync later"
 // layer that makes chats open instantly and keeps them readable offline, à la
 // WhatsApp). Backed by AsyncStorage, which is already linked in this app (it also
 // persists the auth session), so this adds no new native module / rebuild risk.

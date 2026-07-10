@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — Chat settings: enter-to-send, font size, media visibility,
+// Lumixo mobile — Chat settings: enter-to-send, font size, media visibility,
 // upload quality, auto-download, voice transcripts. Standalone; persists via
 // privacyApi chat-settings (user_preferences.extra.chat).
 import React, { useEffect, useMemo, useState } from 'react';

@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — navigation param list shared across screens.
+// Lumixo mobile — navigation param list shared across screens.
 import type { UUID, CallHistoryItem } from '../lib/shared';
 import type { PickedAsset } from '../screens/MediaPickerScreen';
 

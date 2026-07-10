@@ -1,4 +1,4 @@
-// FUTUREHAT+ — central premium feature registry.
+// Lumixo+ — central premium feature registry.
 //
 // This is the single source of truth for every premium capability. The upgrade
 // page, feature gates, and settings all read from here, so adding a new premium
@@ -81,7 +81,7 @@ export const PREMIUM_FEATURES: PremiumFeature[] = [
   { key: 'media_manager', category: 'storage', title: 'Better media management', description: 'Browse and clean up shared media easily.', icon: '🗂️', status: 'soon' },
 
   // ⭐ Premium identity
-  { key: 'badge', category: 'identity', title: 'FUTUREHAT+ badge', description: 'Show a premium badge next to your name.', icon: '✦', status: 'live' },
+  { key: 'badge', category: 'identity', title: 'Lumixo+ badge', description: 'Show a premium badge next to your name.', icon: '✦', status: 'live' },
   { key: 'profile_decor', category: 'identity', title: 'Profile decorations', description: 'Premium accents on your profile.', icon: '💎', status: 'live' },
   { key: 'early_access', category: 'identity', title: 'Early access', description: 'Try new features before everyone else.', icon: '🚀', status: 'live' },
 ];

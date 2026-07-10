@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — start a new conversation. Two modes:
+// Lumixo mobile — start a new conversation. Two modes:
 //   • no search query  → persistent "recent contacts" (people you've chatted
 //     with before), rendered instantly from local cache and refreshed in the
 //     background. Survives deleting the conversation (independent data source).
@@ -208,7 +208,7 @@ export default function NewChatScreen() {
           >
             <Avatar uri={item.avatar_url} name={item.display_name ?? item.username} size={48} />
             <View style={styles.rowBody}>
-              <Text style={styles.name}>{item.display_name ?? 'FUTUREHAT user'}</Text>
+              <Text style={styles.name}>{item.display_name ?? 'Lumixo user'}</Text>
               <Text style={styles.sub} numberOfLines={1}>
                 {item.about || (item.username ? `@${item.username}` : 'Available')}
               </Text>
