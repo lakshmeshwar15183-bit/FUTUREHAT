@@ -108,6 +108,23 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     };
   }, [uid, active, incoming]);
 
+  // Watch the incoming call's row so a caller-hangup (status → ended/declined/
+  // missed) stops the ring INSTANTLY. subscribeToIncomingCalls above listens to
+  // INSERTs only, so without this the receiver keeps ringing (and the system
+  // notification stays up) until the user manually declines.
+  useEffect(() => {
+    const id = incoming?.call.id;
+    if (!id) return;
+    const ch = subscribeToCallStatus(supabase, id, (c) => {
+      if (c.status === 'ended' || c.status === 'declined' || c.status === 'missed') {
+        InCallManager.stopRingtone();
+        void clearCallNotification(id);
+        setIncoming(null);
+      }
+    });
+    return () => { supabase.removeChannel(ch); };
+  }, [incoming?.call.id]);
+
   const startCall = useCallback(
     async (conversationId: UUID, peer: Profile, type: CallType) => {
       if (active) return;

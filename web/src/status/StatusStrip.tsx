@@ -107,7 +107,9 @@ export function StatusStrip() {
   return (
     <div className="status-strip">
       <div className="status-strip-row">
-        {/* My status tile */}
+        {/* My status tile — WhatsApp behavior: avatar opens viewer (or picker
+            if no status yet), the "+" badge is its own button that ALWAYS opens
+            the picker so users can add a second/third status without long-press. */}
         <div className="status-tile-wrap">
           <button className="status-tile" onClick={openMine}>
             <div className={`strip-ring ${mine ? 'ring-mine' : 'ring-empty'}`}>
@@ -117,9 +119,15 @@ export function StatusStrip() {
                 <div className="strip-avatar fallback">{(profile?.display_name || 'M')[0]}</div>
               )}
             </div>
-            <span className="strip-add-badge">＋</span>
             <span className="strip-label">My status</span>
           </button>
+          <button
+            type="button"
+            className="strip-add-badge"
+            onClick={() => setMenuOpen(true)}
+            aria-label="Add status"
+            title="Add status"
+          >＋</button>
 
           {menuOpen && (
             <div className="strip-menu" ref={menuRef}>

@@ -5,6 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Audio, type AVPlaybackStatus } from 'expo-av';
 
 import { useColors } from '../theme';
+import { useSignedUrl } from '../lib/useSignedUrl';
 
 interface Props {
   uri: string;
@@ -18,6 +19,10 @@ function fmt(ms: number): string {
 
 export default function AudioMessage({ uri, tint }: Props) {
   const colors = useColors();
+  // Media bucket is private — the raw uri returns 403. Resolve to a signed url
+  // before feeding it to expo-av. Falls back to the raw uri only for non-media
+  // sources (data-uri, file://, etc.) which the hook passes through unchanged.
+  const { url: playableUri } = useSignedUrl(uri);
   const soundRef = useRef<Audio.Sound | null>(null);
   const barWidth = useRef(0);
   const [playing, setPlaying] = useState(false);
@@ -47,9 +52,10 @@ export default function AudioMessage({ uri, tint }: Props) {
   async function toggle() {
     try {
       if (!soundRef.current) {
+        if (!playableUri) return; // still signing / signing failed
         await Audio.setAudioModeAsync({ playsInSilentModeIOS: true });
         const { sound } = await Audio.Sound.createAsync(
-          { uri },
+          { uri: playableUri },
           { shouldPlay: true },
           onStatus,
         );
@@ -77,8 +83,9 @@ export default function AudioMessage({ uri, tint }: Props) {
     const frac = Math.max(0, Math.min(1, locationX / w));
     try {
       if (!soundRef.current) {
+        if (!playableUri) return;
         await Audio.setAudioModeAsync({ playsInSilentModeIOS: true });
-        const { sound } = await Audio.Sound.createAsync({ uri }, { shouldPlay: false }, onStatus);
+        const { sound } = await Audio.Sound.createAsync({ uri: playableUri }, { shouldPlay: false }, onStatus);
         soundRef.current = sound;
       }
       const st = await soundRef.current.getStatusAsync();

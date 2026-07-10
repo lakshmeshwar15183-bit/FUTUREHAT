@@ -348,6 +348,14 @@ export function CallProvider({ children }: { children: ReactNode }) {
       const p = await getProfile(supabase, incoming.caller_id).catch(() => null);
       setPeerName(p?.display_name || 'Incoming call');
       setPhase('incoming');
+      // Watch this call's row so a caller-hangup (status → ended/declined/missed)
+      // stops the ring INSTANTLY. Without this, the receiver keeps ringing until
+      // the user manually declines because subscribeToIncomingCalls listens to
+      // INSERTs only — it never fires on the caller's later UPDATE.
+      if (statusChannel.current) { supabase.removeChannel(statusChannel.current); statusChannel.current = null; }
+      statusChannel.current = subscribeToCallStatus(supabase, incoming.id, (c) => {
+        if (c.status === 'ended' || c.status === 'declined' || c.status === 'missed') endCall(false);
+      });
       // Browser notification when the tab isn't focused (WhatsApp Web parity).
       showCallNotification({
         conversationId: incoming.conversation_id,
@@ -368,10 +376,11 @@ export function CallProvider({ children }: { children: ReactNode }) {
       const stream = await getMedia(incoming.type);
       buildPc(stream);
       openSignaling(incoming.id, incoming.type);
-      // Subscribe to status (for caller hangups) then mark accepted last, so we
-      // are listening on the signaling channel before the caller sends the offer.
+      // Replace the ring-watcher (installed on 'incoming') with the active-call
+      // watcher — otherwise we'd hold two subscriptions to the same call row.
+      if (statusChannel.current) { supabase.removeChannel(statusChannel.current); statusChannel.current = null; }
       statusChannel.current = subscribeToCallStatus(supabase, incoming.id, (c) => {
-        if (c.status === 'ended' || c.status === 'declined') endCall(false);
+        if (c.status === 'ended' || c.status === 'declined' || c.status === 'missed') endCall(false);
       });
       await updateCallStatus(supabase, incoming.id, 'accepted');
     } catch {

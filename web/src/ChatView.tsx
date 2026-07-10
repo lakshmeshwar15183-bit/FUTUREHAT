@@ -29,6 +29,7 @@ import './media/MediaLightbox.css';
 import { MediaComposer } from './media/MediaComposer';
 import { getStarredIds, starMessage, unstarMessage, getHiddenMessageIds, hideMessageForMe } from '@shared/messageExtras';
 import { safeHref } from './util/safeUrl';
+import { SignedImage, SignedVideo, SignedLink } from './lib/SignedMedia';
 import {
   PhoneIcon, VideoIcon, SearchIcon, PaperclipIcon, PollIcon, ClockIcon, MicIcon, SendIcon,
   StarIcon, ReplyIcon, ForwardIcon, CopyIcon, EditIcon, TrashIcon, SmileIcon, MinimizeIcon,
@@ -740,18 +741,18 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
                         )}
                         {msg.type === 'image' && msg.media_url && (
                           <button type="button" className="message-image-btn" onClick={() => setLightboxId(msg.id)} aria-label="View photo">
-                            <img src={msg.media_url} alt="Attachment" className="message-image" />
+                            <SignedImage source={msg.media_url} alt="Attachment" className="message-image" />
                           </button>
                         )}
                         {msg.type === 'audio' && msg.media_url && <VoiceMessage url={msg.media_url} mine={isMine} />}
                         {msg.type === 'file' && msg.media_url && isVideoUrl(msg.media_url) && (
                           <button type="button" className="message-video-btn" onClick={() => setLightboxId(msg.id)} aria-label="Play video">
-                            <video src={msg.media_url} className="message-image" preload="metadata" muted />
+                            <SignedVideo source={msg.media_url} className="message-image" preload="metadata" muted />
                             <span className="message-video-play">▶</span>
                           </button>
                         )}
                         {msg.type === 'file' && msg.media_url && !isVideoUrl(msg.media_url) && safeHref(msg.media_url) && (
-                          <a href={safeHref(msg.media_url)} target="_blank" rel="noopener noreferrer" className="message-file">📎 {msg.content || 'File'}</a>
+                          <SignedLink source={msg.media_url} className="message-file">📎 {msg.content || 'File'}</SignedLink>
                         )}
                         {(msg.type === 'text' || (msg.content && msg.type !== 'audio')) && <div className="message-text">{highlight(msg.content ?? '')}</div>}
                         <div className="message-time">

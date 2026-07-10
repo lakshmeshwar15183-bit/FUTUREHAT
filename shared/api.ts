@@ -132,25 +132,17 @@ export async function createGroupConversation(
   name: string,
   participantIds: UUID[],
 ): Promise<{ conversationId: UUID | null; error: Error | null }> {
-  const user = await getCurrentUser(client);
-  if (!user) return { conversationId: null, error: new Error('not authenticated') };
-
-  const { data: conv, error: convErr } = await client
-    .from('conversations')
-    .insert({ type: 'group', name, created_by: user.id })
-    .select('id')
-    .single();
-  if (convErr || !conv) return { conversationId: null, error: convErr };
-
-  const participants = [user.id, ...participantIds].map((uid) => ({
-    conversation_id: conv.id,
-    user_id: uid,
-    role: uid === user.id ? 'admin' : 'member',
-  }));
-  const { error: partErr } = await client.from('conversation_participants').insert(participants);
-  if (partErr) return { conversationId: null, error: partErr };
-
-  return { conversationId: conv.id, error: null };
+  // Delegates to the SECURITY DEFINER RPC (migration 0033). The previous
+  // client-side two-step (insert conversation, then bulk-insert participants)
+  // stopped working after 0015 tightened the participants WITH CHECK to a
+  // subquery on conversations — a table whose own RLS requires you to already
+  // be a member, so the creator's very first participant insert always failed.
+  const { data, error } = await client.rpc('create_group_conversation', {
+    p_name: name,
+    p_member_ids: participantIds,
+  });
+  if (error) return { conversationId: null, error: new Error(error.message) };
+  return { conversationId: (data as UUID) ?? null, error: null };
 }
 
 export async function getMyConversations(

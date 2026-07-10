@@ -130,17 +130,31 @@ export default function StatusStrip() {
         contentContainerStyle={styles.row}
         keyboardShouldPersistTaps="handled"
       >
-        {/* My status tile — small avatar with a blue "+" badge */}
-        <Pressable style={styles.tile} onPress={openMine} onLongPress={() => setMenuOpen(true)}>
+        {/* My status tile — WhatsApp behavior: avatar opens the viewer (or the
+            picker if no status yet); the "+" badge is its own Pressable that
+            ALWAYS opens the picker so users can post additional statuses. */}
+        <View style={styles.tile}>
           <View>
-            <View style={[styles.ring, { borderColor: mine ? colors.primary : 'transparent' }]}>
-              <Avatar uri={mine?.profile?.avatar_url} name="Me" size={42} />
-            </View>
-            <View style={styles.addBadge}>
+            <Pressable
+              onPress={openMine}
+              onLongPress={() => setMenuOpen(true)}
+              style={({ pressed }) => (pressed ? { opacity: 0.7 } : null)}
+            >
+              <View style={[styles.ring, { borderColor: mine ? colors.primary : 'transparent' }]}>
+                <Avatar uri={mine?.profile?.avatar_url} name="Me" size={42} />
+              </View>
+            </Pressable>
+            <Pressable
+              style={({ pressed }) => [styles.addBadge, pressed && { opacity: 0.7 }]}
+              onPress={() => setMenuOpen(true)}
+              hitSlop={8}
+              accessibilityLabel="Add status"
+              accessibilityRole="button"
+            >
               <Ionicons name="add" size={12} color="#fff" />
-            </View>
+            </Pressable>
           </View>
-        </Pressable>
+        </View>
 
         {/* Recent updates — avatar-only tiles keep the row height compact */}
         {groups.map((g) => (
