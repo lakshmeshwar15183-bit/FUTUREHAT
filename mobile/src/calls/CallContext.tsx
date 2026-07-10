@@ -64,6 +64,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   const [uid, setUid] = useState<string | null>(null);
   const [incoming, setIncoming] = useState<{ call: Call; peer: Profile | null } | null>(null);
   const [active, setActive] = useState<ActiveCall | null>(null);
+  const ringTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Keep our user id in sync with auth. Fetching once on mount is not enough:
   // on a cold start the session is restored from storage *after* this provider
@@ -102,6 +103,27 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
           video: call.type === 'video',
         });
       }
+
+      // Ring timeout: if the call isn't answered/declined within 60s, auto-decline.
+      // This catches cases where the subscription misses the caller's hangup update.
+      if (ringTimeoutRef.current) clearTimeout(ringTimeoutRef.current);
+      ringTimeoutRef.current = setTimeout(async () => {
+        // Check if the call is still in 'ringing' state. If so, it's a missed call.
+        const { data: currentCall } = await supabase
+          .from('calls')
+          .select('status')
+          .eq('id', call.id)
+          .single()
+          .catch(() => ({ data: null }));
+
+        if (currentCall?.status === 'ringing') {
+          // Still ringing after 60s — mark as missed and stop ringing
+          InCallManager.stopRingtone();
+          void clearCallNotification(call.id);
+          await updateCallStatus(supabase, call.id, 'missed').catch(() => {});
+          setIncoming(null);
+        }
+      }, 60000);
     });
     return () => {
       supabase.removeChannel(channel);
@@ -115,14 +137,47 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const id = incoming?.call.id;
     if (!id) return;
+
+    let alive = true;
+
+    // Subscribe to real-time status updates
     const ch = subscribeToCallStatus(supabase, id, (c) => {
+      if (!alive) return;
       if (c.status === 'ended' || c.status === 'declined' || c.status === 'missed') {
         InCallManager.stopRingtone();
         void clearCallNotification(id);
         setIncoming(null);
       }
     });
-    return () => { supabase.removeChannel(ch); };
+
+    // CRITICAL: Also check the call status immediately. If the subscription
+    // isn't ready yet and the caller hangs up before we subscribe, we need to
+    // detect it. This prevents the "keeps ringing after caller hangs up" bug.
+    // We use a short delay to let the subscription establish, then check once.
+    const checkTimer = setTimeout(async () => {
+      if (!alive) return;
+      try {
+        const { data: call } = await supabase
+          .from('calls')
+          .select('status')
+          .eq('id', id)
+          .single();
+        if (!alive || !call) return;
+        if (call.status === 'ended' || call.status === 'declined' || call.status === 'missed') {
+          InCallManager.stopRingtone();
+          void clearCallNotification(id);
+          setIncoming(null);
+        }
+      } catch {
+        // If the query fails, the subscription should catch the real update anyway
+      }
+    }, 500);
+
+    return () => {
+      alive = false;
+      clearTimeout(checkTimer);
+      supabase.removeChannel(ch);
+    };
   }, [incoming?.call.id]);
 
   const startCall = useCallback(
@@ -153,6 +208,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
 
   const acceptIncoming = useCallback(async () => {
     if (!incoming) return;
+    if (ringTimeoutRef.current) clearTimeout(ringTimeoutRef.current);
     InCallManager.stopRingtone();
     void clearCallNotification(incoming.call.id);
     await updateCallStatus(supabase, incoming.call.id, 'accepted');
@@ -168,6 +224,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
 
   const declineIncoming = useCallback(async () => {
     if (!incoming) return;
+    if (ringTimeoutRef.current) clearTimeout(ringTimeoutRef.current);
     InCallManager.stopRingtone();
     void clearCallNotification(incoming.call.id);
     await updateCallStatus(supabase, incoming.call.id, 'declined');
