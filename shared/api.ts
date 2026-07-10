@@ -1134,7 +1134,17 @@ export async function signedMediaUrl(
   const { data, error } = await client.storage
     .from('media')
     .createSignedUrl(path, SIGNED_TTL_SECONDS);
-  if (error || !data?.signedUrl) return url; // fall back to raw url on failure
+
+  if (error) {
+    console.warn('[media] signedUrl error for path:', path, 'error:', error.message);
+    return null; // Return null so SignedImage shows retry button instead of 403
+  }
+
+  if (!data?.signedUrl) {
+    console.warn('[media] signedUrl returned no URL for path:', path);
+    return null;
+  }
+
   signedUrlCache.set(path, { url: data.signedUrl, expiresAt: now + SIGNED_TTL_SECONDS * 1000 });
   return data.signedUrl;
 }
