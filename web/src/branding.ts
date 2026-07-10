@@ -3,5 +3,5 @@
 
 export const OWNER = 'LAKSHMESHWAR PANDEY';
 export const APP_NAME = 'Lumixo';
-export const APP_VERSION = '4.1.5';
+export const APP_VERSION = '4.1.6';
 export const CREDIT = `Developed by ${OWNER}`;

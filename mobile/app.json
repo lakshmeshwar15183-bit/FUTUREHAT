@@ -2,7 +2,7 @@
   "expo": {
     "name": "Lumixo",
     "slug": "futurehat",
-    "version": "4.1.3",
+    "version": "4.1.6",
     "orientation": "portrait",
     "scheme": "futurehat",
     "userInterfaceStyle": "automatic",
@@ -19,7 +19,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "dev.lakshmeshwar.futurehat",
-      "buildNumber": "45",
+      "buildNumber": "46",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSPhotoLibraryAddUsageDescription": "Lumixo saves photos and media you download to your photo library.",
@@ -30,7 +30,7 @@
     },
     "android": {
       "package": "dev.lakshmeshwar.futurehat",
-      "versionCode": 45,
+      "versionCode": 46,
       "allowBackup": false,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
