@@ -35,6 +35,12 @@ import { signedMediaUrl } from '../lib/shared';
 import { supabase } from '../lib/supabase';
 import { useSignedUrl } from '../lib/useSignedUrl';
 import { formatBytes } from '../media/qualityEstimate';
+import {
+  isValidScale,
+  isValidTransform,
+  safeClampScale,
+  clampOffset as clamp,
+} from './mediaViewerMath';
 import SignedImage from './SignedImage';
 
 export interface ViewerItem {
@@ -87,14 +93,6 @@ function ZoomableImage({
   const savedTy = useSharedValue(0);
   const isGesturing = useSharedValue(false);
 
-  const isValidScale = (s: number): boolean => isFinite(s) && s >= 1 && s <= 6;
-  const isValidTransform = (v: number): boolean => isFinite(v) && Math.abs(v) < 10000;
-
-  const clamp = (v: number, max: number) => {
-    if (!isFinite(v) || !isFinite(max) || max <= 0) return 0;
-    return Math.max(-max, Math.min(max, v));
-  };
-
   const reset = () => {
     scale.value = withTiming(1);
     tx.value = withTiming(0);
@@ -104,11 +102,6 @@ function ZoomableImage({
     savedTy.value = 0;
     isGesturing.value = false;
     onZoomChange(false);
-  };
-
-  const safeClampScale = (val: number): number => {
-    if (!isFinite(val)) return 1;
-    return Math.max(1, Math.min(val, 6));
   };
 
   const pinch = Gesture.Pinch()
