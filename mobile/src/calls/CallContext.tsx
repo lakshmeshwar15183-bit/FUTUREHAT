@@ -109,12 +109,17 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       if (ringTimeoutRef.current) clearTimeout(ringTimeoutRef.current);
       ringTimeoutRef.current = setTimeout(async () => {
         // Check if the call is still in 'ringing' state. If so, it's a missed call.
-        const { data: currentCall } = await supabase
-          .from('calls')
-          .select('status')
-          .eq('id', call.id)
-          .single()
-          .catch(() => ({ data: null }));
+        let currentCall = null;
+        try {
+          const { data } = await supabase
+            .from('calls')
+            .select('status')
+            .eq('id', call.id)
+            .single();
+          currentCall = data;
+        } catch {
+          // Query failed, continue with null
+        }
 
         if (currentCall?.status === 'ringing') {
           // Still ringing after 60s — mark as missed and stop ringing
