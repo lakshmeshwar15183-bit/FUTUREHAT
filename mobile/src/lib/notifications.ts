@@ -20,11 +20,18 @@ export const CHANNELS = {
   groups: 'group_messages',
   calls: 'calls',
   missedCalls: 'missed_calls',
-  status: 'status',
+  status: 'status_replies',
+  mentions: 'mentions',
+  communities: 'communities',
   system: 'admin_system',
 } as const;
 
-export const CATEGORY = { message: 'fh_message', call: 'fh_call' } as const;
+export const CATEGORY = {
+  message: 'fh_message',
+  call: 'fh_call',
+  status: 'fh_status',
+  mention: 'fh_mention',
+} as const;
 
 const LED = '#00A884';
 
@@ -50,6 +57,23 @@ let pushActive = false;                 // true once an FCM token is registered
 let lastToken: string | null = null;    // most recent FCM device token (for refresh/unregister)
 let openConversationId: string | null = null;
 
+/** Notification response handler callback */
+export type NotificationResponseHandler = (response: {
+  type: string;
+  action?: string;
+  conversationId?: string;
+  callId?: string;
+  statusId?: string;
+  replyText?: string;
+}) => Promise<void>;
+
+let notificationResponseHandler: NotificationResponseHandler | null = null;
+
+/** Register a handler for notification responses (taps, actions) */
+export function setNotificationResponseHandler(handler: NotificationResponseHandler | null): void {
+  notificationResponseHandler = handler;
+}
+
 /** True when FCM is configured + a device token was registered (killed-state push
  *  is live) — the local realtime notifier steps aside to avoid duplicates. */
 export function isPushActive(): boolean { return pushActive; }
@@ -58,7 +82,31 @@ export function isPushActive(): boolean { return pushActive; }
 export function setOpenConversation(id: string | null): void { openConversationId = id; }
 export function getOpenConversation(): string | null { return openConversationId; }
 
-/** Create the six channels once + register action categories. Idempotent. */
+/** Listen for notification responses (user taps notification or action button). */
+export function startNotificationResponseListener(): () => void {
+  try {
+    const sub = Notifications.addNotificationResponseReceivedListener((response) => {
+      const data = response.notification.request.content.data as Record<string, unknown> | undefined;
+      const action = response.actionIdentifier;
+
+      if (notificationResponseHandler) {
+        notificationResponseHandler({
+          type: typeof data?.type === 'string' ? data.type : 'unknown',
+          action: action === 'android.reply' ? 'reply' : action,
+          conversationId: typeof data?.conversationId === 'string' ? data.conversationId : undefined,
+          callId: typeof data?.callId === 'string' ? data.callId : undefined,
+          statusId: typeof data?.statusId === 'string' ? data.statusId : undefined,
+          replyText: typeof response.userText === 'string' ? response.userText : undefined,
+        }).catch(console.error);
+      }
+    });
+    return () => { try { sub.remove(); } catch { /* ignore */ } };
+  } catch {
+    return () => {};
+  }
+}
+
+/** Create the channels once + register action categories. Idempotent. */
 export async function initNotifications(): Promise<void> {
   if (initialized) return;
   initialized = true;
@@ -73,6 +121,14 @@ export async function initNotifications(): Promise<void> {
     await Notifications.setNotificationCategoryAsync(CATEGORY.call, [
       { identifier: 'accept', buttonTitle: 'Accept' },
       { identifier: 'decline', buttonTitle: 'Decline', options: { isDestructive: true } },
+    ]);
+    await Notifications.setNotificationCategoryAsync(CATEGORY.status, [
+      { identifier: 'reply', buttonTitle: 'Reply', textInput: { submitButtonTitle: 'Send', placeholder: 'Your reply' } },
+      { identifier: 'open', buttonTitle: 'View status' },
+    ]);
+    await Notifications.setNotificationCategoryAsync(CATEGORY.mention, [
+      { identifier: 'reply', buttonTitle: 'Reply', textInput: { submitButtonTitle: 'Send', placeholder: 'Your message' } },
+      { identifier: 'open', buttonTitle: 'Open group' },
     ]);
   } catch { /* categories are best-effort */ }
 
@@ -102,7 +158,16 @@ export async function initNotifications(): Promise<void> {
       vibrationPattern: [0, 300], enableVibrate: true, enableLights: true, lightColor: LED,
     });
     await Notifications.setNotificationChannelAsync(CHANNELS.status, {
-      name: 'Status', importance: I.LOW, sound: 'default', enableVibrate: false, showBadge: false,
+      name: 'Status Replies', importance: I.HIGH, sound: 'default',
+      vibrationPattern: [0, 250, 250, 250], enableVibrate: true, enableLights: true, lightColor: LED, showBadge: true,
+    });
+    await Notifications.setNotificationChannelAsync(CHANNELS.mentions, {
+      name: 'Mentions', importance: I.MAX, sound: 'default',
+      vibrationPattern: [0, 250, 250, 250], enableVibrate: true, enableLights: true, lightColor: LED, showBadge: true,
+    });
+    await Notifications.setNotificationChannelAsync(CHANNELS.communities, {
+      name: 'Communities', importance: I.HIGH, sound: 'default',
+      vibrationPattern: [0, 250, 250, 250], enableVibrate: true, enableLights: true, lightColor: LED, showBadge: true,
     });
     await Notifications.setNotificationChannelAsync(CHANNELS.system, {
       name: 'Admin / System', importance: I.HIGH, sound: 'default', enableVibrate: true, enableLights: true, lightColor: LED,
@@ -208,10 +273,125 @@ export async function presentCallNotification(o: CallNotifOpts): Promise<void> {
   } catch { /* ignore */ }
 }
 
+export interface StatusReplyNotifOpts {
+  statusId: string;
+  statusOwnerId: string;
+  title: string;  // who replied
+  body: string;   // reply preview
+}
+
+/** Status reply notification */
+export async function presentStatusReplyNotification(o: StatusReplyNotifOpts): Promise<void> {
+  try {
+    await Notifications.scheduleNotificationAsync({
+      identifier: `status:${o.statusId}`,
+      content: {
+        title: o.title,
+        body: o.body,
+        categoryIdentifier: CATEGORY.status,
+        data: { type: 'status_reply', statusId: o.statusId, statusOwnerId: o.statusOwnerId },
+        ...(Platform.OS === 'android' ? { channelId: CHANNELS.status } : {}),
+        sound: 'default',
+      },
+      trigger: null,
+    });
+  } catch { /* ignore */ }
+}
+
+export interface MentionNotifOpts {
+  conversationId: string;
+  groupName: string;
+  mentioner: string;
+  body: string;
+}
+
+/** Group mention notification */
+export async function presentMentionNotification(o: MentionNotifOpts): Promise<void> {
+  try {
+    await Notifications.scheduleNotificationAsync({
+      identifier: `mention:${o.conversationId}`,
+      content: {
+        title: `${o.mentioner} in ${o.groupName}`,
+        body: o.body,
+        categoryIdentifier: CATEGORY.mention,
+        data: { type: 'mention', conversationId: o.conversationId },
+        ...(Platform.OS === 'android' ? { channelId: CHANNELS.mentions } : {}),
+        sound: 'default',
+      },
+      trigger: null,
+    });
+  } catch { /* ignore */ }
+}
+
+export interface MissedCallNotifOpts {
+  callId: string;
+  conversationId: string;
+  title: string;
+  isVideo?: boolean;
+}
+
+/** Missed call notification (when not answered in time) */
+export async function presentMissedCallNotification(o: MissedCallNotifOpts): Promise<void> {
+  try {
+    await Notifications.scheduleNotificationAsync({
+      identifier: `missed:${o.callId}`,
+      content: {
+        title: `Missed ${o.isVideo ? 'video' : 'voice'} call from ${o.title}`,
+        body: 'Tap to call back',
+        data: { type: 'missed_call', callId: o.callId, conversationId: o.conversationId },
+        ...(Platform.OS === 'android' ? { channelId: CHANNELS.missedCalls } : {}),
+        sound: 'default',
+      },
+      trigger: null,
+    });
+  } catch { /* ignore */ }
+}
+
+export interface CommunityNotifOpts {
+  communityId: string;
+  communityName: string;
+  title: string;  // announcement or event
+  body: string;
+}
+
+/** Community announcement notification */
+export async function presentCommunityNotification(o: CommunityNotifOpts): Promise<void> {
+  try {
+    await Notifications.scheduleNotificationAsync({
+      identifier: `community:${o.communityId}`,
+      content: {
+        title: `${o.communityName}: ${o.title}`,
+        body: o.body,
+        data: { type: 'community_announcement', communityId: o.communityId },
+        ...(Platform.OS === 'android' ? { channelId: CHANNELS.communities } : {}),
+        sound: 'default',
+      },
+      trigger: null,
+    });
+  } catch { /* ignore */ }
+}
+
 /** Clear a chat's notification when it's opened / read. */
 export async function clearConversationNotification(conversationId: string): Promise<void> {
   try { await Notifications.dismissNotificationAsync(`chat:${conversationId}`); } catch { /* ignore */ }
 }
+
 export async function clearCallNotification(callId: string): Promise<void> {
   try { await Notifications.dismissNotificationAsync(`call:${callId}`); } catch { /* ignore */ }
+}
+
+export async function clearStatusReplyNotification(statusId: string): Promise<void> {
+  try { await Notifications.dismissNotificationAsync(`status:${statusId}`); } catch { /* ignore */ }
+}
+
+export async function clearMentionNotification(conversationId: string): Promise<void> {
+  try { await Notifications.dismissNotificationAsync(`mention:${conversationId}`); } catch { /* ignore */ }
+}
+
+export async function clearMissedCallNotification(callId: string): Promise<void> {
+  try { await Notifications.dismissNotificationAsync(`missed:${callId}`); } catch { /* ignore */ }
+}
+
+export async function clearCommunityNotification(communityId: string): Promise<void> {
+  try { await Notifications.dismissNotificationAsync(`community:${communityId}`); } catch { /* ignore */ }
 }
