@@ -1,4 +1,4 @@
-// FUTUREHAT web — WhatsApp-class Group Info modal (full management).
+// Lumixo web — WhatsApp-class Group Info modal (full management).
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { supabase } from './supabase';
 import {
@@ -330,7 +330,7 @@ export function GroupInfoModal({ conversationId, onClose, onLeft, onUpdated }: P
       return `[${new Date(m.created_at).toLocaleString()}] ${who}: ${body || ''}`;
     });
     const blob = new Blob(
-      [`FUTUREHAT — ${conversation?.name || 'Group'}\n\n${lines.join('\n')}`],
+      [`Lumixo — ${conversation?.name || 'Group'}\n\n${lines.join('\n')}`],
       { type: 'text/plain' },
     );
     const a = document.createElement('a');
@@ -521,7 +521,7 @@ export function GroupInfoModal({ conversationId, onClose, onLeft, onUpdated }: P
                 className="gi-row"
                 onClick={() =>
                   alert(
-                    'Messages are protected with TLS in transit. FUTUREHAT enforces Row Level Security so only group members can read this chat.',
+                    'Messages are protected with TLS in transit. Lumixo enforces Row Level Security so only group members can read this chat.',
                   )
                 }
               >

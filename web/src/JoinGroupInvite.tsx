@@ -1,4 +1,4 @@
-// FUTUREHAT — join a group via invite token (/invite/g/:token).
+// Lumixo — join a group via invite token (/invite/g/:token).
 import { useEffect, useState } from 'react';
 import { supabase } from './supabase';
 import { joinByInvite } from '@shared/groupsApi';

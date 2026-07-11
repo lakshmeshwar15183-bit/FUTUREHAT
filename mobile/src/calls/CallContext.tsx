@@ -103,7 +103,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       void presentCallNotification({
         callId: call.id,
         conversationId: call.conversation_id,
-        title: peer?.display_name ?? 'FUTUREHAT',
+        title: peer?.display_name ?? 'Lumixo',
         video: call.type === 'video',
       });
 
@@ -214,7 +214,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       void sendPush(supabase, {
         conversationId,
         kind: 'call',
-        title: meProfile?.display_name ?? 'FUTUREHAT',
+        title: meProfile?.display_name ?? 'Lumixo',
         body: type === 'video' ? 'Incoming video call' : 'Incoming voice call',
         data: {
           callId: call.id,

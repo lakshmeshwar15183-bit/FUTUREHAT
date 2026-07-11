@@ -1,4 +1,4 @@
-// FUTUREHAT / Lumixo — production group system API (WhatsApp-class).
+// Lumixo — production group system API (WhatsApp-class).
 // All privileged writes go through SECURITY DEFINER RPCs in migration 0037.
 // Framework-agnostic; web and mobile both import this.
 

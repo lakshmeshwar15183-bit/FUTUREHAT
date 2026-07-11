@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — WhatsApp-class Group Info & management.
+// Lumixo mobile — WhatsApp-class Group Info & management.
 // Every action is wired to real RPCs (migration 0037). No placeholders.
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -298,7 +298,7 @@ export default function GroupInfoScreen() {
     const url = groupInviteUrl(inviteToken);
     try {
       await Share.share({
-        message: `Join our group on FUTUREHAT: ${url}`,
+        message: `Join our group on Lumixo: ${url}`,
         url,
       });
     } catch { /* cancelled */ }
@@ -436,7 +436,7 @@ export default function GroupInfoScreen() {
               : `[${m.type}] ${m.content || ''}`.trim();
         return `[${new Date(m.created_at).toLocaleString()}] ${who}: ${body || ''}`;
       });
-      const text = `FUTUREHAT — ${conversation?.name || 'Group'}\n\n${lines.join('\n')}`;
+      const text = `Lumixo — ${conversation?.name || 'Group'}\n\n${lines.join('\n')}`;
       await Share.share({ message: text });
     } catch (e: any) {
       Alert.alert('Export failed', e?.message || 'Could not export chat');
@@ -744,7 +744,7 @@ export default function GroupInfoScreen() {
             onPress={() =>
               Alert.alert(
                 'Encryption',
-                'Your messages are protected with TLS in transit. FUTUREHAT stores chat data securely with Row Level Security so only members of this group can read them.',
+                'Your messages are protected with TLS in transit. Lumixo stores chat data securely with Row Level Security so only members of this group can read them.',
               )
             }
             colors={colors}

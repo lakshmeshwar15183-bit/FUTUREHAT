@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — join group via invite token (deep link / manual).
+// Lumixo mobile — join group via invite token (deep link / manual).
 import React, { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';

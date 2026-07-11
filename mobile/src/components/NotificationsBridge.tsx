@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — notifications bridge. Mounted once for signed-in users.
+// Lumixo mobile — notifications bridge. Mounted once for signed-in users.
 //
 // WhatsApp-class behaviour:
 //   • ALWAYS present LOCAL notifications while the JS process is alive
@@ -127,10 +127,10 @@ export default function NotificationsBridge({
               const convName = (conv as { name?: string | null } | null)?.name ?? 'Group';
               const showPreview = (s ? s.messagePreview !== false : true) && !isLocked;
               const title = isLocked
-                ? 'FUTUREHAT'
+                ? 'Lumixo'
                 : isGroup
                   ? convName
-                  : (sender?.display_name ?? 'FUTUREHAT');
+                  : (sender?.display_name ?? 'Lumixo');
               const body = isLocked
                 ? 'New message'
                 : isGroup
@@ -185,7 +185,7 @@ export default function NotificationsBridge({
               await presentCallNotification({
                 callId: call.id,
                 conversationId: call.conversation_id,
-                title: peer?.display_name ?? 'FUTUREHAT',
+                title: peer?.display_name ?? 'Lumixo',
                 video: call.type === 'video',
               });
             } catch { /* ignore */ }

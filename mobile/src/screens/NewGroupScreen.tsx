@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — create a group: multi-select contacts, photo, name,
+// Lumixo mobile — create a group: multi-select contacts, photo, name,
 // optional description, loading / error / success states.
 import React, { useEffect, useMemo, useState } from 'react';
 import {

@@ -1,4 +1,4 @@
-// FUTUREHAT / Lumixo — push fan-out Edge Function (Deno).
+// Lumixo — push fan-out Edge Function (Deno).
 //
 // Paths:
 //   1) Client invoke (JWT): send one notification for a conversation (legacy).
@@ -115,7 +115,7 @@ Deno.serve(async (req) => {
       delivered += await fanOut(admin, accessToken, sa.project_id, {
         conversationId: body.conversationId,
         kind: body.kind,
-        title: body.title ?? 'FUTUREHAT',
+        title: body.title ?? 'Lumixo',
         body: body.body ?? 'New notification',
         data: body.data ?? {},
         senderId,
@@ -225,7 +225,7 @@ async function fanOut(
   );
 
   const senderName =
-    (senderProfile as { display_name?: string } | null)?.display_name ?? 'FUTUREHAT';
+    (senderProfile as { display_name?: string } | null)?.display_name ?? 'Lumixo';
   const isGroup = ((conv as { type?: string } | null)?.type ?? 'direct') === 'group';
   const convName = (conv as { name?: string | null } | null)?.name ?? 'Group';
 
@@ -259,10 +259,10 @@ async function fanOut(
         title = 'Call ended';
         bodyText = '';
       } else if (isCall || job.kind === 'system' || job.kind === 'status' || job.kind === 'missed_call') {
-        title = job.title || 'FUTUREHAT';
+        title = job.title || 'Lumixo';
         bodyText = job.body || '';
       } else if (locked) {
-        title = 'FUTUREHAT';
+        title = 'Lumixo';
         bodyText = 'New message';
       } else if (isGroup) {
         title = job.title?.includes(':') ? job.title : `${convName}`;
