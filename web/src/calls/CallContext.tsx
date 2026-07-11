@@ -91,6 +91,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
   const dragRef = useRef({ active: false, sx: 0, sy: 0, ox: 0, oy: 0, moved: false, el: null as HTMLElement | null });
   const lastTapRef = useRef(0);
   const facingMode = useRef<'user' | 'environment'>('user');
+  const [facing, setFacing] = useState<'user' | 'environment'>('user');
   // Crossfade / loading / immersive / network-quality (all UI-only).
   const [remoteReady, setRemoteReady] = useState(false);
   const [localReady, setLocalReady] = useState(false);
@@ -154,6 +155,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
     try { if (document.fullscreenElement) void document.exitFullscreen?.(); } catch { /* noop */ }
     setImmersive(false);
     facingMode.current = 'user';
+    setFacing('user');
   }, [myId]);
 
   const endCall = useCallback(async (markEnded = true) => {
@@ -166,17 +168,49 @@ export function CallProvider({ children }: { children: ReactNode }) {
 
   // ── media + peer connection ─────────────────────────────────────────────────
   async function getMedia(type: CallType) {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: type === 'video' });
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        channelCount: 1,
+      },
+      video:
+        type === 'video'
+          ? {
+              facingMode: 'user',
+              width: { ideal: 1280, max: 1920 },
+              height: { ideal: 720, max: 1080 },
+              frameRate: { ideal: 30, max: 30 },
+            }
+          : false,
+    });
     localStream.current = stream;
-    if (type === 'video' && localVideo.current) localVideo.current.srcObject = stream;
+    if (type === 'video' && localVideo.current) {
+      localVideo.current.srcObject = stream;
+      localVideo.current.muted = true;
+      void localVideo.current.play().catch(() => {});
+    }
     return stream;
   }
 
+  function attachRemote(remote: MediaStream) {
+    remoteStream.current = remote;
+    if (remoteVideo.current) {
+      if (remoteVideo.current.srcObject !== remote) remoteVideo.current.srcObject = remote;
+      void remoteVideo.current.play().catch(() => {});
+    }
+    if (remoteAudio.current) {
+      if (remoteAudio.current.srcObject !== remote) remoteAudio.current.srcObject = remote;
+      void remoteAudio.current.play().catch(() => {});
+    }
+    if (backdropVideo.current && !localExpanded) {
+      if (backdropVideo.current.srcObject !== remote) backdropVideo.current.srcObject = remote;
+      void backdropVideo.current.play().catch(() => {});
+    }
+  }
+
   function buildPc(stream: MediaStream) {
-    // iceCandidatePoolSize pre-gathers so candidates are ready when the remote
-    // description arrives; max-bundle keeps audio+video on one relayed transport.
-    // Matches the mobile RTCPeerConnection config for consistent cross-platform
-    // (web ↔ Android) connectivity.
     const conn = new RTCPeerConnection({
       iceServers: ICE_SERVERS,
       iceCandidatePoolSize: 10,
@@ -187,32 +221,75 @@ export function CallProvider({ children }: { children: ReactNode }) {
     conn.onicecandidate = (e) => {
       if (e.candidate) signaling.current?.send({ kind: 'candidate', from: myId!, data: e.candidate.toJSON() });
     };
+    // Aggregate tracks into one stream (audio may arrive before video).
+    let aggregated: MediaStream | null = null;
     conn.ontrack = (e) => {
-      const [remote] = e.streams;
-      remoteStream.current = remote;
-      if (remoteVideo.current) remoteVideo.current.srcObject = remote;
-      if (remoteAudio.current) remoteAudio.current.srcObject = remote;
-      if (backdropVideo.current && !localExpanded) backdropVideo.current.srcObject = remote;
+      const track = e.track;
+      if (!aggregated) {
+        aggregated = e.streams?.[0] ? e.streams[0] : new MediaStream();
+      }
+      if (!aggregated.getTracks().some((t) => t.id === track.id)) {
+        try { aggregated.addTrack(track); } catch { /* already present */ }
+      }
+      attachRemote(aggregated);
+      track.addEventListener('unmute', () => aggregated && attachRemote(aggregated));
     };
-    let closed = false; // scoped to this connection — fire endCall at most once
+    let closed = false;
     let graceTimer: ReturnType<typeof setTimeout> | null = null;
+    let iceRestarts = 0;
+    const tryIceRestart = async () => {
+      if (closed || iceRestarts >= 2) {
+        if (!closed) { closed = true; endCall(false); }
+        return;
+      }
+      iceRestarts += 1;
+      try {
+        if (conn.signalingState === 'stable' || isCaller.current) {
+          cachedOffer.current = null;
+          answered.current = false;
+          const offer = await conn.createOffer({ iceRestart: true });
+          await conn.setLocalDescription(offer);
+          cachedOffer.current = offer;
+          signaling.current?.send({ kind: 'offer', from: myId!, data: offer });
+        }
+      } catch {
+        if (!closed) { closed = true; endCall(false); }
+      }
+    };
     conn.onconnectionstatechange = () => {
       const st = conn.connectionState;
       if (st === 'connected') {
-        if (graceTimer) { clearTimeout(graceTimer); graceTimer = null; } // recovered
+        if (graceTimer) { clearTimeout(graceTimer); graceTimer = null; }
+        iceRestarts = 0;
         startActive();
       } else if (st === 'disconnected') {
-        // Transient blip — give ICE ~12s to recover before tearing down.
         if (!graceTimer && !closed) {
+          // Quick ICE restart, then teardown if still down.
+          setTimeout(() => { void tryIceRestart(); }, 3500);
           graceTimer = setTimeout(() => {
             graceTimer = null;
-            if (conn.connectionState !== 'connected' && !closed) { closed = true; endCall(false); }
-          }, 12000);
+            if (conn.connectionState !== 'connected' && !closed) {
+              closed = true;
+              endCall(false);
+            }
+          }, 16000);
         }
-      } else if ((st === 'failed' || st === 'closed') && !closed) {
+      } else if (st === 'failed' && !closed) {
+        void tryIceRestart();
+      } else if (st === 'closed' && !closed) {
         closed = true;
         if (graceTimer) { clearTimeout(graceTimer); graceTimer = null; }
         endCall(false);
+      }
+    };
+    conn.oniceconnectionstatechange = () => {
+      const st = conn.iceConnectionState;
+      if (st === 'connected' || st === 'completed') {
+        if (graceTimer) { clearTimeout(graceTimer); graceTimer = null; }
+        iceRestarts = 0;
+        startActive();
+      } else if (st === 'failed') {
+        void tryIceRestart();
       }
     };
     pc.current = conn;
@@ -272,8 +349,9 @@ export function CallProvider({ children }: { children: ReactNode }) {
           if (msg.kind === 'ready') {
             if (isCaller.current) await makeOffer();
           } else if (msg.kind === 'offer' && conn) {
-            // Callee. Re-send cached answer on a duplicate offer; otherwise answer.
-            if (offerHandled.current) {
+            // Callee. Re-answer ICE-restart offers (signalingState stable after first answer).
+            const isRestart = offerHandled.current && conn.signalingState === 'stable';
+            if (offerHandled.current && !isRestart) {
               if (cachedAnswer.current) signaling.current?.send({ kind: 'answer', from: myId!, data: cachedAnswer.current });
               return;
             }
@@ -286,8 +364,8 @@ export function CallProvider({ children }: { children: ReactNode }) {
             cachedAnswer.current = answer;
             signaling.current?.send({ kind: 'answer', from: myId!, data: answer });
           } else if (msg.kind === 'answer' && conn) {
-            // Caller. Accept only the first answer (must be have-local-offer).
-            if (answered.current || conn.signalingState !== 'have-local-offer') return;
+            // Caller. Accept first answer + ICE-restart answers while have-local-offer.
+            if (conn.signalingState !== 'have-local-offer') return;
             answered.current = true;
             await conn.setRemoteDescription(new RTCSessionDescription(msg.data as RTCSessionDescriptionInit));
             await flushCandidates();
@@ -423,6 +501,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
       if (old) { stream.removeTrack(old); old.stop(); }
       stream.addTrack(newTrack);
       facingMode.current = next;
+      setFacing(next);
       // Re-point the preview at the same stream so it picks up the new track.
       if (localVideo.current) localVideo.current.srcObject = stream;
     } catch { /* device busy / no second camera — keep current track */ }
@@ -654,9 +733,14 @@ export function CallProvider({ children }: { children: ReactNode }) {
     if (!d.active || !d.el) return;
     const dx = e.clientX - d.sx, dy = e.clientY - d.sy;
     if (Math.abs(dx) > 4 || Math.abs(dy) > 4) d.moved = true;
-    // Move via a compositor-only transform — no layout, no React re-render, no
-    // MediaStream churn. The committed left/top stays put; only the transform shifts.
-    d.el.style.transform = `translate3d(${dx}px, ${dy}px, 0)`;
+    // Preserve front-camera mirror (scaleX(-1)) while dragging.
+    const mirror = elIsMirrored(d.el!);
+    d.el!.style.transform = mirror
+      ? `translate3d(${dx}px, ${dy}px, 0) scaleX(-1)`
+      : `translate3d(${dx}px, ${dy}px, 0)`;
+  }
+  function elIsMirrored(el: HTMLElement) {
+    return el.classList.contains('mirror');
   }
   function onPipUp(e: RPointerEvent<HTMLVideoElement>) {
     const d = dragRef.current;
@@ -665,7 +749,8 @@ export function CallProvider({ children }: { children: ReactNode }) {
     const el = d.el;
     try { el.releasePointerCapture(e.pointerId); } catch { /* noop */ }
     if (!d.moved) {
-      el.style.transition = ''; el.style.transform = '';
+      el.style.transition = '';
+      el.style.transform = ''; // CSS class `.mirror` restores scaleX
       // A tap (no drag) swaps full ⇄ PiP. A *fast* second tap is the second half
       // of a double-tap "quick switch" — swallow it so the pair nets one toggle
       // (the first tap already flipped) instead of bouncing back to the start.
@@ -683,7 +768,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
     const x = rect.left + rect.width / 2 < vw / 2 ? PIP_EDGE : vw - rect.width - PIP_EDGE;
     const y = Math.max(PIP_EDGE, Math.min(rect.top, vh - rect.height - PIP_EDGE));
     el.style.transition = 'none';
-    el.style.transform = 'translate3d(0,0,0)';
+    el.style.transform = '';
     el.style.left = `${rect.left}px`; el.style.top = `${rect.top}px`;
     el.style.right = 'auto'; el.style.bottom = 'auto';
     void el.offsetWidth;                 // flush the start frame before transitioning
@@ -739,7 +824,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
                 />
                 <video
                   ref={localVideo}
-                  className={`call-vid local ${localExpanded ? 'full' : 'pip'}`}
+                  className={`call-vid local ${localExpanded ? 'full' : 'pip'}${facing === 'user' ? ' mirror' : ''}`}
                   style={!localExpanded ? { left: pipPos.x, top: pipPos.y } : undefined}
                   autoPlay playsInline muted
                   onPlaying={() => setLocalReady(true)}

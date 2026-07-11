@@ -1,16 +1,18 @@
-// build-stamp: 2026-07-03T0840 — bump to invalidate Metro's per-file transform
-// cache so EXPO_PUBLIC_TURN_* is re-inlined (cache key is source-hash, not env).
-// Lumixo mobile — WebRTC call engine. Wraps a single RTCPeerConnection and
-// drives the SDP/ICE handshake over the shared Supabase signaling channel.
-// Audio uses echo-cancellation + noise-suppression constraints; InCallManager
-// handles speaker routing, ringtone and the proximity sensor.
+// Lumixo mobile — production WebRTC call engine (WhatsApp-class reliability).
+//
+// Fixes for white/blank remote video, ICE recovery, TURN, AEC/NS/AGC, and
+// front-camera mirror semantics (local mirrored, remote not mirrored — mirror
+// is applied in RTCView, not by flipping the encoded track).
 import {
   RTCPeerConnection,
   RTCIceCandidate,
   RTCSessionDescription,
   mediaDevices,
-  type MediaStream,
+  MediaStream,
+  type MediaStreamTrack,
 } from 'react-native-webrtc';
+
+type MediaStreamT = MediaStream;
 import InCallManager from 'react-native-incall-manager';
 
 import { supabase } from '../lib/supabase';
@@ -24,21 +26,12 @@ import {
   type UUID,
 } from '../lib/shared';
 
-// Structured call logging. Every step of the signaling + ICE handshake is logged
-// so the EXACT failing step is visible in `adb logcat` (filter on "[call]"). This
-// is what turns "stuck on Connecting…" from a black box into an observable
-// pipeline: you can see whether the offer/answer crossed, which ICE candidate
-// types were gathered (host/srflx/relay ⇒ is TURN working?), and where it stalls.
 const clog = (...args: unknown[]) => console.log('[call]', ...args);
 
-// Hard upper bound on reaching 'connected' the first time. ~45s matches a typical
-// ring-then-fail window; past this a call that hasn't connected never will.
 const CONNECT_TIMEOUT_MS = 45000;
+const ICE_RESTART_GRACE_MS = 4000;
+const DISCONNECT_TEARDOWN_MS = 16000;
 
-// Production TURN from app env (EXPO_PUBLIC_TURN_*). EXPO_PUBLIC_TURN_URL may be a
-// comma-separated list of transport URLs (udp/tcp/tls) under one credential. When
-// unset there is NO TURN relay — only STUN — so cross-network calls will fail;
-// buildIceServers() no longer bakes in a (dead) default relay.
 const ICE_SERVERS = buildIceServers(
   process.env.EXPO_PUBLIC_TURN_URL
     ? {
@@ -48,48 +41,37 @@ const ICE_SERVERS = buildIceServers(
       }
     : null,
 );
-// Whether a relay is actually configured. Logged at call start and used to warn
-// so a missing TURN shows up as a clear diagnostic rather than a silent hang.
 const HAS_TURN = hasTurn(ICE_SERVERS);
 
 export interface CallCallbacks {
-  onLocalStream: (stream: MediaStream) => void;
-  onRemoteStream: (stream: MediaStream) => void;
+  onLocalStream: (stream: MediaStreamT) => void;
+  onRemoteStream: (stream: MediaStreamT | null) => void;
   onConnected: () => void;
   onEnded: () => void;
+  onFacingChange?: (facing: 'user' | 'environment') => void;
 }
 
 export class CallSession {
   private pc: RTCPeerConnection | null = null;
   private signaling: SignalingChannel | null = null;
-  private localStream: MediaStream | null = null;
+  private localStream: MediaStreamT | null = null;
+  /** Aggregated remote stream — tracks are added as ontrack fires (audio then video). */
+  private remoteStream: MediaStreamT | null = null;
   private pendingCandidates: RTCIceCandidate[] = [];
   private remoteDescSet = false;
   private ended = false;
-  // Handshake state. The caller caches its offer and re-sends it on every `ready`
-  // heartbeat until it receives an answer; the callee caches its answer and
-  // re-sends it if a duplicate offer arrives (covers a lost answer). The callee
-  // pings `ready` until it sees the offer. This makes the SDP exchange resilient
-  // to the broadcast channel dropping messages sent before a peer subscribed.
   private cachedOffer: unknown = null;
   private cachedAnswer: unknown = null;
   private answered = false;
   private offerHandled = false;
   private readyTimer: ReturnType<typeof setInterval> | null = null;
   private readyTicks = 0;
-  // Reconnect grace: a transient 'disconnected' (network blip, handoff) usually
-  // recovers to 'connected' on its own — don't tear the call down instantly.
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  // Connect watchdog: a hard upper bound on the *initial* connect. If we never
-  // reach 'connected' (a wedged handshake where the offer/answer is lost, or an
-  // ICE that stalls in 'checking' without ever transitioning to 'failed' — a
-  // known RN-WebRTC Android quirk), NOTHING else would ever fire, leaving the UI
-  // pinned on "Connecting…" forever. This timer guarantees the call instead ENDS
-  // (view unmounts) so the stuck state is impossible. Cleared on first connect.
+  private iceRestartTimer: ReturnType<typeof setTimeout> | null = null;
   private connectTimer: ReturnType<typeof setTimeout> | null = null;
-  // Guard so we only log the first successful connect (onConnected itself is
-  // idempotent on the UI side).
   private connectedOnce = false;
+  private iceRestartAttempts = 0;
+  private facing: 'user' | 'environment' = 'user';
 
   muted = false;
   videoEnabled: boolean;
@@ -103,110 +85,144 @@ export class CallSession {
     private cb: CallCallbacks,
   ) {
     this.videoEnabled = type === 'video';
+    // Video calls default to speaker; audio calls default to earpiece.
     this.speakerOn = type === 'video';
   }
 
   async start() {
     clog(this.isCaller ? 'CALLER' : 'CALLEE', 'start()', this.type, 'call', this.callId);
-    // 1) Local media with quality constraints.
+
+    // 1) Local media — use ideal constraints (not rigid) so mid/low-end devices
+    //    still open a camera; HD when the device can deliver it.
     this.localStream = (await mediaDevices.getUserMedia({
-      // echo-cancellation / noise-suppression aren't in the RN-WebRTC TS types
-      // but are honoured by the native layer.
       audio: {
         echoCancellation: true,
         noiseSuppression: true,
         autoGainControl: true,
+        channelCount: 1,
       } as any,
       video:
         this.type === 'video'
-          ? { facingMode: 'user', frameRate: 30, width: 1280, height: 720 }
+          ? ({
+              facingMode: 'user',
+              // Ideal HD; min allows weak devices to still connect.
+              width: { min: 320, ideal: 1280, max: 1920 },
+              height: { min: 240, ideal: 720, max: 1080 },
+              frameRate: { min: 15, ideal: 30, max: 30 },
+            } as any)
           : false,
-    })) as unknown as MediaStream;
+    })) as unknown as MediaStreamT;
+
+    // Ensure audio tracks start enabled (some OEMs start muted).
+    this.localStream.getAudioTracks().forEach((t) => {
+      t.enabled = true;
+    });
+    this.localStream.getVideoTracks().forEach((t) => {
+      t.enabled = this.videoEnabled;
+    });
+
     this.cb.onLocalStream(this.localStream);
+    this.cb.onFacingChange?.(this.facing);
 
-    // 2) Audio routing + ringback.
-    InCallManager.start({ media: this.type === 'video' ? 'video' : 'audio' });
+    // 2) Audio session: ringback for caller, media mode for both.
+    InCallManager.start({
+      media: this.type === 'video' ? 'video' : 'audio',
+      auto: true,
+      ringback: this.isCaller ? '_DEFAULT_' : undefined,
+    } as any);
     InCallManager.setForceSpeakerphoneOn(this.speakerOn);
+    // Keep screen awake during video; proximity sensor for earpiece audio calls.
+    try {
+      if (this.type === 'video') (InCallManager as any).setKeepScreenOn?.(true);
+    } catch { /* optional API */ }
 
-    // 3) Peer connection. iceCandidatePoolSize pre-gathers candidates so the
-    //    handshake has them ready the moment the remote description lands (faster
-    //    connect). bundlePolicy 'max-bundle' + rtcpMuxPolicy 'require' keep audio
-    //    and video on a single transport, which minimizes the number of candidate
-    //    pairs TURN has to relay.
     if (!HAS_TURN) {
       clog(
-        '⚠️ NO TURN relay configured (EXPO_PUBLIC_TURN_* unset) — STUN only.',
-        'Calls will connect on the same/permissive network but FAIL across',
-        'different networks/NATs. Provision TURN for production.',
+        '⚠️ NO TURN relay (EXPO_PUBLIC_TURN_* unset) — STUN only.',
+        'Cross-network calls will often fail. Configure TURN for production.',
       );
     }
+
+    // 3) Peer connection
     this.pc = new RTCPeerConnection({
       iceServers: ICE_SERVERS,
       iceCandidatePoolSize: 10,
       bundlePolicy: 'max-bundle',
       rtcpMuxPolicy: 'require',
+      // Prefer continual gathering so mid-call network changes get new candidates.
+      iceTransportPolicy: 'all',
     } as any);
-    this.localStream.getTracks().forEach((t) => this.pc!.addTrack(t, this.localStream!));
 
-    (this.pc as any).ontrack = (e: any) => {
-      clog('ontrack', e.track?.kind, 'streams:', e.streams?.length ?? 0);
-      if (e.streams && e.streams[0]) this.cb.onRemoteStream(e.streams[0]);
-    };
+    this.localStream.getTracks().forEach((t) => {
+      this.pc!.addTrack(t, this.localStream!);
+    });
+
+    // Prefer H264 on Android when available (hardware encode); ignore failures.
+    try {
+      await this.preferCodecs();
+    } catch { /* optional */ }
+
+    (this.pc as any).ontrack = (e: any) => this.handleRemoteTrack(e);
+
     (this.pc as any).onicecandidate = (e: any) => {
       if (e.candidate) {
-        // Candidate "typ" tells us host/srflx/relay — if we NEVER see a relay
-        // candidate, TURN isn't working (the usual cause of cross-network fails).
         const c: string = e.candidate.candidate || '';
         const typ = /typ (\w+)/.exec(c)?.[1] ?? '?';
-        clog('local ICE candidate', typ);
+        clog('local ICE', typ);
         this.signaling?.send({ kind: 'candidate', from: this.selfId, data: e.candidate });
       } else {
-        clog('local ICE gathering complete');
+        clog('ICE gathering complete');
       }
     };
+
     (this.pc as any).onicegatheringstatechange = () => {
       clog('iceGatheringState:', (this.pc as any)?.iceGatheringState);
     };
-    // Fire "connected" on EITHER the aggregated connectionState OR the ICE
-    // connection state. react-native-webrtc's aggregated `connectionState` is
-    // unreliable on some Android builds (it can stay 'connecting' even after media
-    // flows) — `iceConnectionState` reaching connected/completed is the dependable
-    // signal. Listening to both is what actually clears the stuck "Connecting…".
+
     const markConnected = () => {
-      if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
-      if (this.connectTimer) { clearTimeout(this.connectTimer); this.connectTimer = null; }
-      if (!this.connectedOnce) { this.connectedOnce = true; clog('✅ CONNECTED'); }
+      if (this.reconnectTimer) {
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
+      }
+      if (this.iceRestartTimer) {
+        clearTimeout(this.iceRestartTimer);
+        this.iceRestartTimer = null;
+      }
+      if (this.connectTimer) {
+        clearTimeout(this.connectTimer);
+        this.connectTimer = null;
+      }
+      this.iceRestartAttempts = 0;
+      if (!this.connectedOnce) {
+        this.connectedOnce = true;
+        clog('✅ CONNECTED');
+        try {
+          InCallManager.stopRingback?.();
+        } catch { /* noop */ }
+      }
       this.cb.onConnected();
     };
+
     (this.pc as any).onconnectionstatechange = () => {
       const st = (this.pc as any)?.connectionState;
       clog('connectionState:', st);
-      if (st === 'connected') {
-        markConnected();
-      } else if (st === 'disconnected') {
-        this.scheduleReconnectTeardown();
-      } else if (st === 'failed' || st === 'closed') {
-        clog('connectionState terminal:', st, '→ ending');
-        this.end(false);
-      }
-    };
-    (this.pc as any).oniceconnectionstatechange = () => {
-      const st = (this.pc as any)?.iceConnectionState;
-      clog('iceConnectionState:', st);
-      if (st === 'connected' || st === 'completed') {
-        markConnected();
-      } else if (st === 'disconnected') {
-        this.scheduleReconnectTeardown();
-      } else if (st === 'failed') {
-        // ICE failed: no working candidate pair (commonly dead/blocked TURN on a
-        // symmetric NAT). Surface it instead of hanging on "Connecting…".
-        clog('❌ iceConnectionState failed — no reachable candidate pair (check TURN)');
-        this.end(false);
+      if (st === 'connected') markConnected();
+      else if (st === 'disconnected') this.onTransportBlip();
+      else if (st === 'failed' || st === 'closed') {
+        if (st === 'failed') this.tryIceRestart('connectionState=failed');
+        else this.end(false);
       }
     };
 
-    // 4) Signaling. onChannelReady fires once OUR subscription is live, so we
-    //    never broadcast into the void.
+    (this.pc as any).oniceconnectionstatechange = () => {
+      const st = (this.pc as any)?.iceConnectionState;
+      clog('iceConnectionState:', st);
+      if (st === 'connected' || st === 'completed') markConnected();
+      else if (st === 'disconnected') this.onTransportBlip();
+      else if (st === 'failed') this.tryIceRestart('iceConnectionState=failed');
+    };
+
+    // 4) Signaling
     this.signaling = createSignalingChannel(
       supabase,
       this.callId,
@@ -214,32 +230,129 @@ export class CallSession {
       (msg) => this.onSignal(msg),
       () => this.onChannelReady(),
     );
-    // The caller's offer is now driven by the callee's `ready` heartbeat (see
-    // onSignal), not a blind timer — that timer was the root cause of calls
-    // never connecting (offer sent before the callee had subscribed).
 
-    // 5) Connect watchdog — the failsafe that makes a permanently-stuck
-    //    "Connecting…" impossible: if we haven't connected by the deadline, end.
+    // 5) Connect watchdog
     this.connectTimer = setTimeout(() => {
       this.connectTimer = null;
       if (this.connectedOnce || this.ended) return;
       clog(
-        '⏱️ connect watchdog expired — never reached connected. states:',
-        'conn=', (this.pc as any)?.connectionState,
-        'ice=', (this.pc as any)?.iceConnectionState,
-        'sig=', (this.pc as any)?.signalingState,
-        '→ ending (no stuck Connecting…)',
+        '⏱️ connect watchdog expired',
+        'conn=',
+        (this.pc as any)?.connectionState,
+        'ice=',
+        (this.pc as any)?.iceConnectionState,
       );
       this.end(false);
     }, CONNECT_TIMEOUT_MS);
   }
 
-  // A transient 'disconnected' on either state machine: give ICE ~12s to recover
-  // (network blip / wifi↔cellular handoff) before tearing the call down. Only
-  // ends if BOTH state machines are still not connected when the grace expires.
+  /**
+   * Root white-screen fix: aggregate every remote track into ONE MediaStream and
+   * re-emit it whenever a track is added or unmutes. RTCView must re-bind when
+   * the first video frame becomes available (audio-only stream → white SurfaceView).
+   */
+  private handleRemoteTrack(e: any) {
+    const track: MediaStreamTrack | undefined = e?.track;
+    if (!track) return;
+    clog('ontrack', track.kind, 'muted=', (track as any).muted, 'readyState=', track.readyState);
+
+    if (!this.remoteStream) {
+      // Prefer the stream the browser already grouped, else create our own.
+      const fromEvent: MediaStreamT | undefined = e.streams?.[0];
+      this.remoteStream = fromEvent
+        ? (fromEvent as MediaStreamT)
+        : (new MediaStream() as unknown as MediaStreamT);
+    }
+
+    const already = this.remoteStream.getTracks().some((t) => t.id === track.id);
+    if (!already) {
+      try {
+        this.remoteStream.addTrack(track);
+      } catch {
+        // If the event stream already owns the track, ignore.
+      }
+    }
+
+    // Re-emit so UI rebinds RTCView (critical when video track arrives after audio).
+    this.emitRemote();
+
+    // When a muted/black track later produces frames, re-emit again.
+    const reemit = () => {
+      clog('remote track unmute/live', track.kind);
+      this.emitRemote();
+    };
+    try {
+      (track as any).onunmute = reemit;
+      (track as any).onmute = () => clog('remote track mute', track.kind);
+      (track as any).onended = () => {
+        clog('remote track ended', track.kind);
+        try {
+          this.remoteStream?.removeTrack(track);
+        } catch { /* noop */ }
+        this.emitRemote();
+      };
+    } catch { /* event props optional */ }
+  }
+
+  private emitRemote() {
+    if (!this.remoteStream) {
+      this.cb.onRemoteStream(null);
+      return;
+    }
+    // Clone-like signal: pass same stream reference but force React to see a
+    // change by always calling the callback (ActiveCallView keys on track ids).
+    this.cb.onRemoteStream(this.remoteStream);
+  }
+
+  private onTransportBlip() {
+    if (this.ended) return;
+    // First: attempt ICE restart after a short grace (network handoff recovery).
+    if (!this.iceRestartTimer) {
+      this.iceRestartTimer = setTimeout(() => {
+        this.iceRestartTimer = null;
+        const ice = (this.pc as any)?.iceConnectionState;
+        const cs = (this.pc as any)?.connectionState;
+        if (
+          ice !== 'connected' &&
+          ice !== 'completed' &&
+          cs !== 'connected'
+        ) {
+          this.tryIceRestart('disconnect-grace');
+        }
+      }, ICE_RESTART_GRACE_MS);
+    }
+    this.scheduleReconnectTeardown();
+  }
+
+  private async tryIceRestart(reason: string) {
+    if (this.ended || !this.pc) return;
+    if (this.iceRestartAttempts >= 2) {
+      clog('❌ ICE restart exhausted (', reason, ') → ending');
+      this.end(false);
+      return;
+    }
+    this.iceRestartAttempts += 1;
+    clog('🔄 ICE restart #', this.iceRestartAttempts, reason);
+    try {
+      // Only the original offerer (caller) should create a restart offer, unless
+      // we already have a local offer state from a previous restart.
+      if (this.isCaller || (this.pc as any).signalingState === 'stable') {
+        this.cachedOffer = null;
+        this.answered = false;
+        const offer = await this.pc.createOffer({ iceRestart: true } as any);
+        await this.pc.setLocalDescription(offer);
+        this.cachedOffer = offer;
+        this.signaling?.send({ kind: 'offer', from: this.selfId, data: offer });
+      }
+    } catch (e: any) {
+      clog('ICE restart failed', e?.message ?? e);
+      this.end(false);
+    }
+  }
+
   private scheduleReconnectTeardown() {
     if (this.reconnectTimer || this.ended) return;
-    clog('disconnected — 12s grace before teardown');
+    clog('disconnected — teardown in', DISCONNECT_TEARDOWN_MS, 'ms if not recovered');
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       const cs = (this.pc as any)?.connectionState;
@@ -248,22 +361,38 @@ export class CallSession {
         clog('reconnect grace expired — ending');
         this.end(false);
       }
-    }, 12000);
+    }, DISCONNECT_TEARDOWN_MS);
   }
 
-  // Called when our own signaling subscription goes live.
+  private async preferCodecs() {
+    // Best-effort: prefer H264 for video on Android HW path when available.
+    const pc = this.pc as any;
+    if (!pc?.getTransceivers) return;
+    for (const t of pc.getTransceivers()) {
+      if (t.sender?.track?.kind !== 'video') continue;
+      const caps = (RTCRtpSender as any)?.getCapabilities?.('video');
+      if (!caps?.codecs?.length || !t.setCodecPreferences) continue;
+      const preferred = [
+        ...caps.codecs.filter((c: any) => /h264/i.test(c.mimeType)),
+        ...caps.codecs.filter((c: any) => /vp8/i.test(c.mimeType)),
+        ...caps.codecs.filter((c: any) => !/h264|vp8/i.test(c.mimeType)),
+      ];
+      try {
+        t.setCodecPreferences(preferred);
+      } catch { /* ignore */ }
+    }
+  }
+
   private onChannelReady() {
-    clog(this.isCaller ? 'CALLER' : 'CALLEE', 'signaling channel LIVE');
+    clog(this.isCaller ? 'CALLER' : 'CALLEE', 'signaling LIVE');
     if (this.ended) return;
-    // The callee announces itself and keeps announcing until the offer lands, so
-    // a `ready` lost before the caller subscribed doesn't wedge the call.
     if (!this.isCaller) this.startReadyHeartbeat();
   }
 
   private startReadyHeartbeat() {
     if (this.readyTimer) return;
     const ping = () => {
-      if (this.ended || this.offerHandled || this.readyTicks > 12) {
+      if (this.ended || this.offerHandled || this.readyTicks > 16) {
         this.stopReadyHeartbeat();
         return;
       }
@@ -271,7 +400,7 @@ export class CallSession {
       this.signaling?.send({ kind: 'ready', from: this.selfId });
     };
     ping();
-    this.readyTimer = setInterval(ping, 700);
+    this.readyTimer = setInterval(ping, 600);
   }
 
   private stopReadyHeartbeat() {
@@ -281,16 +410,14 @@ export class CallSession {
     }
   }
 
-  // Caller: build the offer once, cache it, and (re)broadcast it. Re-sending the
-  // SAME cached SDP on each `ready` is safe and covers a dropped first offer.
-  private async makeOffer() {
-    if (!this.pc || this.answered) return;
-    if (!this.cachedOffer) {
-      const offer = await this.pc.createOffer({});
+  private async makeOffer(iceRestart = false) {
+    if (!this.pc || (this.answered && !iceRestart)) return;
+    if (!this.cachedOffer || iceRestart) {
+      const offer = await this.pc.createOffer(iceRestart ? ({ iceRestart: true } as any) : {});
       await this.pc.setLocalDescription(offer);
       this.cachedOffer = offer;
     }
-    clog('CALLER → offer');
+    clog('CALLER → offer', iceRestart ? '(ICE restart)' : '');
     this.signaling?.send({ kind: 'offer', from: this.selfId, data: this.cachedOffer });
   }
 
@@ -299,14 +426,18 @@ export class CallSession {
     clog('signal IN:', msg.kind);
     try {
       if (msg.kind === 'ready') {
-        // A peer is listening — send (or re-send) our offer.
         if (this.isCaller) await this.makeOffer();
       } else if (msg.kind === 'offer') {
-        // Callee. Ignore duplicate offers once we've answered, but DO re-send our
-        // cached answer in case the first answer was lost.
-        if (this.offerHandled) {
+        // Handle ICE-restart offers after the first answer by re-answering.
+        const isRestart =
+          this.offerHandled && (this.pc as any).signalingState === 'stable';
+        if (this.offerHandled && !isRestart) {
           if (this.cachedAnswer) {
-            this.signaling?.send({ kind: 'answer', from: this.selfId, data: this.cachedAnswer });
+            this.signaling?.send({
+              kind: 'answer',
+              from: this.selfId,
+              data: this.cachedAnswer,
+            });
           }
           return;
         }
@@ -321,12 +452,18 @@ export class CallSession {
         clog('CALLEE → answer');
         this.signaling?.send({ kind: 'answer', from: this.selfId, data: answer });
       } else if (msg.kind === 'answer') {
-        // Caller. Only accept the first answer (state must be have-local-offer).
-        if (this.answered || (this.pc as any).signalingState !== 'have-local-offer') return;
-        this.answered = true;
-        await this.pc.setRemoteDescription(new RTCSessionDescription(msg.data as any));
-        this.remoteDescSet = true;
-        await this.flushCandidates();
+        if (
+          this.answered &&
+          (this.pc as any).signalingState !== 'have-local-offer'
+        ) {
+          return;
+        }
+        if ((this.pc as any).signalingState === 'have-local-offer') {
+          this.answered = true;
+          await this.pc.setRemoteDescription(new RTCSessionDescription(msg.data as any));
+          this.remoteDescSet = true;
+          await this.flushCandidates();
+        }
       } else if (msg.kind === 'candidate') {
         const cand = new RTCIceCandidate(msg.data as any);
         if (this.remoteDescSet) await this.pc.addIceCandidate(cand);
@@ -334,8 +471,8 @@ export class CallSession {
       } else if (msg.kind === 'bye') {
         this.end(false);
       }
-    } catch {
-      // ignore malformed signals
+    } catch (e: any) {
+      clog('onSignal error', msg.kind, e?.message ?? e);
     }
   }
 
@@ -343,22 +480,24 @@ export class CallSession {
     for (const c of this.pendingCandidates) {
       try {
         await this.pc?.addIceCandidate(c);
-      } catch {
-        /* noop */
-      }
+      } catch { /* noop */ }
     }
     this.pendingCandidates = [];
   }
 
   toggleMute() {
     this.muted = !this.muted;
-    this.localStream?.getAudioTracks().forEach((t) => (t.enabled = !this.muted));
+    this.localStream?.getAudioTracks().forEach((t) => {
+      t.enabled = !this.muted;
+    });
     return this.muted;
   }
 
   toggleVideo() {
     this.videoEnabled = !this.videoEnabled;
-    this.localStream?.getVideoTracks().forEach((t) => (t.enabled = this.videoEnabled));
+    this.localStream?.getVideoTracks().forEach((t) => {
+      t.enabled = this.videoEnabled;
+    });
     return this.videoEnabled;
   }
 
@@ -368,12 +507,82 @@ export class CallSession {
     return this.speakerOn;
   }
 
-  switchCamera() {
-    this.localStream?.getVideoTracks().forEach((t: any) => t._switchCamera?.());
+  /**
+   * Switch front/back camera. Uses replaceTrack when possible so the remote
+   * peer keeps a continuous video mid stream (smoother than _switchCamera alone).
+   * Facing state is tracked so local RTCView mirror can be toggled (front only).
+   */
+  async switchCamera(): Promise<'user' | 'environment'> {
+    const next: 'user' | 'environment' =
+      this.facing === 'user' ? 'environment' : 'user';
+    try {
+      const oldTrack = this.localStream?.getVideoTracks()?.[0] as any;
+      if (!oldTrack) return this.facing;
+
+      // Prefer getUserMedia + replaceTrack for correct orientation on both sides.
+      const fresh = (await mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          facingMode: { exact: next },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          frameRate: { ideal: 30 },
+        } as any,
+      })) as unknown as MediaStreamT;
+      const newTrack = fresh.getVideoTracks()[0] as any;
+      if (!newTrack) {
+        fresh.getTracks().forEach((t) => t.stop());
+        // Fallback: in-place switch.
+        oldTrack._switchCamera?.();
+        this.facing = next;
+        this.cb.onFacingChange?.(this.facing);
+        return this.facing;
+      }
+
+      newTrack.enabled = this.videoEnabled;
+      const sender = (this.pc as any)
+        ?.getSenders?.()
+        ?.find((s: any) => s.track && s.track.kind === 'video');
+      if (sender?.replaceTrack) {
+        await sender.replaceTrack(newTrack);
+      } else {
+        oldTrack._switchCamera?.();
+        fresh.getTracks().forEach((t) => t.stop());
+        this.facing = next;
+        this.cb.onFacingChange?.(this.facing);
+        return this.facing;
+      }
+
+      // Swap in local stream for preview.
+      try {
+        this.localStream?.removeTrack(oldTrack);
+      } catch { /* noop */ }
+      try {
+        this.localStream?.addTrack(newTrack);
+      } catch { /* noop */ }
+      oldTrack.stop();
+      // Stop leftover audio from the fresh gUM (we only wanted video).
+      fresh.getAudioTracks().forEach((t) => t.stop());
+
+      this.facing = next;
+      this.cb.onLocalStream(this.localStream!);
+      this.cb.onFacingChange?.(this.facing);
+      return this.facing;
+    } catch (e: any) {
+      clog('switchCamera failed, fallback _switchCamera', e?.message ?? e);
+      try {
+        this.localStream?.getVideoTracks().forEach((t: any) => t._switchCamera?.());
+        this.facing = next;
+        this.cb.onFacingChange?.(this.facing);
+      } catch { /* noop */ }
+      return this.facing;
+    }
   }
 
-  // Read-only stats sample for the network-quality indicator. Never touches the
-  // peer connection — just reads the latest RTCStatsReport (Map-like: forEach).
+  getFacing(): 'user' | 'environment' {
+    return this.facing;
+  }
+
   async getStats(): Promise<any | null> {
     try {
       return this.pc ? await (this.pc as any).getStats() : null;
@@ -386,16 +595,35 @@ export class CallSession {
     if (this.ended) return;
     this.ended = true;
     this.stopReadyHeartbeat();
-    if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
-    if (this.connectTimer) { clearTimeout(this.connectTimer); this.connectTimer = null; }
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (this.iceRestartTimer) {
+      clearTimeout(this.iceRestartTimer);
+      this.iceRestartTimer = null;
+    }
+    if (this.connectTimer) {
+      clearTimeout(this.connectTimer);
+      this.connectTimer = null;
+    }
     if (sendBye) this.signaling?.send({ kind: 'bye', from: this.selfId });
     try {
       this.localStream?.getTracks().forEach((t) => t.stop());
+      this.remoteStream?.getTracks().forEach((t) => {
+        try {
+          t.stop();
+        } catch { /* noop */ }
+      });
       this.pc?.close();
-    } catch {
-      /* noop */
-    }
+    } catch { /* noop */ }
+    try {
+      InCallManager.stopRingback?.();
+    } catch { /* noop */ }
     InCallManager.stop();
+    try {
+      (InCallManager as any).setKeepScreenOn?.(false);
+    } catch { /* noop */ }
     this.signaling?.close();
     this.cb.onEnded();
   }

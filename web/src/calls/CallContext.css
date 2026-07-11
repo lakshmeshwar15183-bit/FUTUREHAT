@@ -48,6 +48,16 @@
 .call-vid.local { opacity: 0; }
 .call-overlay.local-on .call-vid.local { opacity: 1; }
 
+/* WhatsApp: local preview is mirrored for front camera only. Remote is never mirrored.
+   Applied only in PiP (self-view). When local is expanded to full, keep mirror for front. */
+.call-vid.local.mirror {
+  transform: scaleX(-1);
+}
+.call-vid.local.mirror.pip:active {
+  /* keep mirror while grabbing */
+  transform: scaleX(-1);
+}
+
 /* Camera-loading placeholder over the local PiP. */
 .call-cam-loading {
   position: fixed; width: 116px; height: 168px; border-radius: 16px; z-index: 4;

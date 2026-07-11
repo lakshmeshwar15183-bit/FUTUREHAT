@@ -47,8 +47,6 @@ import {
 } from '../lib/notifications';
 import { CallSession } from './webrtc';
 import Avatar from '../components/Avatar';
-import { useColors } from '../theme';
-import { formatTime } from '../lib/time';
 
 interface ActiveCall {
   callId: UUID;
@@ -332,39 +330,48 @@ function ActiveCallView({
   onHangup: () => void;
 }) {
   const insets = useSafeAreaInsets();
-  const colors = useColors();
   const sessionRef = useRef<CallSession | null>(null);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+  // Generation counters force RTCView remount when tracks are added/unmuted
+  // (root fix for white/blank remote: SurfaceView must re-bind after first frame).
+  const [remoteGen, setRemoteGen] = useState(0);
+  const [localGen, setLocalGen] = useState(0);
+  const [facing, setFacing] = useState<'user' | 'environment'>('user');
   const [connected, setConnected] = useState(false);
   const [muted, setMuted] = useState(false);
   const [videoOn, setVideoOn] = useState(call.type === 'video');
   const [speaker, setSpeaker] = useState(call.type === 'video');
   const [elapsed, setElapsed] = useState(0);
-  // Signal-strength quality 1–4 (4 = excellent), mirrors web getStats polling.
   const [netQuality, setNetQuality] = useState(4);
-  // WhatsApp-style minimize: shrink the call to a draggable floating bubble so the
-  // user can navigate the app mid-call (web CallContext minimize-to-bubble parity).
   const [minimized, setMinimized] = useState(false);
+  const lastTapRef = useRef(0);
 
-  // Build + start the WebRTC session.
+  // Build + start the WebRTC session once per call id.
   useEffect(() => {
+    let remoteTick = 0;
+    let localTick = 0;
     const session = new CallSession(call.callId, self, call.isCaller, call.type, {
-      onLocalStream: setLocalStream,
-      onRemoteStream: setRemoteStream,
+      onLocalStream: (s) => {
+        setLocalStream(s);
+        localTick += 1;
+        setLocalGen(localTick);
+      },
+      onRemoteStream: (s) => {
+        setRemoteStream(s);
+        remoteTick += 1;
+        setRemoteGen(remoteTick);
+      },
       onConnected: () => setConnected(true),
       onEnded: () => onHangup(),
+      onFacingChange: (f) => setFacing(f),
     });
     sessionRef.current = session;
-    // If start() rejects (e.g. mic/camera permission denied, or the native WebRTC
-    // module failing to init) tear the call down cleanly instead of leaving the
-    // call view stuck on "connecting". Log the reason so it's diagnosable.
     session.start().catch((e) => {
       console.log('[call] start() FAILED:', e?.message ?? String(e));
       session.end(false);
     });
 
-    // Watch for the far end declining / ending.
     const statusCh = subscribeToCallStatus(supabase, call.callId, (c) => {
       if (c.status === 'ended' || c.status === 'declined' || c.status === 'missed') {
         session.end(false);
@@ -378,16 +385,13 @@ function ActiveCallView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Call timer.
   useEffect(() => {
     if (!connected) return;
     const t = setInterval(() => setElapsed((e) => e + 1), 1000);
     return () => clearInterval(t);
   }, [connected]);
 
-  // Network-quality indicator — polls getStats read-only (never touches the PC),
-  // deriving a 1–4 score from packet loss + round-trip time. Same thresholds as
-  // web CallContext so the bars mean the same thing on both platforms.
+  // Network quality from getStats (packet loss + RTT).
   useEffect(() => {
     if (!connected) {
       setNetQuality(4);
@@ -432,42 +436,123 @@ function ActiveCallView({
   const timer = `${Math.floor(elapsed / 60)}:${(elapsed % 60).toString().padStart(2, '0')}`;
   const status = connected ? timer : call.isCaller ? 'Ringing…' : 'Connecting…';
 
-  // Draggable minimized bubble position. Sizes differ for video (small window) vs
-  // audio (wide pill); the bubble starts pinned to the top-right like WhatsApp.
+  // Remote has a *live* video track (not just audio) — otherwise RTCView paints white.
+  const remoteHasVideo = !!(
+    remoteStream &&
+    remoteStream.getVideoTracks().some((t) => t.readyState === 'live' && t.enabled)
+  );
+  const localHasVideo = !!(
+    localStream &&
+    videoOn &&
+    localStream.getVideoTracks().some((t) => t.readyState === 'live')
+  );
+  // WhatsApp: local preview is mirrored only for front camera.
+  const localMirror = facing === 'user';
+
+  const remoteUrl = remoteStream ? remoteStream.toURL() : '';
+  const localUrl = localStream ? localStream.toURL() : '';
+  const remoteTrackKey = remoteStream
+    ? remoteStream.getTracks().map((t) => `${t.id}:${t.readyState}`).join('|')
+    : '';
+  const localTrackKey = localStream
+    ? localStream.getTracks().map((t) => `${t.id}:${t.readyState}`).join('|')
+    : '';
+
+  // ── Draggable local PiP (WhatsApp-style) ───────────────────────────────────
   const screen = Dimensions.get('window');
-  const bubbleW = showVideo ? 124 : 230;
-  const bubbleH = showVideo ? 172 : 60;
-  const pan = useRef(new Animated.ValueXY({ x: screen.width - bubbleW - 14, y: 0 })).current;
-  const panResponder = useRef(
+  const pipW = 110;
+  const pipH = 160;
+  const pipPan = useRef(
+    new Animated.ValueXY({ x: screen.width - pipW - 14, y: insets.top + 12 }),
+  ).current;
+  const pipResponder = useRef(
     PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
       onMoveShouldSetPanResponder: (_e, g) => Math.abs(g.dx) > 4 || Math.abs(g.dy) > 4,
       onPanResponderGrant: () => {
-        pan.setOffset({ x: (pan.x as any)._value, y: (pan.y as any)._value });
-        pan.setValue({ x: 0, y: 0 });
+        pipPan.setOffset({ x: (pipPan.x as any)._value, y: (pipPan.y as any)._value });
+        pipPan.setValue({ x: 0, y: 0 });
       },
-      onPanResponderMove: Animated.event([null, { dx: pan.x, dy: pan.y }], { useNativeDriver: false }),
+      onPanResponderMove: Animated.event([null, { dx: pipPan.x, dy: pipPan.y }], {
+        useNativeDriver: false,
+      }),
       onPanResponderRelease: () => {
-        pan.flattenOffset();
-        const cx = Math.max(8, Math.min((pan.x as any)._value, screen.width - bubbleW - 8));
-        const cy = Math.max(0, Math.min((pan.y as any)._value, screen.height - bubbleH - 140));
-        Animated.spring(pan, { toValue: { x: cx, y: cy }, useNativeDriver: false, friction: 7 }).start();
+        pipPan.flattenOffset();
+        const cx = Math.max(8, Math.min((pipPan.x as any)._value, screen.width - pipW - 8));
+        const cy = Math.max(
+          insets.top + 8,
+          Math.min((pipPan.y as any)._value, screen.height - pipH - 180),
+        );
+        Animated.spring(pipPan, {
+          toValue: { x: cx, y: cy },
+          useNativeDriver: false,
+          friction: 7,
+        }).start();
       },
     }),
   ).current;
 
-  // Minimized floating bubble — a compact, draggable window onto the call. It is
-  // NOT an absoluteFill, so touches outside it pass through to the app beneath,
-  // which is exactly what lets the user keep using Lumixo during a call.
+  // Double-tap remote (or empty area) to switch camera — WhatsApp parity.
+  function onDoubleTapSwitch() {
+    if (!showVideo) return;
+    const now = Date.now();
+    if (now - lastTapRef.current < 280) {
+      lastTapRef.current = 0;
+      void sessionRef.current?.switchCamera();
+    } else {
+      lastTapRef.current = now;
+    }
+  }
+
+  // Minimized bubble
+  const bubbleW = showVideo ? 124 : 230;
+  const bubbleH = showVideo ? 172 : 60;
+  const bubblePan = useRef(
+    new Animated.ValueXY({ x: screen.width - bubbleW - 14, y: 0 }),
+  ).current;
+  const bubbleResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_e, g) => Math.abs(g.dx) > 4 || Math.abs(g.dy) > 4,
+      onPanResponderGrant: () => {
+        bubblePan.setOffset({
+          x: (bubblePan.x as any)._value,
+          y: (bubblePan.y as any)._value,
+        });
+        bubblePan.setValue({ x: 0, y: 0 });
+      },
+      onPanResponderMove: Animated.event([null, { dx: bubblePan.x, dy: bubblePan.y }], {
+        useNativeDriver: false,
+      }),
+      onPanResponderRelease: () => {
+        bubblePan.flattenOffset();
+        const cx = Math.max(8, Math.min((bubblePan.x as any)._value, screen.width - bubbleW - 8));
+        const cy = Math.max(0, Math.min((bubblePan.y as any)._value, screen.height - bubbleH - 140));
+        Animated.spring(bubblePan, {
+          toValue: { x: cx, y: cy },
+          useNativeDriver: false,
+          friction: 7,
+        }).start();
+      },
+    }),
+  ).current;
+
   if (minimized) {
     return (
       <Animated.View
-        style={[styles.bubbleBase, { top: insets.top + 8 }, pan.getLayout()]}
-        {...panResponder.panHandlers}
+        style={[styles.bubbleBase, { top: insets.top + 8 }, bubblePan.getLayout()]}
+        {...bubbleResponder.panHandlers}
       >
         {showVideo ? (
           <Pressable style={styles.bubbleVideo} onPress={() => setMinimized(false)}>
-            {remoteStream ? (
-              <RTCView streamURL={remoteStream.toURL()} style={StyleSheet.absoluteFill} objectFit="cover" />
+            {remoteHasVideo && remoteUrl ? (
+              <RTCView
+                key={`bub-r-${remoteGen}-${remoteTrackKey}`}
+                streamURL={remoteUrl}
+                style={[StyleSheet.absoluteFill, { backgroundColor: '#000' }]}
+                objectFit="cover"
+                mirror={false}
+                zOrder={0}
+              />
             ) : (
               <View style={styles.bubbleVideoPlaceholder}>
                 <Avatar uri={call.peer?.avatar_url} name={call.peer?.display_name} size={44} />
@@ -475,9 +560,20 @@ function ActiveCallView({
             )}
             <View style={styles.bubbleOverlayBar}>
               {connected && <NetBars q={netQuality} size={3} />}
-              <Text style={styles.bubbleTimer} numberOfLines={1}>{connected ? timer : '…'}</Text>
-              <Pressable hitSlop={8} onPress={() => sessionRef.current!.end(true)} style={styles.bubbleHangup}>
-                <Ionicons name="call" size={14} color="#fff" style={{ transform: [{ rotate: '135deg' }] }} />
+              <Text style={styles.bubbleTimer} numberOfLines={1}>
+                {connected ? timer : '…'}
+              </Text>
+              <Pressable
+                hitSlop={8}
+                onPress={() => sessionRef.current!.end(true)}
+                style={styles.bubbleHangup}
+              >
+                <Ionicons
+                  name="call"
+                  size={14}
+                  color="#fff"
+                  style={{ transform: [{ rotate: '135deg' }] }}
+                />
               </Pressable>
             </View>
           </Pressable>
@@ -485,14 +581,27 @@ function ActiveCallView({
           <Pressable style={styles.bubblePill} onPress={() => setMinimized(false)}>
             <Avatar uri={call.peer?.avatar_url} name={call.peer?.display_name} size={36} />
             <View style={{ flex: 1 }}>
-              <Text style={styles.bubblePeer} numberOfLines={1}>{call.peer?.display_name ?? 'Call'}</Text>
+              <Text style={styles.bubblePeer} numberOfLines={1}>
+                {call.peer?.display_name ?? 'Call'}
+              </Text>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                 {connected && <NetBars q={netQuality} size={3} />}
-                <Text style={styles.bubbleTimer} numberOfLines={1}>{connected ? timer : status}</Text>
+                <Text style={styles.bubbleTimer} numberOfLines={1}>
+                  {connected ? timer : status}
+                </Text>
               </View>
             </View>
-            <Pressable hitSlop={8} onPress={() => sessionRef.current!.end(true)} style={styles.bubbleHangup}>
-              <Ionicons name="call" size={16} color="#fff" style={{ transform: [{ rotate: '135deg' }] }} />
+            <Pressable
+              hitSlop={8}
+              onPress={() => sessionRef.current!.end(true)}
+              style={styles.bubbleHangup}
+            >
+              <Ionicons
+                name="call"
+                size={16}
+                color="#fff"
+                style={{ transform: [{ rotate: '135deg' }] }}
+              />
             </Pressable>
           </Pressable>
         )}
@@ -502,38 +611,93 @@ function ActiveCallView({
 
   return (
     <View style={[StyleSheet.absoluteFill, styles.callContainer]}>
-      {showVideo && remoteStream ? (
-        <RTCView streamURL={remoteStream.toURL()} style={StyleSheet.absoluteFill} objectFit="cover" />
-      ) : (
-        <View style={styles.audioBg}>
-          <Avatar uri={call.peer?.avatar_url} name={call.peer?.display_name} size={140} />
-        </View>
+      {/* Full-screen remote — BLACK base (never white). Only mount RTCView when a
+          live video track exists; otherwise show avatar (WhatsApp connecting state). */}
+      <Pressable style={StyleSheet.absoluteFill} onPress={onDoubleTapSwitch}>
+        {showVideo && remoteHasVideo && remoteUrl ? (
+          <RTCView
+            key={`remote-${remoteGen}-${remoteTrackKey}`}
+            streamURL={remoteUrl}
+            style={[StyleSheet.absoluteFill, { backgroundColor: '#000' }]}
+            objectFit="cover"
+            mirror={false}
+            zOrder={0}
+          />
+        ) : (
+          <View style={styles.audioBg}>
+            <Avatar uri={call.peer?.avatar_url} name={call.peer?.display_name} size={140} />
+            {showVideo && connected && !remoteHasVideo && (
+              <Text style={styles.waitingVideo}>Waiting for video…</Text>
+            )}
+          </View>
+        )}
+      </Pressable>
+
+      {/* Local PiP — mirrored for front camera only; draggable; rounded. */}
+      {showVideo && localHasVideo && localUrl && (
+        <Animated.View
+          style={[styles.pipWrap, pipPan.getLayout()]}
+          {...pipResponder.panHandlers}
+        >
+          <Pressable
+            onPress={() => {
+              // Single tap on PiP also switches camera (quick toggle).
+              void sessionRef.current?.switchCamera();
+            }}
+            style={styles.pipInner}
+          >
+            <RTCView
+              key={`local-${localGen}-${localTrackKey}-${facing}`}
+              streamURL={localUrl}
+              style={styles.pipVideo}
+              objectFit="cover"
+              mirror={localMirror}
+              zOrder={1}
+            />
+          </Pressable>
+        </Animated.View>
       )}
 
-      {showVideo && localStream && videoOn && (
-        <RTCView streamURL={localStream.toURL()} style={[styles.pip, { top: insets.top + 12 }]} objectFit="cover" zOrder={1} />
-      )}
-
-      {/* Minimize (left) · network-quality bars (right) */}
-      <Pressable style={[styles.minimizeBtn, { top: insets.top + 12 }]} hitSlop={10} onPress={() => setMinimized(true)}>
+      <Pressable
+        style={[styles.minimizeBtn, { top: insets.top + 12 }]}
+        hitSlop={10}
+        onPress={() => setMinimized(true)}
+      >
         <Ionicons name="chevron-down" size={26} color="#fff" />
       </Pressable>
       <View style={[styles.netTop, { top: insets.top + 16 }]}>
         {connected && <NetBars q={netQuality} size={4} />}
       </View>
 
-      <View style={[styles.callHeader, { top: insets.top + 16 }]}>
+      <View style={[styles.callHeader, { top: insets.top + 16 }]} pointerEvents="none">
         <Text style={styles.callPeer}>{call.peer?.display_name ?? 'Lumixo user'}</Text>
         <Text style={styles.callStatus}>{status}</Text>
       </View>
 
       <View style={[styles.controls, { paddingBottom: insets.bottom + 24 }]}>
-        <RoundCtl icon={muted ? 'mic-off' : 'mic'} active={muted} onPress={() => setMuted(sessionRef.current!.toggleMute())} />
-        <RoundCtl icon={speaker ? 'volume-high' : 'volume-low'} active={speaker} onPress={() => setSpeaker(sessionRef.current!.toggleSpeaker())} />
+        <RoundCtl
+          icon={muted ? 'mic-off' : 'mic'}
+          active={muted}
+          onPress={() => setMuted(sessionRef.current!.toggleMute())}
+        />
+        <RoundCtl
+          icon={speaker ? 'volume-high' : 'volume-low'}
+          active={speaker}
+          onPress={() => setSpeaker(sessionRef.current!.toggleSpeaker())}
+        />
         {showVideo && (
           <>
-            <RoundCtl icon={videoOn ? 'videocam' : 'videocam-off'} active={!videoOn} onPress={() => setVideoOn(sessionRef.current!.toggleVideo())} />
-            <RoundCtl icon="camera-reverse" onPress={() => sessionRef.current!.switchCamera()} />
+            <RoundCtl
+              icon={videoOn ? 'videocam' : 'videocam-off'}
+              active={!videoOn}
+              onPress={() => setVideoOn(sessionRef.current!.toggleVideo())}
+            />
+            <RoundCtl
+              icon="camera-reverse"
+              onPress={() => {
+                void sessionRef.current?.switchCamera();
+              }}
+            />
           </>
         )}
         <Pressable style={styles.hangup} onPress={() => sessionRef.current!.end(true)}>
@@ -541,8 +705,11 @@ function ActiveCallView({
         </Pressable>
       </View>
 
-      {!connected && !remoteStream && (
-        <ActivityIndicator color="#fff" style={{ position: 'absolute', alignSelf: 'center', bottom: 160 }} />
+      {!connected && (
+        <ActivityIndicator
+          color="#fff"
+          style={{ position: 'absolute', alignSelf: 'center', bottom: 160 }}
+        />
       )}
     </View>
   );
@@ -595,9 +762,31 @@ const styles = StyleSheet.create({
   ringActions: { flexDirection: 'row', gap: 60, marginTop: 80 },
   circle: { width: 70, height: 70, borderRadius: 35, alignItems: 'center', justifyContent: 'center' },
   circleLabel: { color: '#fff', marginTop: 8, fontSize: 13 },
-  callContainer: { backgroundColor: '#0B141A', zIndex: 100 },
-  audioBg: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0B141A' },
-  pip: { position: 'absolute', right: 12, width: 110, height: 160, borderRadius: 12, backgroundColor: '#000' },
+  callContainer: { backgroundColor: '#000', zIndex: 100 },
+  audioBg: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#0B141A',
+  },
+  waitingVideo: { color: 'rgba(255,255,255,0.65)', marginTop: 14, fontSize: 14 },
+  // Draggable local preview — black base so SurfaceView never flashes white.
+  pipWrap: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    width: 110,
+    height: 160,
+    borderRadius: 14,
+    overflow: 'hidden',
+    backgroundColor: '#000',
+    zIndex: 20,
+    elevation: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.25)',
+  },
+  pipInner: { flex: 1, backgroundColor: '#000' },
+  pipVideo: { width: '100%', height: '100%', backgroundColor: '#000' },
   callHeader: { position: 'absolute', alignSelf: 'center', alignItems: 'center' },
   callPeer: { color: '#fff', fontSize: 22, fontWeight: '700' },
   callStatus: { color: '#cfd9d6', fontSize: 14, marginTop: 4 },
