@@ -94,10 +94,19 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       }
       const peer = await getProfile(supabase, call.caller_id);
       setIncoming({ call, peer });
-      (InCallManager as any).startRingtone('_DEFAULT_');
-      // Always raise a high-priority call notification so locked-screen /
-      // backgrounded devices still ring (WhatsApp-class). Full-screen UI is
-      // the IncomingCallView when the app is already open.
+      // Audio routing (WhatsApp-class):
+      //  • App foreground → play RINGTONE via InCallManager (RING stream).
+      //  • App background/killed → system "Incoming calls" channel rings (ringtone
+      //    usage). Do NOT also start InCallManager here or you get double audio.
+      //  • Never use ringback for the callee (ringback = caller-only DTMF).
+      try { InCallManager.stopRingback?.(); } catch { /* noop */ }
+      if (AppState.currentState === 'active') {
+        try {
+          (InCallManager as any).startRingtone('_DEFAULT_');
+        } catch { /* noop */ }
+      }
+      // High-priority tray notif (locked screen / heads-up Accept·Decline).
+      // Foreground handler suppresses channel *sound* when JS is ringing.
       void presentCallNotification({
         callId: call.id,
         conversationId: call.conversation_id,
@@ -124,7 +133,8 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
 
         if (currentCall?.status === 'ringing') {
           // Still ringing after 60s — mark as missed and stop ringing
-          InCallManager.stopRingtone();
+          try { InCallManager.stopRingtone(); } catch { /* noop */ }
+          try { InCallManager.stopRingback?.(); } catch { /* noop */ }
           void clearCallNotification(call.id);
           await updateCallStatus(supabase, call.id, 'missed').catch(() => {});
           void presentMissedCallNotification({
@@ -156,7 +166,8 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     const ch = subscribeToCallStatus(supabase, id, (c) => {
       if (!alive) return;
       if (c.status === 'ended' || c.status === 'declined' || c.status === 'missed') {
-        InCallManager.stopRingtone();
+        try { InCallManager.stopRingtone(); } catch { /* noop */ }
+        try { InCallManager.stopRingback?.(); } catch { /* noop */ }
         void clearCallNotification(id);
         setIncoming(null);
       }
@@ -176,7 +187,8 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
           .single();
         if (!alive || !call) return;
         if (call.status === 'ended' || call.status === 'declined' || call.status === 'missed') {
-          InCallManager.stopRingtone();
+          try { InCallManager.stopRingtone(); } catch { /* noop */ }
+          try { InCallManager.stopRingback?.(); } catch { /* noop */ }
           void clearCallNotification(id);
           setIncoming(null);
         }
@@ -224,10 +236,15 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     [uid, active],
   );
 
+  const stopIncomingAudio = useCallback(() => {
+    try { InCallManager.stopRingtone(); } catch { /* noop */ }
+    try { InCallManager.stopRingback?.(); } catch { /* noop */ }
+  }, []);
+
   const acceptIncoming = useCallback(async () => {
     if (!incoming) return;
     if (ringTimeoutRef.current) clearTimeout(ringTimeoutRef.current);
-    InCallManager.stopRingtone();
+    stopIncomingAudio();
     void clearCallNotification(incoming.call.id);
     await updateCallStatus(supabase, incoming.call.id, 'accepted');
     setActive({
@@ -238,16 +255,16 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       isCaller: false,
     });
     setIncoming(null);
-  }, [incoming]);
+  }, [incoming, stopIncomingAudio]);
 
   const declineIncoming = useCallback(async () => {
     if (!incoming) return;
     if (ringTimeoutRef.current) clearTimeout(ringTimeoutRef.current);
-    InCallManager.stopRingtone();
+    stopIncomingAudio();
     void clearCallNotification(incoming.call.id);
     await updateCallStatus(supabase, incoming.call.id, 'declined');
     setIncoming(null);
-  }, [incoming]);
+  }, [incoming, stopIncomingAudio]);
 
   const endActive = useCallback(async () => {
     if (!active) return;

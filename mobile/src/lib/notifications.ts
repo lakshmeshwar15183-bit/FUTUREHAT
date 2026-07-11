@@ -12,7 +12,8 @@ import { supabase } from './supabase';
 import { registerPushToken, removePushToken } from './shared';
 
 // Bump when channel definitions change so they're re-created once (never every launch).
-const CHANNELS_VERSION = '3';
+// v4: Calls channel uses NOTIFICATION_RINGTONE usage (not generic notification stream).
+const CHANNELS_VERSION = '4';
 const CHANNELS_KEY = 'fh:channelsVersion';
 
 export const CHANNELS = {
@@ -45,11 +46,23 @@ Notifications.setNotificationHandler({
     const convId = typeof data?.conversationId === 'string' ? data.conversationId : null;
     const type = typeof data?.type === 'string' ? data.type : '';
     const kind = typeof data?.kind === 'string' ? data.kind : '';
-    // Silent call-status cancels: never show a banner.
+    // Silent call-status cancels: never show a banner / sound.
     if (type === 'call_status' || data?.silent === '1' || data?.silent === 1) {
       return {
         shouldShowAlert: false,
         shouldPlaySound: false,
+        shouldSetBadge: false,
+      };
+    }
+    // Incoming call: when JS is alive we ring via InCallManager ringtone on the
+    // RING stream. Suppress the notification *sound* here so we never double-play
+    // notification-channel audio over the proper ringtone (WhatsApp parity).
+    // Still show the banner (locked-screen / heads-up) for Accept/Decline.
+    const isCall = type === 'call' || kind === 'call';
+    if (isCall) {
+      return {
+        shouldShowAlert: true,
+        shouldPlaySound: false, // ringtone is InCallManager, not notification stream
         shouldSetBadge: false,
       };
     }
@@ -160,14 +173,48 @@ export async function initNotifications(): Promise<void> {
       name: 'Group Messages', importance: I.HIGH, sound: 'default',
       vibrationPattern: [0, 250, 250, 250], enableVibrate: true, enableLights: true, lightColor: LED, showBadge: true,
     });
+    // Incoming-call channel: MAX importance + RINGTONE audio usage so Android
+    // routes sound through the ringtone stream (not notification "ding").
+    // Vibration pattern is a classic long ring cadence.
     await Notifications.setNotificationChannelAsync(CHANNELS.calls, {
-      name: 'Calls', importance: I.MAX, sound: 'default',
-      vibrationPattern: [0, 1000, 800, 1000, 800, 1000], enableVibrate: true, enableLights: true, lightColor: LED,
-      bypassDnd: true, lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+      name: 'Incoming calls',
+      importance: I.MAX,
+      // 'default' = system default *for this channel*; with RINGTONE usage OEMs
+      // typically map this to the phone ringtone — correct for the *callee*.
+      sound: 'default',
+      vibrationPattern: [0, 1000, 1000, 1000, 1000, 1000],
+      enableVibrate: true,
+      enableLights: true,
+      lightColor: LED,
+      bypassDnd: true,
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+      showBadge: false,
+      audioAttributes: {
+        usage: Notifications.AndroidAudioUsage.NOTIFICATION_RINGTONE,
+        contentType: Notifications.AndroidAudioContentType.SONIFICATION,
+        flags: {
+          enforceAudibility: true,
+          requestHardwareAudioVideoSynchronization: false,
+        },
+      },
     });
     await Notifications.setNotificationChannelAsync(CHANNELS.missedCalls, {
-      name: 'Missed Calls', importance: I.HIGH, sound: 'default',
-      vibrationPattern: [0, 300], enableVibrate: true, enableLights: true, lightColor: LED,
+      name: 'Missed Calls',
+      importance: I.HIGH,
+      sound: 'default',
+      vibrationPattern: [0, 300],
+      enableVibrate: true,
+      enableLights: true,
+      lightColor: LED,
+      showBadge: true,
+      audioAttributes: {
+        usage: Notifications.AndroidAudioUsage.NOTIFICATION,
+        contentType: Notifications.AndroidAudioContentType.SONIFICATION,
+        flags: {
+          enforceAudibility: false,
+          requestHardwareAudioVideoSynchronization: false,
+        },
+      },
     });
     await Notifications.setNotificationChannelAsync(CHANNELS.status, {
       name: 'Status Replies', importance: I.HIGH, sound: 'default',
@@ -281,9 +328,14 @@ export interface CallNotifOpts {
   video?: boolean;
 }
 
-/** Present a high-priority incoming-call notification with Accept/Decline. */
+/** Present a high-priority incoming-call notification with Accept/Decline.
+ *  Sound for *killed/background* is the Calls channel (ringtone stream).
+ *  When JS is alive, InCallManager plays the ringtone; the foreground handler
+ *  suppresses notification channel audio to avoid double-ring. */
 export async function presentCallNotification(o: CallNotifOpts): Promise<void> {
   try {
+    // Replace any prior call notif for this id (no duplicates).
+    await Notifications.dismissNotificationAsync(`call:${o.callId}`).catch(() => {});
     await Notifications.scheduleNotificationAsync({
       identifier: `call:${o.callId}`,
       content: {
@@ -299,12 +351,13 @@ export async function presentCallNotification(o: CallNotifOpts): Promise<void> {
         },
         priority: Notifications.AndroidNotificationPriority.MAX,
         sticky: true,
-        sound: 'default',
+        // Android: channel owns the sound (ringtone usage). iOS: default.
+        sound: Platform.OS === 'ios' ? 'default' : undefined,
         ...(Platform.OS === 'android'
           ? {
               channelId: CHANNELS.calls,
-              // Full-screen intent when the screen is locked (WhatsApp-class).
-              // Requires USE_FULL_SCREEN_INTENT (already in AndroidManifest).
+              // Heads-up + lock-screen prominence (WhatsApp-class).
+              // Full-screen intent requires USE_FULL_SCREEN_INTENT (manifest).
             }
           : {}),
       },

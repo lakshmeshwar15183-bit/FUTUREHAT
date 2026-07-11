@@ -129,12 +129,23 @@ export class CallSession {
     this.cb.onLocalStream(this.localStream);
     this.cb.onFacingChange?.(this.facing);
 
-    // 2) Audio session: ringback for caller, media mode for both.
+    // 2) Audio session.
+    // CRITICAL: Caller ringback must be `_DTMF_` (ToneGenerator on VOICE_CALL stream
+    // = classic "trrr… trrr…"). `_DEFAULT_` maps to the device RINGTONE URI in
+    // react-native-incall-manager and makes the *caller* hear their own incoming
+    // ringtone — the WhatsApp-breaking bug.
+    // Callee: no ringback here; CallContext starts ringtone separately.
     InCallManager.start({
       media: this.type === 'video' ? 'video' : 'audio',
       auto: true,
-      ringback: this.isCaller ? '_DEFAULT_' : undefined,
+      ringback: this.isCaller ? '_DTMF_' : '',
     } as any);
+    if (this.isCaller) {
+      // Explicit API so we can stop/restart cleanly on state transitions.
+      try {
+        InCallManager.startRingback('_DTMF_');
+      } catch { /* start() may already play it */ }
+    }
     InCallManager.setForceSpeakerphoneOn(this.speakerOn);
     // Keep screen awake during video; proximity sensor for earpiece audio calls.
     try {
@@ -201,9 +212,9 @@ export class CallSession {
       if (!this.connectedOnce) {
         this.connectedOnce = true;
         clog('✅ CONNECTED');
-        try {
-          InCallManager.stopRingback?.();
-        } catch { /* noop */ }
+        // Connected: silence ALL local tones immediately (ringback + any ringtone leak).
+        try { InCallManager.stopRingback?.(); } catch { /* noop */ }
+        try { InCallManager.stopRingtone?.(); } catch { /* noop */ }
       }
       this.cb.onConnected();
     };
@@ -622,10 +633,13 @@ export class CallSession {
       });
       this.pc?.close();
     } catch { /* noop */ }
+    // End: stop every local tone before tearing down the audio session.
+    try { InCallManager.stopRingback?.(); } catch { /* noop */ }
+    try { InCallManager.stopRingtone?.(); } catch { /* noop */ }
+    try { (InCallManager as any).stopBusytone?.(); } catch { /* noop */ }
     try {
-      InCallManager.stopRingback?.();
+      InCallManager.stop();
     } catch { /* noop */ }
-    InCallManager.stop();
     try {
       (InCallManager as any).setKeepScreenOn?.(false);
     } catch { /* noop */ }

@@ -328,20 +328,18 @@ async function fanOut(
                 notification: { title, body: bodyText },
                 data,
                 android: {
+                  // HIGH priority wakes doze and enables heads-up for call invites.
                   priority: 'high',
                   ttl: isCall ? '60s' : '86400s',
                   notification: {
                     channel_id: channelId,
+                    // Calls channel on-device uses NOTIFICATION_RINGTONE audio usage.
                     sound: 'default',
                     tag,
                     notification_priority: isCall ? 'PRIORITY_MAX' : 'PRIORITY_HIGH',
                     default_vibrate_timings: true,
                     visibility: 'PUBLIC',
-                    ...(isCall
-                      ? {
-                          // Android call-style presentation when supported.
-                        }
-                      : {}),
+                    ...(isCall ? { sticky: true } : {}),
                   },
                 },
                 apns: {
