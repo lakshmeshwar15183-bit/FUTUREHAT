@@ -2,7 +2,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -22,6 +21,7 @@ import { queueAction } from '../lib/sync';
 import { uploadAvatarFromUri } from '../lib/media';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import Avatar from '../components/Avatar';
+import { Alert } from '../ui/dialog';
 
 export default function EditProfileScreen() {
   const navigation = useNavigation();

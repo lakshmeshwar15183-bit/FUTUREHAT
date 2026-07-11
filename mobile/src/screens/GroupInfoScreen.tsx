@@ -3,7 +3,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   FlatList,
   Image,
   Modal,
@@ -73,6 +72,7 @@ import { uploadAvatarFromUri } from '../lib/media';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import Avatar from '../components/Avatar';
 import type { RootStackParamList } from '../navigation/types';
+import { Alert } from '../ui/dialog';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'GroupInfo'>;
 type Rt = RouteProp<RootStackParamList, 'GroupInfo'>;

@@ -1,7 +1,7 @@
 // Lumixo mobile — view a user's profile. Shows avatar/name/username/about
 // and contextual actions (message / call, or edit when it's me).
 import React, { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Image, Linking, Modal, Pressable, ScrollView, Share, StyleSheet, Switch, Text, View } from 'react-native';
+import { ActivityIndicator, Image, Linking, Modal, Pressable, ScrollView, Share, StyleSheet, Switch, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -25,6 +25,7 @@ import Avatar from '../components/Avatar';
 import MediaViewer, { type ViewerItem } from '../components/MediaViewer';
 import { isVideoUrl } from '../components/MessageBubble';
 import type { RootStackParamList } from '../navigation/types';
+import { Alert } from '../ui/dialog';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'Profile'>;
 type Rt = RouteProp<RootStackParamList, 'Profile'>;
@@ -168,17 +169,11 @@ export default function ProfileScreen() {
   }
 
   function report() {
-    Alert.prompt?.('Report user', 'What is the issue?', async (reason?: string) => {
+    Alert.prompt('Report user', 'What is the issue?', async (reason?: string) => {
       if (!reason?.trim()) return;
       const { error } = await submitReport(supabase, 'user', params.userId, reason.trim());
       Alert.alert(error ? 'Error' : 'Reported', error ? error.message : 'Our safety team will review this.');
     });
-    // Android lacks Alert.prompt; fall back to a direct report.
-    if (!Alert.prompt) {
-      submitReport(supabase, 'user', params.userId, 'Reported from profile').then(({ error }) =>
-        Alert.alert(error ? 'Error' : 'Reported', error ? error.message : 'Our safety team will review this.'),
-      );
-    }
   }
 
   function shareContact() {

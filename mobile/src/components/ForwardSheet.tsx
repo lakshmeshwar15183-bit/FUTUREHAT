@@ -8,12 +8,15 @@ import {
   ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import Animated, { FadeIn, SlideInDown, SlideOutDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { ConversationSummary } from '../lib/shared';
 import { useColors, radius, type Palette } from '../theme';
 import Avatar from './Avatar';
 import SignedImage from './SignedImage';
+
+const SHEET_RADIUS = 26;
 
 export interface ForwardPreview {
   kind: 'image' | 'video';
@@ -104,10 +107,17 @@ export default function ForwardSheet({ visible, onClose, conversations, onConfir
   const Section = ({ label }: { label: string }) => <Text style={styles.section}>{label}</Text>;
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={close} statusBarTranslucent>
+    <Modal visible={visible} transparent animationType="none" onRequestClose={close} statusBarTranslucent>
       <View style={styles.root}>
-        <Pressable style={styles.backdrop} onPress={close} />
-        <View style={[styles.sheet, { paddingBottom: insets.bottom + 10 }]}>
+        <Animated.View entering={FadeIn.duration(180)} style={StyleSheet.absoluteFill}>
+          <Pressable style={styles.backdrop} onPress={close} />
+        </Animated.View>
+        <Animated.View
+          entering={SlideInDown.springify().damping(18).stiffness(180)}
+          exiting={SlideOutDown.duration(180)}
+          style={[styles.sheet, { paddingBottom: insets.bottom + 12 }]}
+        >
+          <View style={styles.handle} />
           {/* Header */}
           <View style={styles.header}>
             {step === 'confirm' ? (
@@ -218,7 +228,7 @@ export default function ForwardSheet({ visible, onClose, conversations, onConfir
               </Pressable>
             </View>
           )}
-        </View>
+        </Animated.View>
       </View>
     </Modal>
   );
@@ -227,21 +237,45 @@ export default function ForwardSheet({ visible, onClose, conversations, onConfir
 function makeStyles(c: Palette) {
   return StyleSheet.create({
     root: { flex: 1, justifyContent: 'flex-end' },
-    backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.5)' },
+    backdrop: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: c.isLight ? 'rgba(15, 23, 28, 0.45)' : 'rgba(0, 0, 0, 0.62)',
+    },
     sheet: {
-      backgroundColor: c.bg, borderTopLeftRadius: 18, borderTopRightRadius: 18,
-      paddingHorizontal: 14, paddingTop: 8, maxHeight: '88%', minHeight: '55%',
+      backgroundColor: c.surface,
+      borderTopLeftRadius: SHEET_RADIUS,
+      borderTopRightRadius: SHEET_RADIUS,
+      paddingHorizontal: 16,
+      paddingTop: 8,
+      maxHeight: '88%',
+      minHeight: '55%',
+      shadowColor: '#000',
+      shadowOpacity: 0.3,
+      shadowRadius: 20,
+      shadowOffset: { width: 0, height: -6 },
+      elevation: 24,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderColor: c.border,
+    },
+    handle: {
+      alignSelf: 'center',
+      width: 40,
+      height: 4,
+      borderRadius: 2,
+      backgroundColor: c.textFaint,
+      opacity: 0.55,
+      marginBottom: 6,
     },
     header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 6 },
-    headerBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-    headerTitle: { color: c.text, fontSize: 17, fontWeight: '700' },
+    headerBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 20 },
+    headerTitle: { color: c.text, fontSize: 17, fontWeight: '700', letterSpacing: -0.2 },
     searchBar: {
       flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: c.surfaceAlt,
-      borderRadius: radius.md, paddingHorizontal: 12, height: 40, marginBottom: 6,
+      borderRadius: 14, paddingHorizontal: 12, height: 44, marginBottom: 6,
     },
     searchInput: { flex: 1, color: c.text, fontSize: 15, padding: 0 },
     section: { color: c.textMuted, fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 12, marginBottom: 4 },
-    row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 8 },
+    row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10 },
     rowText: { flex: 1 },
     rowTitle: { color: c.text, fontSize: 15, fontWeight: '600' },
     rowSub: { color: c.textFaint, fontSize: 12, marginTop: 1 },
@@ -250,12 +284,12 @@ function makeStyles(c: Palette) {
     empty: { color: c.textFaint, textAlign: 'center', paddingVertical: 30 },
     cta: {
       flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-      backgroundColor: c.primary, borderRadius: radius.lg, height: 50, marginTop: 10,
+      backgroundColor: c.primary, borderRadius: 16, height: 52, marginTop: 12,
     },
     ctaDisabled: { opacity: 0.45 },
     ctaText: { color: '#fff', fontSize: 16, fontWeight: '700' },
     confirm: { flex: 1 },
-    previewCard: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: c.surfaceAlt, borderRadius: radius.md, padding: 10, marginTop: 8 },
+    previewCard: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: c.surfaceAlt, borderRadius: 16, padding: 12, marginTop: 8 },
     previewImg: { width: 60, height: 60, borderRadius: radius.sm },
     previewPlay: { position: 'absolute', left: 28, top: 28, backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: 12, padding: 3 },
     previewMeta: { flex: 1 },

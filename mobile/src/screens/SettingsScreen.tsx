@@ -1,7 +1,7 @@
 // Lumixo mobile — Settings tab. Profile header, grouped settings rows,
 // owner credit footer, and sign out.
 import React, { useCallback, useMemo, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -15,6 +15,7 @@ import { useColors, spacing, radius, font, type Palette } from '../theme';
 import { APP_NAME, APP_VERSION, CREDIT } from '../branding';
 import Avatar from '../components/Avatar';
 import type { RootStackParamList } from '../navigation/types';
+import { Alert } from '../ui/dialog';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 

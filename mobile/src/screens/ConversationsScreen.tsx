@@ -2,11 +2,9 @@
 // title/avatar/last-message/unread, and routes into a thread.
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Alert,
   BackHandler,
   FlatList,
   LayoutAnimation,
-  Modal,
   Platform,
   Pressable,
   RefreshControl,
@@ -65,6 +63,7 @@ import Avatar from '../components/Avatar';
 import StatusStrip from '../components/status/StatusStrip';
 import { useChatLock } from '../security/ChatLock';
 import type { RootStackParamList } from '../navigation/types';
+import { Alert, showSheet } from '../ui/dialog';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -115,10 +114,8 @@ export default function ConversationsScreen() {
   // from local cache first (instant/offline), then refreshed in the background.
   const [streaks, setStreaks] = useState<Record<string, StreakSummary>>({});
   // WhatsApp-style multi-select: a non-empty set puts the list in selection mode
-  // and swaps the top bar for a contextual action bar. `overflowOpen` toggles the
-  // "⋮" menu of less-common actions.
+  // and swaps the top bar for a contextual action bar.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [overflowOpen, setOverflowOpen] = useState(false);
   const selectionMode = selectedIds.size > 0;
 
   // Filter chips (All / Unread / Groups / Favorites / Pinned / Streaks / Locked)
@@ -607,6 +604,40 @@ export default function ConversationsScreen() {
     navigation.navigate('Profile', { userId: peer.id, conversationId: conv.conversation.id });
   }
 
+  function openOverflow() {
+    const actions: Array<{
+      text: string;
+      onPress?: () => void | Promise<void>;
+      style?: 'default' | 'destructive' | 'primary' | 'cancel';
+      icon?: 'check' | 'person' | 'report' | 'block' | 'info' | 'success';
+      subtitle?: string;
+    }> = [
+      {
+        text: allVisibleSelected ? 'Deselect all' : 'Select all',
+        icon: 'check',
+        onPress: () => toggleSelectAll(),
+      },
+    ];
+    if (anyUnread) {
+      actions.push({ text: 'Mark as read', icon: 'success', onPress: () => batchMarkRead() });
+    }
+    if (allHidden) {
+      actions.push({
+        text: selCount > 1 ? 'Unhide chats' : 'Unhide',
+        icon: 'info',
+        onPress: () => batchUnhide(),
+      });
+    }
+    if (singleDirect) {
+      actions.push(
+        { text: 'View contact', icon: 'person', onPress: () => viewInfo() },
+        { text: 'Report', icon: 'report', onPress: () => batchReport() },
+        { text: 'Block', icon: 'block', style: 'destructive', onPress: () => batchBlock() },
+      );
+    }
+    showSheet({ title: 'Chat actions', actions });
+  }
+
   function toggleSelectAll() {
     animateSelection();
     const visible = filteredItems.map((c) => c.conversation.id);
@@ -732,7 +763,7 @@ export default function ConversationsScreen() {
             <SelIcon name={allMuted ? 'notifications' : 'notifications-off-outline'} onPress={batchMute} />
             <SelIcon name="archive-outline" onPress={batchArchive} />
             <SelIcon name="trash-outline" onPress={batchDelete} danger />
-            <SelIcon name="ellipsis-vertical" onPress={() => setOverflowOpen(true)} />
+            <SelIcon name="ellipsis-vertical" onPress={openOverflow} />
           </View>
         </View>
       )}
@@ -885,32 +916,6 @@ export default function ConversationsScreen() {
         <Ionicons name="create-outline" size={26} color="#fff" />
       </Pressable>
 
-      {/* Selection "⋮" overflow menu — less-common / context-specific actions.
-          Single direct chats additionally get View contact / Report / Block. */}
-      <Modal visible={overflowOpen} transparent animationType="fade" onRequestClose={() => setOverflowOpen(false)}>
-        <Pressable style={styles.backdrop} onPress={() => setOverflowOpen(false)}>
-          <View style={styles.sheet}>
-            <ConvAction
-              icon={allVisibleSelected ? 'ellipse-outline' : 'checkmark-done-outline'}
-              label={allVisibleSelected ? 'Deselect all' : 'Select all'}
-              onPress={() => { setOverflowOpen(false); toggleSelectAll(); }}
-            />
-            {anyUnread && (
-              <ConvAction icon="mail-open-outline" label="Mark as read" onPress={() => { setOverflowOpen(false); batchMarkRead(); }} />
-            )}
-            {allHidden && (
-              <ConvAction icon="eye-outline" label={selCount > 1 ? 'Unhide chats' : 'Unhide'} onPress={() => { setOverflowOpen(false); batchUnhide(); }} />
-            )}
-            {singleDirect && (
-              <>
-                <ConvAction icon="person-circle-outline" label="View contact" onPress={() => { setOverflowOpen(false); viewInfo(); }} />
-                <ConvAction icon="flag-outline" label="Report" onPress={() => { setOverflowOpen(false); batchReport(); }} />
-                <ConvAction icon="ban-outline" label="Block" danger onPress={() => { setOverflowOpen(false); batchBlock(); }} />
-              </>
-            )}
-          </View>
-        </Pressable>
-      </Modal>
     </View>
   );
 }
@@ -933,30 +938,6 @@ function SelIcon({
       style={({ pressed }) => [{ paddingHorizontal: spacing(2.5) }, pressed && { opacity: 0.5 }]}
     >
       <Ionicons name={name} size={22} color={danger ? colors.danger : colors.text} />
-    </Pressable>
-  );
-}
-
-function ConvAction({
-  icon,
-  label,
-  onPress,
-  danger,
-}: {
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-  onPress: () => void;
-  danger?: boolean;
-}) {
-  const colors = useColors();
-  const tint = danger ? colors.danger : colors.text;
-  return (
-    <Pressable
-      style={({ pressed }) => [{ flexDirection: 'row', alignItems: 'center', paddingVertical: spacing(3.5) }, pressed && { opacity: 0.6 }]}
-      onPress={onPress}
-    >
-      <Ionicons name={icon} size={22} color={danger ? colors.danger : colors.textMuted} />
-      <Text style={{ color: tint, fontSize: font.body, marginLeft: spacing(4) }}>{label}</Text>
     </Pressable>
   );
 }
@@ -1109,14 +1090,4 @@ const makeStyles = (colors: Palette) =>
     fabPressed: { backgroundColor: colors.primaryDark },
     rowIcons: { flexDirection: 'row', alignItems: 'center' },
     streakEmoji: { fontSize: 15, marginLeft: spacing(1) },
-    backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-    sheet: {
-      backgroundColor: colors.surface,
-      borderTopLeftRadius: radius.lg,
-      borderTopRightRadius: radius.lg,
-      paddingHorizontal: 20,
-      paddingTop: 16,
-      paddingBottom: spacing(6),
-    },
-    sheetTitle: { color: colors.text, fontSize: font.heading, fontWeight: '700', marginBottom: 8 },
   });

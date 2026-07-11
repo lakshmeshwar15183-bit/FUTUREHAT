@@ -24,6 +24,7 @@ import Avatar from '../Avatar';
 import { buildStatusGroups, pruneExpiredGroups, type StatusGroup } from './statusData';
 import StatusViewer from './StatusViewer';
 import StatusComposer, { type ComposerMode } from './StatusComposer';
+import { showSheet } from '../../ui/dialog';
 
 const CACHE_KEY = 'status:tray';
 
@@ -35,7 +36,6 @@ export default function StatusStrip() {
   const [mine, setMine] = useState<StatusGroup | null>(null);
   const [groups, setGroups] = useState<StatusGroup[]>([]);
   const [viewing, setViewing] = useState<StatusGroup | null>(null);
-  const [menuOpen, setMenuOpen] = useState(false);
   const [composeMode, setComposeMode] = useState<ComposerMode | null>(null);
   const [audience, setAudience] = useState<StatusAudience>('everyone');
   const [members, setMembers] = useState<string[]>([]);
@@ -114,12 +114,18 @@ export default function StatusStrip() {
 
   function openMine() {
     if (mine) setViewing(mine);
-    else setMenuOpen(true);
+    else openStatusMenu();
   }
 
-  function choose(mode: ComposerMode) {
-    setMenuOpen(false);
-    setComposeMode(mode);
+  function openStatusMenu() {
+    showSheet({
+      title: 'Add to status',
+      actions: [
+        { text: 'Text', icon: 'info', onPress: () => setComposeMode('text') },
+        { text: 'Photo or video', icon: 'photo', onPress: () => setComposeMode('media') },
+        { text: 'Audio', icon: 'file', onPress: () => setComposeMode('audio') },
+      ],
+    });
   }
 
   return (
@@ -136,7 +142,7 @@ export default function StatusStrip() {
         <View style={styles.tile}>
           <Pressable
             onPress={openMine}
-            onLongPress={() => setMenuOpen(true)}
+            onLongPress={openStatusMenu}
             style={({ pressed }) => (pressed ? { opacity: 0.7 } : null)}
           >
             <View style={[styles.ring, { borderColor: mine ? colors.primary : 'transparent' }]}>
@@ -145,7 +151,7 @@ export default function StatusStrip() {
           </Pressable>
           <Pressable
             style={({ pressed }) => [styles.addBadge, pressed && { opacity: 0.7 }]}
-            onPress={() => setMenuOpen(true)}
+            onPress={openStatusMenu}
             hitSlop={8}
             accessibilityLabel="Add status"
             accessibilityRole="button"
@@ -163,18 +169,6 @@ export default function StatusStrip() {
           </Pressable>
         ))}
       </ScrollView>
-
-      {/* Add-status menu */}
-      <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
-        <Pressable style={styles.backdrop} onPress={() => setMenuOpen(false)}>
-          <View style={styles.sheet}>
-            <Text style={styles.sheetTitle}>Add to status</Text>
-            <MenuItem icon="text" label="Text" onPress={() => choose('text')} colors={colors} />
-            <MenuItem icon="camera" label="Photo or video" onPress={() => choose('media')} colors={colors} />
-            <MenuItem icon="mic" label="Audio" onPress={() => choose('audio')} colors={colors} />
-          </View>
-        </Pressable>
-      </Modal>
 
       {/* Composer */}
       {composeMode && uid && (
@@ -204,30 +198,6 @@ export default function StatusStrip() {
   );
 }
 
-function MenuItem({
-  icon,
-  label,
-  onPress,
-  colors,
-}: {
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-  onPress: () => void;
-  colors: Palette;
-}) {
-  return (
-    <Pressable
-      style={({ pressed }) => [{ flexDirection: 'row', alignItems: 'center', paddingVertical: spacing(3.5) }, pressed && { opacity: 0.6 }]}
-      onPress={onPress}
-    >
-      <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' }}>
-        <Ionicons name={icon} size={20} color="#fff" />
-      </View>
-      <Text style={{ color: colors.text, fontSize: font.body, marginLeft: spacing(4) }}>{label}</Text>
-    </Pressable>
-  );
-}
-
 function firstName(name?: string | null): string | null {
   if (!name) return null;
   return name.split(' ')[0];
@@ -251,11 +221,4 @@ const makeStyles = (colors: Palette) =>
       borderWidth: 1.5, borderColor: colors.surface,
     },
     tileLabel: { color: colors.textMuted, fontSize: font.tiny, marginTop: spacing(1), maxWidth: 66 },
-    backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-    sheet: {
-      backgroundColor: colors.surface,
-      borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg,
-      paddingHorizontal: 20, paddingTop: 16, paddingBottom: spacing(8),
-    },
-    sheetTitle: { color: colors.text, fontSize: font.heading, fontWeight: '700', marginBottom: 8 },
   });

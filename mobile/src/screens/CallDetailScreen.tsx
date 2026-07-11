@@ -5,7 +5,7 @@
 // Actions: Voice / Video call (CallContext.startCall), Delete this call log
 // (delete-for-me, offline-first), Block, Report, Contact Info.
 import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -22,6 +22,7 @@ import InputModal from '../components/InputModal';
 import Avatar from '../components/Avatar';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import type { RootStackParamList } from '../navigation/types';
+import { Alert } from '../ui/dialog';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'CallDetail'>;
 type Rt = RouteProp<RootStackParamList, 'CallDetail'>;

@@ -1,7 +1,7 @@
 // Lumixo mobile — inside a community: its channels and events.
 // Channels reuse the conversations/messages stack, so opening one is just a Chat.
 import React, { useCallback, useMemo, useState } from 'react';
-import { Alert, FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -22,6 +22,7 @@ import { useColors, spacing, radius, font, type Palette } from '../theme';
 import Avatar from '../components/Avatar';
 import EventComposerModal, { type EventDraft } from '../components/EventComposerModal';
 import type { RootStackParamList } from '../navigation/types';
+import { Alert } from '../ui/dialog';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'CommunityDetail'>;
 type Rt = RouteProp<RootStackParamList, 'CommunityDetail'>;

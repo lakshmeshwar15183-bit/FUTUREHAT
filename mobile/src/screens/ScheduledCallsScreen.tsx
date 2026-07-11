@@ -3,7 +3,14 @@
 // public.scheduled_calls (0024) + realtime. Reached from the Calls overflow menu.
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator, Alert, FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View,
+  ActivityIndicator,
+  FlatList,
+  Modal,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
@@ -16,6 +23,7 @@ import {
 import type { ScheduledCall, ConversationSummary, CallType } from '../lib/shared';
 import Avatar from '../components/Avatar';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
+import { Alert } from '../ui/dialog';
 
 const PRESETS: { label: string; ms: number }[] = [
   { label: 'In 1 hour', ms: 3600e3 },

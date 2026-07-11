@@ -5,7 +5,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Animated,
   Image,
   PanResponder,
@@ -34,6 +33,7 @@ import { formatLastSeen } from '../../lib/time';
 import { useColors, spacing, radius, font, type Palette } from '../../theme';
 import Avatar from '../Avatar';
 import { type StatusGroup, isVideoStatus, isAudioStatus } from './statusData';
+import { Alert } from '../../ui/dialog';
 
 const IMAGE_DURATION = 5000;
 const AUDIO_FALLBACK = 15000; // used only until real audio duration is known

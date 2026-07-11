@@ -1,7 +1,13 @@
 // Lumixo mobile — create a community (you become its admin).
 import React, { useMemo, useState } from 'react';
 import {
-  ActivityIndicator, Alert, Image, Pressable, StyleSheet, Text, TextInput, View,
+  ActivityIndicator,
+  Image,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
@@ -13,6 +19,7 @@ import { supabase } from '../lib/supabase';
 import { createCommunity, createChannel } from '../lib/shared';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import type { RootStackParamList } from '../navigation/types';
+import { Alert } from '../ui/dialog';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'CreateCommunity'>;
 

@@ -5,7 +5,6 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Linking,
   Platform,
   Pressable,
@@ -23,6 +22,7 @@ import { submitTicket, getMyTickets } from '../lib/shared';
 import type { TicketKind, SupportTicket } from '../lib/shared';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import { APP_NAME, APP_VERSION, CREDIT, SUPPORT_EMAIL, GRIEVANCE_OFFICER } from '../branding';
+import { Alert } from '../ui/dialog';
 
 const FAQ: { q: string; a: string }[] = [
   { q: 'How do I start a chat?', a: 'Open the Chats tab and tap the compose button, then pick a contact or add one by username.' },

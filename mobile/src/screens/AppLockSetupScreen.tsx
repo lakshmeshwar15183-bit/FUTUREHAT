@@ -1,12 +1,13 @@
 // Lumixo mobile — configure app lock: enable with a PIN, toggle biometrics,
 // or turn it off.
 import React, { useMemo, useState } from 'react';
-import { Alert, Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 
 import { useAppLock } from '../security/AppLock';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
+import { Alert } from '../ui/dialog';
 
 export default function AppLockSetupScreen() {
   const navigation = useNavigation();

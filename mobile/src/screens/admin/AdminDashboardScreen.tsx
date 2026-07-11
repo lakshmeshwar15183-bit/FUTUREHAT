@@ -5,7 +5,14 @@
 // web/src/admin/{AdminDashboard,AdminUsers,AdminOps}.tsx.
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator, Alert, FlatList, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
+  ActivityIndicator,
+  FlatList,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
@@ -27,6 +34,7 @@ import type {
 import Avatar from '../../components/Avatar';
 import { useColors, spacing, radius, font, type Palette } from '../../theme';
 import type { RootStackParamList } from '../../navigation/types';
+import { Alert } from '../../ui/dialog';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'Admin'>;
 type Tab =

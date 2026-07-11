@@ -6,8 +6,14 @@
 // hint so the layout is final and nothing is faked.
 import React, { useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator, FlatList, Pressable, StyleSheet, Text,
-  TextInput, View, useWindowDimensions, Alert,
+  ActivityIndicator,
+  FlatList,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+  useWindowDimensions,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { ResizeMode, Video } from 'expo-av';
@@ -31,6 +37,7 @@ import VideoEditor, { type VideoEditResult } from '../media/tools/VideoEditor';
 import { flattenOverlays } from '../media/tools/mediaFlatten';
 import type { Overlay } from '../media/tools/overlays';
 import type { MediaMeta } from '../lib/shared';
+import { Alert } from '../ui/dialog';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'MediaPreview'>;
 type R = RouteProp<RootStackParamList, 'MediaPreview'>;

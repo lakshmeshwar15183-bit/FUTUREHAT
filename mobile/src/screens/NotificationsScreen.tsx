@@ -4,7 +4,8 @@
 // use the DEVICE SYSTEM DEFAULT sound; the tone rows open Android's per-channel
 // settings for native customization (no bundled sounds, no in-app picker).
 import React, { useCallback, useMemo, useState } from 'react';
-import { Alert, Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Alert } from '../ui/dialog';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 

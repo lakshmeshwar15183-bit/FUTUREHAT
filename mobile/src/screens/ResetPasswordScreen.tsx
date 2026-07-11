@@ -13,7 +13,7 @@
 //   • password too short / mismatch
 //   • updateUser failed (expired token → "Link expired, request a new one")
 import React, { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
@@ -21,6 +21,7 @@ import { supabase } from '../lib/supabase';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import { APP_NAME } from '../branding';
 import type { RootStackParamList } from '../navigation/types';
+import { Alert } from '../ui/dialog';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ResetPassword'>;
 

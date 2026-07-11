@@ -2,7 +2,7 @@
 // upload quality, auto-download, voice transcripts. Standalone; persists via
 // privacyApi chat-settings (user_preferences.extra.chat).
 import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
 import { supabase } from '../lib/supabase';
@@ -10,6 +10,7 @@ import { getChatSettings, setChatSettings, type ChatSettings, type FontSize, typ
 import { getCache, setCache } from '../lib/localCache';
 import { queueAction } from '../lib/sync';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
+import { Alert } from '../ui/dialog';
 
 export default function ChatSettingsScreen() {
   const colors = useColors();

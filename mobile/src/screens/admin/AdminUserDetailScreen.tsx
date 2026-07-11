@@ -5,7 +5,12 @@
 // protected from non-owners; admin role + lifetime premium are owner-only.
 import React, { useCallback, useMemo, useState } from 'react';
 import {
-  ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View,
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
@@ -24,6 +29,7 @@ import InputModal from '../../components/InputModal';
 import Avatar from '../../components/Avatar';
 import { useColors, spacing, radius, font, type Palette } from '../../theme';
 import type { RootStackParamList } from '../../navigation/types';
+import { Alert } from '../../ui/dialog';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'AdminUserDetail'>;
 type Rt = RouteProp<RootStackParamList, 'AdminUserDetail'>;

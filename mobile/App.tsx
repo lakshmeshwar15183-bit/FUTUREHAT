@@ -68,6 +68,7 @@ import StreakInfoScreen, { STREAK_INFO_TITLES } from './src/screens/StreakInfoSc
 import HallOfLegendsScreen from './src/screens/HallOfLegendsScreen';
 import AdminGate from './src/components/AdminGate';
 import NotificationsBridge from './src/components/NotificationsBridge';
+import { DialogHost } from './src/ui/dialog';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator();
@@ -331,6 +332,8 @@ function RootNavigator() {
           <LockScreen />
         </View>
       )}
+      {/* Global premium dialogs / sheets — always mounted so Alert.alert works. */}
+      <DialogHost />
     </>
   );
 }

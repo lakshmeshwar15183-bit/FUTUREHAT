@@ -9,7 +9,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Image,
   Modal,
   Pressable,
@@ -29,6 +28,7 @@ import type { StatusType, StatusAudience } from '../../lib/shared';
 import { uploadStatusMediaFromUri } from '../../lib/media';
 import { useColors, spacing, radius, font, type Palette } from '../../theme';
 import AudiencePicker from './AudiencePicker';
+import { Alert } from '../../ui/dialog';
 
 export type ComposerMode = 'text' | 'media' | 'audio';
 

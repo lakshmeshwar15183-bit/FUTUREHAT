@@ -5,7 +5,7 @@
 // expo-file-system is already installed); "Clear cached media" also drops the
 // local-first AsyncStorage cache (fh:cache:* keys).
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import * as FileSystem from 'expo-file-system';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -15,6 +15,7 @@ import { getCache, setCache } from '../lib/localCache';
 import { queueAction } from '../lib/sync';
 import { clearMediaCache, getMediaCacheStats } from '../lib/mediaCache';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
+import { Alert } from '../ui/dialog';
 
 interface StorageSettings { dataSaverCalls: boolean; lowDataMode: boolean; autoDownloadWifiOnly: boolean }
 const DEFAULTS: StorageSettings = { dataSaverCalls: false, lowDataMode: false, autoDownloadWifiOnly: false };

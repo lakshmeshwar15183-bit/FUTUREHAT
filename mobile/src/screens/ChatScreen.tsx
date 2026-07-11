@@ -4,7 +4,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   FlatList,
   Keyboard,
   Dimensions,
@@ -116,6 +115,7 @@ import { STICKERS } from '../lib/stickers';
 import { useCalls } from '../calls/CallContext';
 import { useChatLock } from '../security/ChatLock';
 import type { RootStackParamList } from '../navigation/types';
+import { Alert } from '../ui/dialog';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'Chat'>;
 type Rt = RouteProp<RootStackParamList, 'Chat'>;

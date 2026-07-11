@@ -13,9 +13,18 @@
 //  • Videos get the same chrome / share / save / forward / info parity.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator, Alert, Dimensions, FlatList, Modal, Pressable, Share,
-  StyleSheet, Text, View,
-  type ListRenderItemInfo, type NativeScrollEvent, type NativeSyntheticEvent,
+  ActivityIndicator,
+  Dimensions,
+  FlatList,
+  Modal,
+  Pressable,
+  Share,
+  StyleSheet,
+  Text,
+  View,
+  type ListRenderItemInfo,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { ResizeMode, Video } from 'expo-av';
@@ -43,6 +52,7 @@ import {
   clampOffset as clamp,
 } from './mediaViewerMath';
 import SignedImage from './SignedImage';
+import { Alert } from '../ui/dialog';
 
 export interface ViewerItem {
   id: string;

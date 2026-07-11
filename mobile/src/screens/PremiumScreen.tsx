@@ -5,7 +5,7 @@
 // wired yet — activation here records a subscription via the shared API for
 // testing. Real Play Billing / "restore purchases" lands before public release.
 import React, { useCallback, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 
@@ -24,6 +24,7 @@ import {
 } from '../lib/shared';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import { APP_NAME } from '../branding';
+import { Alert } from '../ui/dialog';
 
 // Purchases are gated until a payment gateway (Razorpay / Google Play Billing) is
 // wired. Flip to true once it's integrated and the real activate() flow takes over.
