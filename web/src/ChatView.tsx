@@ -17,6 +17,7 @@ import {
   messageMatchesKind, messageExpired, nextMessageExpiry, purgeExpiredMessages, getDisappearing, type SearchKind,
   markViewOnceSeen, getViewOnceState,
 } from '@shared/api';
+import { sendPush } from '@shared/pushApi';
 import { scheduleMessage, getScheduledMessages, dispatchDueMessages } from '@shared/premiumApi';
 import { createPoll, getPolls } from '@shared/communitiesApi';
 import type { Poll } from '@shared/communitiesApi';
@@ -28,6 +29,7 @@ import { MediaLightbox, type MediaItem } from './media/MediaLightbox';
 import './media/MediaLightbox.css';
 import { MediaComposer } from './media/MediaComposer';
 import { getStarredIds, starMessage, unstarMessage, getHiddenMessageIds, hideMessageForMe } from '@shared/messageExtras';
+import { pinGroupMessage, unpinGroupMessage, getPinnedMessageIds, canPinMessages, getMyGroupRole, permissionsFromConversation, canSendInGroup } from '@shared/groupsApi';
 import { safeHref } from './util/safeUrl';
 import { SignedImage, SignedVideo, SignedLink } from './lib/SignedMedia';
 import {
@@ -36,16 +38,18 @@ import {
   LockIcon,
 } from './Icons';
 import { FREE_LIMITS, PREMIUM_LIMITS } from '@shared/premium/features';
-import type { ConversationSummary, Message, MessageReceipt, MessageReaction } from '@shared/types';
+import type { ConversationSummary, Message, MessageReceipt, MessageReaction, ParticipantRole } from '@shared/types';
 import { formatDistanceToNow, format, isToday, isYesterday, isSameDay } from 'date-fns';
 import { bubbleMine, bubbleTheirs, spring } from './motion';
 import { STICKERS } from './premium/stickers';
+import { GroupInfoModal } from './GroupInfoModal';
 import './ChatView.css';
 
 interface Props {
   conversation: ConversationSummary;
   isOtherPremium?: boolean;
   onBack: () => void;
+  onConversationGone?: () => void;
 }
 
 const QUICK_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
@@ -66,7 +70,7 @@ const daySepLabel = (d: string) => {
 // Consecutive messages from the same sender within this window stack as a group.
 const GROUP_WINDOW_MS = 5 * 60 * 1000;
 
-export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
+export function ChatView({ conversation, isOtherPremium, onBack, onConversationGone }: Props) {
   const { profile } = useAuth();
   const { isPremium, preferences } = usePremium();
   const { onlineIds } = usePresence();
@@ -87,6 +91,11 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
   const [typingUsers, setTypingUsers] = useState<Record<string, string>>({});
   const [pickerFor, setPickerFor] = useState<string | null>(null);
   const [actionFor, setActionFor] = useState<string | null>(null);
+  const [showGroupInfo, setShowGroupInfo] = useState(false);
+  const [groupTitle, setGroupTitle] = useState(conversation.title);
+  const [myGroupRole, setMyGroupRole] = useState<ParticipantRole | null>(null);
+  const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
+  const [groupSendBlocked, setGroupSendBlocked] = useState(false);
 
   // compose modes
   const [replyTo, setReplyTo] = useState<Message | null>(null);
@@ -206,6 +215,21 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
     getHiddenMessageIds(supabase).then((ids) => { if (active) setHiddenMsgIds(new Set(ids)); }).catch(() => {});
     // Disappearing-messages timer for the header badge (kept live via the system notice below).
     getDisappearing(supabase, convId).then((s) => { if (active) setDisappearSecs(s); }).catch(() => {});
+    if (isGroup) {
+      getMyGroupRole(supabase, convId).then((role) => {
+        if (!active) return;
+        setMyGroupRole(role);
+        const perms = permissionsFromConversation(conversation.conversation);
+        setGroupSendBlocked(!canSendInGroup(role, perms));
+      }).catch(() => {});
+      getPinnedMessageIds(supabase, convId).then((ids) => {
+        if (active) setPinnedIds(new Set(ids));
+      }).catch(() => {});
+    } else {
+      setMyGroupRole(null);
+      setGroupSendBlocked(false);
+      setPinnedIds(new Set());
+    }
 
     const msgChannel = subscribeToMessages(
       supabase, convId,
@@ -309,10 +333,43 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
     el.style.height = `${Math.min(el.scrollHeight, 140)}px`;
   }, [input]);
 
+  async function togglePin(m: Message) {
+    setActionFor(null);
+    const was = pinnedIds.has(m.id);
+    if (was) {
+      const { error } = await unpinGroupMessage(supabase, convId, m.id);
+      if (error) { setToast(error.message); return; }
+      setPinnedIds((s) => { const n = new Set(s); n.delete(m.id); return n; });
+      setToast('Message unpinned');
+    } else {
+      const { error } = await pinGroupMessage(supabase, convId, m.id);
+      if (error) { setToast(error.message); return; }
+      setPinnedIds((s) => new Set(s).add(m.id));
+      setToast('Message pinned');
+    }
+  }
+
+  function notifyPush(preview: string, messageType = 'text', messageId?: string) {
+    void sendPush(supabase, {
+      conversationId: convId,
+      kind: isGroup ? 'group' : 'message',
+      title: isGroup ? (groupTitle || conversation.title || 'Group') : (profile?.display_name || 'New message'),
+      body: preview,
+      data: {
+        messageType,
+        ...(messageId ? { messageId } : {}),
+      },
+    });
+  }
+
   // ── Send / edit ──────────────────────────────────────────────────────────────
   async function handleSend(e: FormEvent) {
     e.preventDefault();
     if (!input.trim() || sending) return;
+    if (groupSendBlocked) {
+      setToast('Only admins can send messages in this group');
+      return;
+    }
     setSending(true);
     const content = input.trim();
     setInput(''); setSuggestions([]); stopTyping();
@@ -331,7 +388,10 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
     setReplyTo(null);
     const { message, error } = await sendMessage(supabase, convId, content, 'text', undefined, reply?.id);
     if (error || !message) { setInput(content); setReplyTo(reply); setToast(error?.message || 'Message failed to send'); }
-    else upsertMessage(message);
+    else {
+      upsertMessage(message);
+      notifyPush(content, 'text', message.id);
+    }
     setSending(false);
   }
 
@@ -394,7 +454,10 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
           if (error) throw error;
           if (!url) throw new Error('No URL returned');
           const { message } = await sendMessage(supabase, convId, file.name, 'file', url);
-          if (message) upsertMessage(message);
+          if (message) {
+            upsertMessage(message);
+            notifyPush('📎 Document', 'file', message.id);
+          }
         } catch (err: any) {
           setToast(err.message || 'Failed to upload file');
         } finally {
@@ -407,7 +470,11 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
   async function sendSticker(url: string) {
     setStickersOpen(false);
     const { message, error } = await sendMessage(supabase, convId, '', 'image', url);
-    if (error) setToast(error.message); else if (message) upsertMessage(message);
+    if (error) setToast(error.message);
+    else if (message) {
+      upsertMessage(message);
+      notifyPush('📷 Photo', 'image', message.id);
+    }
   }
 
   // ── AI ───────────────────────────────────────────────────────────────────────
@@ -480,7 +547,10 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
       if (error || !url) throw error || new Error('upload failed');
       const label = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
       const { message } = await sendMessage(supabase, convId, label, 'audio', url);
-      if (message) upsertMessage(message);
+      if (message) {
+        upsertMessage(message);
+        notifyPush('🎤 Voice message', 'audio', message.id);
+      }
     } catch (e: any) {
       setToast(e?.message || 'Could not send voice message');
     } finally { setUploading(false); }
@@ -616,11 +686,14 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
         </div>
         <div
           className="chat-header-info"
-          style={{ cursor: !isGroup && otherUser ? 'pointer' : 'default' }}
-          onClick={() => { if (!isGroup && otherUser) setShowContact(true); }}
+          style={{ cursor: isGroup || otherUser ? 'pointer' : 'default' }}
+          onClick={() => {
+            if (isGroup) setShowGroupInfo(true);
+            else if (otherUser) setShowContact(true);
+          }}
         >
           <div className="chat-title">
-            {conversation.title}{isOtherPremium && <PremiumBadge compact />}
+            {isGroup ? groupTitle : conversation.title}{isOtherPremium && <PremiumBadge compact />}
             {disappearSecs > 0 && <span className="chat-disappear-mark" title="Disappearing messages on">⏳</span>}
           </div>
           <div className={`chat-subtitle ${typingNames.length ? 'typing' : ''}`}>{subtitle}</div>
@@ -632,6 +705,16 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
             <button className="header-icon-btn call" title="Video call" aria-label="Start video call" disabled={callBusy}
               onClick={() => startCall(convId, 'video', otherUser?.display_name || conversation.title)}><VideoIcon size={20} /></button>
           </>
+        )}
+        {isGroup && (
+          <button
+            className="header-icon-btn"
+            title="Group info"
+            aria-label="Group info"
+            onClick={() => setShowGroupInfo(true)}
+          >
+            ℹ
+          </button>
         )}
         <button className="header-icon-btn" title="Search messages" aria-label="Search messages"
           onClick={() => { setSearchOpen((v) => !v); if (searchOpen) { setSearchTerm(''); setSearchKind('all'); } }}><SearchIcon size={18} /></button>
@@ -798,6 +881,11 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
                         <button onClick={() => startReply(msg)}><ReplyIcon size={16} /> Reply</button>
                         <button onClick={() => openForward(msg)}><ForwardIcon size={16} /> Forward</button>
                         <button onClick={() => toggleStar(msg)}><StarIcon size={16} filled={starredIds.has(msg.id)} /> {starredIds.has(msg.id) ? 'Unstar' : 'Star'}</button>
+                        {isGroup && canPinMessages(myGroupRole, permissionsFromConversation(conversation.conversation)) && (
+                          <button onClick={() => togglePin(msg)}>
+                            📌 {pinnedIds.has(msg.id) ? 'Unpin' : 'Pin'}
+                          </button>
+                        )}
                         {msg.content && <button onClick={() => copyText(msg)}><CopyIcon size={16} /> Copy</button>}
                         {isMine && msg.type === 'text' && <button onClick={() => startEdit(msg)}><EditIcon size={16} /> Edit</button>}
                         <button onClick={() => deleteForMe(msg)}><TrashIcon size={16} /> Delete for me</button>
@@ -1005,6 +1093,27 @@ export function ChatView({ conversation, isOtherPremium, onBack }: Props) {
           />
         )}
       </AnimatePresence>
+
+      {showGroupInfo && isGroup && (
+        <GroupInfoModal
+          conversationId={convId}
+          onClose={() => setShowGroupInfo(false)}
+          onLeft={() => {
+            setShowGroupInfo(false);
+            onConversationGone?.();
+            onBack();
+          }}
+          onUpdated={(name) => setGroupTitle(name)}
+        />
+      )}
+
+      {groupSendBlocked && (
+        <div className="compose-banner" style={{ justifyContent: 'center' }}>
+          <div className="compose-banner-body">
+            <div className="compose-banner-title">Only admins can send messages</div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

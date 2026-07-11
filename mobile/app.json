@@ -2,7 +2,7 @@
   "expo": {
     "name": "Lumixo",
     "slug": "futurehat",
-    "version": "4.1.6",
+    "version": "4.5.8",
     "orientation": "portrait",
     "scheme": "futurehat",
     "userInterfaceStyle": "automatic",
@@ -30,7 +30,7 @@
     },
     "android": {
       "package": "dev.lakshmeshwar.futurehat",
-      "versionCode": 46,
+      "versionCode": 58,
       "allowBackup": false,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
@@ -47,7 +47,10 @@
               "pathPrefix": "/reset-password"
             }
           ],
-          "category": ["BROWSABLE", "DEFAULT"]
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
         }
       ],
       "permissions": [
@@ -61,7 +64,10 @@
         "USE_FINGERPRINT",
         "VIBRATE",
         "POST_NOTIFICATIONS",
-        "USE_FULL_SCREEN_INTENT"
+        "USE_FULL_SCREEN_INTENT",
+        "RECEIVE_BOOT_COMPLETED",
+        "FOREGROUND_SERVICE",
+        "WAKE_LOCK"
       ]
     },
     "web": {

@@ -29,7 +29,8 @@ export interface SendPushArgs {
 }
 
 // Fire-and-forget: invoke the `push` Edge Function to fan the notification out to
-// the conversation's other members' registered devices. Never throws.
+// the conversation's other members' registered devices. Also kicks outbox drain
+// so DB-triggered jobs (migration 0038) flush quickly. Never throws.
 export async function sendPush(client: SupabaseClient, args: SendPushArgs): Promise<void> {
   try {
     await client.functions.invoke('push', {
@@ -39,7 +40,18 @@ export async function sendPush(client: SupabaseClient, args: SendPushArgs): Prom
         title: args.title,
         body: args.body,
         data: args.data ?? {},
+        // Always drain a few outbox rows after a client send so server-side
+        // enqueued jobs (messages/calls) don't sit waiting for a cron.
+        drainOutbox: true,
+        limit: 25,
       },
     });
   } catch { /* Edge Function not deployed / FCM not configured — ignore */ }
+}
+
+/** Kick the server push outbox without sending a new notification. */
+export async function drainPushOutbox(client: SupabaseClient, limit = 40): Promise<void> {
+  try {
+    await client.functions.invoke('push', { body: { drainOutbox: true, limit } });
+  } catch { /* ignore */ }
 }

@@ -34,6 +34,7 @@ import './App.css';
 // Modals are lazy — they're off the critical path and keep the initial bundle small.
 const ProfileModal = lazy(() => import('./ProfileModal').then((m) => ({ default: m.ProfileModal })));
 const GroupModal = lazy(() => import('./GroupModal').then((m) => ({ default: m.GroupModal })));
+const JoinGroupInvite = lazy(() => import('./JoinGroupInvite').then((m) => ({ default: m.JoinGroupInvite })));
 const SettingsModal = lazy(() => import('./premium/SettingsModal').then((m) => ({ default: m.SettingsModal })));
 const HelpSupportModal = lazy(() => import('./support/HelpSupportModal').then((m) => ({ default: m.HelpSupportModal })));
 const CommunitiesModal = lazy(() => import('./communities/CommunitiesModal').then((m) => ({ default: m.CommunitiesModal })));
@@ -76,6 +77,7 @@ function AppInner() {
   const [loading, setLoading] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [showGroup, setShowGroup] = useState(false);
+  const [groupInviteToken, setGroupInviteToken] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [showCommunities, setShowCommunities] = useState(false);
@@ -100,6 +102,14 @@ function AppInner() {
   const [streaks, setStreaks] = useState<Record<string, StreakSummary>>({});
 
   const mountedRef = useRef(true);
+  useEffect(() => {
+    // Deep link: /invite/g/<token> opens the group join flow.
+    try {
+      const path = window.location.pathname || '';
+      const m = path.match(/\/invite\/g\/([a-zA-Z0-9_-]+)/);
+      if (m?.[1]) setGroupInviteToken(m[1]);
+    } catch { /* ignore */ }
+  }, []);
   useEffect(() => {
     mountedRef.current = true;
     loadConversations();
@@ -616,6 +626,10 @@ function AppInner() {
                 conversation={selectedConv}
                 isOtherPremium={otherIsPremium(selectedConv)}
                 onBack={() => setSelectedConvId(null)}
+                onConversationGone={() => {
+                  setSelectedConvId(null);
+                  loadConversations();
+                }}
               />
             </motion.div>
           ) : (
@@ -646,7 +660,38 @@ function AppInner() {
             />
           )}
         </AnimatePresence>
-        {showGroup && <GroupModal onClose={() => setShowGroup(false)} onCreated={() => { loadConversations(); setShowGroup(false); }} />}
+        {showGroup && (
+          <GroupModal
+            onClose={() => setShowGroup(false)}
+            onCreated={(cid) => {
+              loadConversations();
+              setShowGroup(false);
+              if (cid) setSelectedConvId(cid);
+            }}
+          />
+        )}
+        {groupInviteToken && (
+          <JoinGroupInvite
+            token={groupInviteToken}
+            onClose={() => {
+              setGroupInviteToken(null);
+              try {
+                window.history.replaceState({}, '', '/');
+              } catch { /* ignore */ }
+            }}
+            onNeedAuth={() => {
+              /* user must sign in; keep token in URL */
+            }}
+            onJoined={(cid) => {
+              setGroupInviteToken(null);
+              try {
+                window.history.replaceState({}, '', '/');
+              } catch { /* ignore */ }
+              loadConversations();
+              setSelectedConvId(cid);
+            }}
+          />
+        )}
       </Suspense>
 
       <WebNotifications conversations={conversations} selectedConvId={selectedConvId} onOpenChat={(id) => setSelectedConvId(id)} />

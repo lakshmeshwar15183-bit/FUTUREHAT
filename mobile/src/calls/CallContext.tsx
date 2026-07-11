@@ -40,7 +40,11 @@ import {
   type Profile,
   type UUID,
 } from '../lib/shared';
-import { presentCallNotification, clearCallNotification } from '../lib/notifications';
+import {
+  presentCallNotification,
+  clearCallNotification,
+  presentMissedCallNotification,
+} from '../lib/notifications';
 import { CallSession } from './webrtc';
 import Avatar from '../components/Avatar';
 import { useColors } from '../theme';
@@ -93,16 +97,15 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       const peer = await getProfile(supabase, call.caller_id);
       setIncoming({ call, peer });
       (InCallManager as any).startRingtone('_DEFAULT_');
-      // Background: also raise a high-priority call notification (system default
-      // ringtone via the Calls channel) so the user sees it outside the app.
-      if (AppState.currentState !== 'active') {
-        void presentCallNotification({
-          callId: call.id,
-          conversationId: call.conversation_id,
-          title: peer?.display_name ?? 'Lumixo',
-          video: call.type === 'video',
-        });
-      }
+      // Always raise a high-priority call notification so locked-screen /
+      // backgrounded devices still ring (WhatsApp-class). Full-screen UI is
+      // the IncomingCallView when the app is already open.
+      void presentCallNotification({
+        callId: call.id,
+        conversationId: call.conversation_id,
+        title: peer?.display_name ?? 'FUTUREHAT',
+        video: call.type === 'video',
+      });
 
       // Ring timeout: if the call isn't answered/declined within 60s, auto-decline.
       // This catches cases where the subscription misses the caller's hangup update.
@@ -126,6 +129,12 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
           InCallManager.stopRingtone();
           void clearCallNotification(call.id);
           await updateCallStatus(supabase, call.id, 'missed').catch(() => {});
+          void presentMissedCallNotification({
+            callId: call.id,
+            conversationId: call.conversation_id,
+            title: peer?.display_name ?? 'Someone',
+            isVideo: call.type === 'video',
+          });
           setIncoming(null);
         }
       }, 60000);
@@ -200,12 +209,18 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       }
       setActive({ callId: call.id, conversationId, peer, type, isCaller: true });
       // Notify a backgrounded/killed callee via push (best-effort).
+      // Use caller's display name for the callee's notification title.
+      const meProfile = await getProfile(supabase, me).catch(() => null);
       void sendPush(supabase, {
         conversationId,
         kind: 'call',
-        title: peer?.display_name ?? 'Lumixo',
+        title: meProfile?.display_name ?? 'FUTUREHAT',
         body: type === 'video' ? 'Incoming video call' : 'Incoming voice call',
-        data: { callId: call.id, video: String(type === 'video') },
+        data: {
+          callId: call.id,
+          video: String(type === 'video'),
+          type: 'call',
+        },
       });
     },
     [uid, active],
@@ -239,7 +254,17 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   const endActive = useCallback(async () => {
     if (!active) return;
     const conv = active.conversationId;
-    await updateCallStatus(supabase, active.callId, 'ended');
+    const callId = active.callId;
+    await updateCallStatus(supabase, callId, 'ended');
+    void clearCallNotification(callId);
+    // Push a cancel so other devices stop ringing immediately (outbox + FCM).
+    void sendPush(supabase, {
+      conversationId: conv,
+      kind: 'system',
+      title: 'Call ended',
+      body: 'ended',
+      data: { callId, type: 'call_status', status: 'ended' },
+    });
     setActive(null);
     // Live streak signal (fire-and-forget). The server checks the real call's
     // connected duration (>15s, answered) itself — a short/unanswered call simply

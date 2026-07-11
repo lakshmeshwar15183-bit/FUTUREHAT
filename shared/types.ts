@@ -11,7 +11,8 @@ export type ConversationType = 'direct' | 'group';
 // isVideoUrl() for backward-compat.
 export type MessageType = 'text' | 'image' | 'video' | 'file' | 'audio' | 'system';
 export type ReceiptStatus = 'delivered' | 'read';
-export type ParticipantRole = 'member' | 'admin';
+/** Group participant role. `super_admin` = group owner/creator (migration 0037). */
+export type ParticipantRole = 'member' | 'admin' | 'super_admin';
 
 export interface Profile {
   id: UUID;
@@ -34,6 +35,44 @@ export interface Conversation {
   /** Disappearing-messages timer (0022): 0 = OFF (default), else 3600..28800
    *  (1–8h). Optional so the type is safe before the migration is applied. */
   disappear_seconds?: number;
+  /** Group description (0037). */
+  description?: string | null;
+  /** WhatsApp-style group permissions (0037). Defaults match WA. */
+  only_admins_can_send?: boolean;
+  only_admins_can_edit_info?: boolean;
+  only_admins_can_add_members?: boolean;
+  only_admins_can_pin?: boolean;
+  only_admins_manage_disappearing?: boolean;
+  approve_new_members?: boolean;
+  member_history_visible?: boolean;
+}
+
+/** Client view of group permission toggles (0037). */
+export interface GroupPermissions {
+  onlyAdminsCanSend: boolean;
+  onlyAdminsCanEditInfo: boolean;
+  onlyAdminsCanAddMembers: boolean;
+  onlyAdminsCanPin: boolean;
+  onlyAdminsManageDisappearing: boolean;
+  approveNewMembers: boolean;
+  memberHistoryVisible: boolean;
+}
+
+/** Enriched group member row for Group Info UI. */
+export interface GroupMember {
+  userId: UUID;
+  role: ParticipantRole;
+  joinedAt: string;
+  profile: Profile;
+}
+
+/** Pending invite-link join request. */
+export interface GroupJoinRequest {
+  userId: UUID;
+  displayName: string | null;
+  avatarUrl: string | null;
+  username: string | null;
+  createdAt: string;
 }
 
 export interface ConversationParticipant {

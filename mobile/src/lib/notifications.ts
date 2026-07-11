@@ -12,7 +12,7 @@ import { supabase } from './supabase';
 import { registerPushToken, removePushToken } from './shared';
 
 // Bump when channel definitions change so they're re-created once (never every launch).
-const CHANNELS_VERSION = '2';
+const CHANNELS_VERSION = '3';
 const CHANNELS_KEY = 'fh:channelsVersion';
 
 export const CHANNELS = {
@@ -43,7 +43,19 @@ Notifications.setNotificationHandler({
   handleNotification: async (notification) => {
     const data = notification.request.content.data as Record<string, unknown> | undefined;
     const convId = typeof data?.conversationId === 'string' ? data.conversationId : null;
-    const suppress = data?.type === 'message' && convId != null && convId === openConversationId;
+    const type = typeof data?.type === 'string' ? data.type : '';
+    const kind = typeof data?.kind === 'string' ? data.kind : '';
+    // Silent call-status cancels: never show a banner.
+    if (type === 'call_status' || data?.silent === '1' || data?.silent === 1) {
+      return {
+        shouldShowAlert: false,
+        shouldPlaySound: false,
+        shouldSetBadge: false,
+      };
+    }
+    const isMsg =
+      type === 'message' || type === 'mention' || kind === 'message' || kind === 'group';
+    const suppress = isMsg && convId != null && convId === openConversationId;
     return {
       shouldShowAlert: !suppress,
       shouldPlaySound: !suppress,
@@ -227,20 +239,35 @@ export interface MessageNotifOpts {
   body: string;               // message preview (already redacted if preview off)
   isGroup?: boolean;
   vibrate?: boolean;
+  messageId?: string;
+  senderAvatar?: string;
 }
 
 /** Present a local message notification (app open / background). Grouped per chat. */
 export async function presentMessageNotification(o: MessageNotifOpts): Promise<void> {
   try {
     await Notifications.scheduleNotificationAsync({
-      identifier: `chat:${o.conversationId}`,     // same id → updates in place, no dupes
+      // Same id as FCM android.notification.tag → collapses to one tray entry.
+      identifier: `chat:${o.conversationId}`,
       content: {
         title: o.title,
         body: o.body,
         categoryIdentifier: CATEGORY.message,
-        data: { type: 'message', conversationId: o.conversationId },
-        ...(Platform.OS === 'android' ? { channelId: o.isGroup ? CHANNELS.groups : CHANNELS.messages } : {}),
+        data: {
+          type: 'message',
+          conversationId: o.conversationId,
+          messageId: o.messageId ?? '',
+          kind: o.isGroup ? 'group' : 'message',
+        },
         sound: 'default',
+        badge: 1,
+        ...(Platform.OS === 'android'
+          ? {
+              channelId: o.isGroup ? CHANNELS.groups : CHANNELS.messages,
+              priority: Notifications.AndroidNotificationPriority.HIGH,
+              sticky: false,
+            }
+          : {}),
       },
       trigger: null,
     });
@@ -263,13 +290,33 @@ export async function presentCallNotification(o: CallNotifOpts): Promise<void> {
         title: o.title,
         body: o.video ? 'Incoming video call' : 'Incoming voice call',
         categoryIdentifier: CATEGORY.call,
-        data: { type: 'call', callId: o.callId, conversationId: o.conversationId, video: String(!!o.video) },
+        data: {
+          type: 'call',
+          callId: o.callId,
+          conversationId: o.conversationId,
+          video: String(!!o.video),
+          kind: 'call',
+        },
         priority: Notifications.AndroidNotificationPriority.MAX,
-        ...(Platform.OS === 'android' ? { channelId: CHANNELS.calls } : {}),
+        sticky: true,
         sound: 'default',
+        ...(Platform.OS === 'android'
+          ? {
+              channelId: CHANNELS.calls,
+              // Full-screen intent when the screen is locked (WhatsApp-class).
+              // Requires USE_FULL_SCREEN_INTENT (already in AndroidManifest).
+            }
+          : {}),
       },
       trigger: null,
     });
+  } catch { /* ignore */ }
+}
+
+/** Update the app icon badge count (iOS + Android 8+ launchers that support it). */
+export async function setBadgeCount(n: number): Promise<void> {
+  try {
+    await Notifications.setBadgeCountAsync(Math.max(0, Math.floor(n)));
   } catch { /* ignore */ }
 }
 

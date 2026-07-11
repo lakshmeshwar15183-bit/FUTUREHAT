@@ -14,6 +14,7 @@ import { supabase } from './supabase';
 import { uploadMediaFromUri } from './media';
 import {
   sendMessage,
+  sendPush,
   pinConversation,
   unpinConversation,
   muteConversation,
@@ -128,6 +129,28 @@ export async function flushOutbox(): Promise<void> {
           // score, it only keeps the "waiting on peer / done today" UI fresh. The
           // authoritative +1 is finalised by the daily job regardless of this call.
           recordStreakActivity(supabase, item.conversationId).catch(() => {});
+          // Push notify after offline flush (DB outbox also enqueues; this kicks drain).
+          try {
+            const preview =
+              item.type === 'text'
+                ? item.content
+                : item.type === 'image'
+                  ? '📷 Photo'
+                  : item.type === 'video'
+                    ? '🎥 Video'
+                    : item.type === 'audio'
+                      ? '🎤 Voice message'
+                      : item.type === 'file'
+                        ? '📎 Document'
+                        : 'New message';
+            void sendPush(supabase, {
+              conversationId: item.conversationId,
+              kind: 'message',
+              title: 'New message',
+              body: preview,
+              data: { messageId: message?.id ?? item.tempId, messageType: item.type },
+            });
+          } catch { /* ignore */ }
         } else {
           await updateOutboxItem(item.tempId, { attempts: (item.attempts ?? 0) + 1 });
         }

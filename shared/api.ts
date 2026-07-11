@@ -132,18 +132,19 @@ export async function createGroupConversation(
   name: string,
   participantIds: UUID[],
   avatarUrl?: string | null,
+  description?: string | null,
 ): Promise<{ conversationId: UUID | null; error: Error | null }> {
-  // Delegates to the SECURITY DEFINER RPC (migration 0033). The previous
-  // client-side two-step (insert conversation, then bulk-insert participants)
-  // stopped working after 0015 tightened the participants WITH CHECK to a
-  // subquery on conversations — a table whose own RLS requires you to already
-  // be a member, so the creator's very first participant insert always failed.
+  // Delegates to the SECURITY DEFINER RPC (0033, extended in 0037). Prefer the
+  // full groupsApi helper when you need push notify + description; this keeps
+  // the historic import path working for both web and mobile create flows.
   const { data, error } = await client.rpc('create_group_conversation', {
     p_name: name,
     p_member_ids: participantIds,
-    p_avatar_url: avatarUrl,
+    p_avatar_url: avatarUrl ?? null,
+    p_description: description ?? null,
   });
   if (error) return { conversationId: null, error: new Error(error.message) };
+  // Callers (NewGroupScreen / GroupModal) fire sendPush for "added to group".
   return { conversationId: (data as UUID) ?? null, error: null };
 }
 

@@ -13,7 +13,8 @@ export type RootStackParamList = {
   Chat: { conversationId: UUID; title: string };
   NewChat: undefined;
   NewGroup: undefined;
-  GroupInfo: { conversationId: UUID; isAdmin: boolean };
+  GroupInfo: { conversationId: UUID };
+  JoinGroup: { token: string };
   Profile: { userId: UUID; conversationId?: UUID };
   EditProfile: undefined;
   Appearance: undefined;

@@ -35,6 +35,8 @@ import SettingsScreen from './src/screens/SettingsScreen';
 import ChatScreen from './src/screens/ChatScreen';
 import NewChatScreen from './src/screens/NewChatScreen';
 import NewGroupScreen from './src/screens/NewGroupScreen';
+import GroupInfoScreen from './src/screens/GroupInfoScreen';
+import JoinGroupScreen from './src/screens/JoinGroupScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
 import EditProfileScreen from './src/screens/EditProfileScreen';
 import AppearanceScreen from './src/screens/AppearanceScreen';
@@ -123,6 +125,9 @@ const linkingConfig: React.ComponentProps<typeof NavigationContainer>['linking']
       Auth: 'auth',
       ResetPassword: RESET_PASSWORD_PATH,
       Main: 'main',
+      JoinGroup: 'invite/g/:token',
+      Chat: 'chat/:conversationId',
+      GroupInfo: 'group/:conversationId',
     },
   },
 };
@@ -275,6 +280,8 @@ function RootNavigator() {
               <Stack.Screen name="Chat" component={ChatScreen} options={{ title: '' }} />
               <Stack.Screen name="NewChat" component={NewChatScreen} options={{ title: 'New chat' }} />
               <Stack.Screen name="NewGroup" component={NewGroupScreen} options={{ title: 'New group' }} />
+              <Stack.Screen name="GroupInfo" component={GroupInfoScreen} options={{ title: 'Group info' }} />
+              <Stack.Screen name="JoinGroup" component={JoinGroupScreen} options={{ title: 'Join group' }} />
               <Stack.Screen name="Profile" component={ProfileScreen} options={{ title: '' }} />
               <Stack.Screen name="EditProfile" component={EditProfileScreen} options={{ title: 'Edit profile' }} />
               <Stack.Screen name="Appearance" component={AppearanceScreen} options={{ title: 'Appearance' }} />

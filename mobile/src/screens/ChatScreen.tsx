@@ -77,6 +77,15 @@ import {
   markViewOnceSeen,
   getViewOnceState,
   isVideoMessage,
+  getMyGroupRole,
+  getPinnedMessageIds,
+  pinGroupMessage,
+  unpinGroupMessage,
+  canPinMessages,
+  canSendInGroup,
+  permissionsFromConversation,
+  getGroupConversation,
+  type ParticipantRole,
 } from '../lib/shared';
 import type { Message, MessageReaction, Profile, ConversationSummary, Poll, PollVote, SearchKind, ChatSettings, ReportReason } from '../lib/shared';
 import {
@@ -219,6 +228,10 @@ function ChatScreenInner() {
     return () => clearInterval(id);
   }, []);
   const [isGroup, setIsGroup] = useState(false);
+  const [myGroupRole, setMyGroupRole] = useState<ParticipantRole | null>(null);
+  const [groupSendBlocked, setGroupSendBlocked] = useState(false);
+  const [groupPerms, setGroupPerms] = useState(permissionsFromConversation(null));
+  const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
   const [onlineIds, setOnlineIds] = useState<Set<string>>(new Set());
   const [typingName, setTypingName] = useState<string | null>(null);
 
@@ -385,8 +398,30 @@ function ChatScreenInner() {
         const cachedConvs = await getCachedConversations(myId);
         const cs = cachedConvs.find((s) => s.conversation.id === conversationId);
         if (cs && active) {
-          setIsGroup(cs.conversation.type === 'group');
+          const group = cs.conversation.type === 'group';
+          setIsGroup(group);
           setPeers(cs.participants.filter((p) => p.id !== myId));
+          if (group) {
+            Promise.all([
+              getMyGroupRole(supabase, conversationId),
+              getGroupConversation(supabase, conversationId),
+              getPinnedMessageIds(supabase, conversationId),
+            ])
+              .then(([role, gconv, pins]) => {
+                if (!active) return;
+                setMyGroupRole(role);
+                const perms = permissionsFromConversation(gconv ?? cs.conversation);
+                setGroupPerms(perms);
+                setGroupSendBlocked(!canSendInGroup(role, perms));
+                setPinnedIds(new Set(pins));
+              })
+              .catch(() => {});
+          } else {
+            setMyGroupRole(null);
+            setGroupSendBlocked(false);
+            setGroupPerms(permissionsFromConversation(null));
+            setPinnedIds(new Set());
+          }
         }
       }
 
@@ -591,7 +626,15 @@ function ChatScreenInner() {
     navigation.setOptions({
       headerLeft: undefined,
       headerTitle: () => (
-        <Pressable onPress={() => peers[0] && navigation.navigate('Profile', { userId: peers[0].id, conversationId })}>
+        <Pressable
+          onPress={() => {
+            if (isGroup) {
+              navigation.navigate('GroupInfo', { conversationId });
+            } else if (peers[0]) {
+              navigation.navigate('Profile', { userId: peers[0].id, conversationId });
+            }
+          }}
+        >
           <View style={styles.headerTitleRow}>
             <Text style={styles.headerTitle} numberOfLines={1}>
               {ghost ? '👻 ' : ''}{params.title}
@@ -604,14 +647,21 @@ function ChatScreenInner() {
           {!!subtitle && <Text style={styles.headerSub}>{subtitle}</Text>}
         </Pressable>
       ),
-      // Group calling isn't implemented yet, so 1:1 call buttons are only shown
-      // in direct chats — no dead/"coming soon" buttons in groups.
+      // Group calling: open group info for voice/video entry; 1:1 keeps direct call buttons.
       headerRight: () => (
         <View style={styles.headerActions}>
           <Pressable hitSlop={8} onPress={() => setSearchOpen((v) => !v)}>
             <Ionicons name="search-outline" size={21} color={colors.text} />
           </Pressable>
-          {!isGroup && (
+          {isGroup ? (
+            <Pressable
+              hitSlop={8}
+              onPress={() => navigation.navigate('GroupInfo', { conversationId })}
+              style={{ marginLeft: 18 }}
+            >
+              <Ionicons name="information-circle-outline" size={24} color={colors.text} />
+            </Pressable>
+          ) : (
             <>
               <Pressable hitSlop={8} onPress={() => placeCall('audio')} style={{ marginLeft: 18 }}>
                 <Ionicons name="call-outline" size={22} color={colors.text} />
@@ -624,7 +674,7 @@ function ChatScreenInner() {
         </View>
       ),
     });
-  }, [navigation, params.title, subtitle, peers, colors, styles, selectionMode, selectedIds, isGroup, ghost, disappearSecs]);
+  }, [navigation, params.title, subtitle, peers, colors, styles, selectionMode, selectedIds, isGroup, ghost, disappearSecs, conversationId]);
 
   function placeCall(kind: 'audio' | 'video') {
     // Only reachable from direct chats (call buttons are hidden in groups).
@@ -668,6 +718,10 @@ function ChatScreenInner() {
   async function handleSend() {
     const body = text.trim();
     if (!body || sending) return;
+    if (groupSendBlocked) {
+      Alert.alert('Only admins', 'Only admins can send messages in this group.');
+      return;
+    }
     setText('');
     setDraft(conversationId, '').catch(() => {}); // clear persisted draft
     typingChannel.current?.notify({ userId: uid ?? '', name: 'Someone', typing: false });
@@ -1015,6 +1069,26 @@ function ChatScreenInner() {
     if (!target) setSelected(null);
     await toggleReaction(supabase, t.id, emoji);
     getReactions(supabase, messagesRef.current.map((m) => m.id)).then(setReactions);
+  }
+
+  async function togglePin() {
+    if (!selected || !isGroup) return;
+    const target = selected;
+    setSelected(null);
+    const was = pinnedIds.has(target.id);
+    const res = was
+      ? await unpinGroupMessage(supabase, conversationId, target.id)
+      : await pinGroupMessage(supabase, conversationId, target.id);
+    if (res.error) {
+      Alert.alert('Pin', res.error.message);
+      return;
+    }
+    setPinnedIds((prev) => {
+      const next = new Set(prev);
+      if (was) next.delete(target.id);
+      else next.add(target.id);
+      return next;
+    });
   }
 
   // Star / unstar a message (per-user bookmark). Optimistic; the browser screen
@@ -1762,6 +1836,13 @@ function ChatScreenInner() {
                   />
                 )}
                 <ActionRow icon="arrow-redo" label="Forward" onPress={openForward} />
+                {isGroup && canPinMessages(myGroupRole, groupPerms) && (
+                  <ActionRow
+                    icon="pin"
+                    label={selected && pinnedIds.has(selected.id) ? 'Unpin' : 'Pin'}
+                    onPress={togglePin}
+                  />
+                )}
                 <ActionRow icon="information-circle-outline" label="Info" onPress={showInfo} />
                 {selected?.sender_id === uid && selected?.type === 'text' && (
                   <ActionRow
