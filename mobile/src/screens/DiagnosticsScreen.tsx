@@ -19,6 +19,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import { APP_NAME, APP_VERSION, CREDIT } from '../branding';
 import { getLastCrash } from '../lib/prodLog';
+import { runProdHealthChecks } from '../lib/prodHealth';
 
 // Device locale from RN's built-in native settings (no extra dependency).
 // iOS exposes an array under AppleLanguages; Android exposes a `localeIdentifier`.
@@ -40,6 +41,7 @@ export default function DiagnosticsScreen() {
   const [online, setOnline] = useState('checking…');
   const [connection, setConnection] = useState('unknown');
   const [lastCrash, setLastCrash] = useState<string>('none');
+  const [healthLines, setHealthLines] = useState<string[]>([]);
 
   const { width, height } = Dimensions.get('window');
   const scale = PixelRatio.get();
@@ -69,6 +71,13 @@ export default function DiagnosticsScreen() {
         if (!active) return;
         setLastCrash(c ? `${c.at} · ${c.label}: ${c.message}` : 'none');
       });
+      // Refresh production health (TURN, auth redirect, Supabase).
+      void runProdHealthChecks().then((r) => {
+        if (!active) return;
+        setHealthLines(
+          r.items.map((i) => `${i.ok ? 'OK' : i.severity.toUpperCase()} · ${i.id}: ${i.message}`),
+        );
+      });
       return () => { active = false; };
     }, []),
   );
@@ -79,6 +88,9 @@ export default function DiagnosticsScreen() {
       `Generated: ${new Date().toISOString()}`,
       '',
       ...Object.entries(info).map(([k, v]) => `${k}: ${v}`),
+      '',
+      '=== Production health ===',
+      ...(healthLines.length ? healthLines : ['(no health report yet)']),
     ];
     Share.share({ message: lines.join('\n') });
   }
@@ -93,8 +105,18 @@ export default function DiagnosticsScreen() {
           </View>
         ))}
       </View>
+      {healthLines.length > 0 && (
+        <View style={[styles.group, { marginTop: spacing(3) }]}>
+          <Text style={[styles.k, { padding: spacing(3), fontWeight: '700' }]}>Production health</Text>
+          {healthLines.map((line, i) => (
+            <View key={i} style={[styles.row, i === healthLines.length - 1 && styles.rowLast]}>
+              <Text style={styles.v}>{line}</Text>
+            </View>
+          ))}
+        </View>
+      )}
       <Pressable style={styles.btn} onPress={shareReport}><Text style={styles.btnText}>Share diagnostic report</Text></Pressable>
-      <Text style={styles.note}>The report is generated locally and only shared if you choose to send it.</Text>
+      <Text style={styles.note}>The report is generated locally and only shared if you choose to send it. Critical health lines (TURN, auth redirect) must be OK before public release.</Text>
     </ScrollView>
   );
 }

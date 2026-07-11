@@ -16,6 +16,8 @@ import { getCurrentUser, onAuthChange } from './src/lib/shared';
 import { isRecoveryLink, parseRecoveryLink, RESET_PASSWORD_PATH } from './src/lib/authLinks';
 import { startSync } from './src/lib/sync';
 import { hydrateAppIcon } from './src/lib/appIcon';
+import { installCrashReporter } from './src/lib/crashReporter';
+import { runProdHealthChecks } from './src/lib/prodHealth';
 import { ThemeProvider, useTheme } from './src/theme';
 import { AppLockProvider, useAppLock } from './src/security/AppLock';
 import { ChatLockProvider } from './src/security/ChatLock';
@@ -362,9 +364,17 @@ function RootNavigator() {
 }
 
 export default function App() {
+  // P0: global crash capture first so boot failures are recorded.
+  useEffect(() => {
+    installCrashReporter();
+  }, []);
   // Start background sync + offline outbox flushing for the whole app lifetime.
   useEffect(() => startSync(), []);
   useEffect(() => { void hydrateAppIcon(); }, []);
+  // Production health (TURN / auth redirect / Supabase) — non-blocking.
+  useEffect(() => {
+    void runProdHealthChecks();
+  }, []);
   return (
     <ErrorBoundary label="App">
       <GestureHandlerRootView style={{ flex: 1 }}>

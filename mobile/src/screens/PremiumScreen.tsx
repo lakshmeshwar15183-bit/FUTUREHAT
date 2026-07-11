@@ -1,11 +1,10 @@
-// Lumixo mobile — Lumixo+ premium. Shows plans + feature list and
-// activates a subscription. Reuses the shared premium API and presets.
+// Lumixo mobile — Lumixo+ premium. Shows plans + feature list.
 //
-// NOTE: like the web app, in-app purchase billing (Google Play Billing) is not
-// wired yet — activation here records a subscription via the shared API for
-// testing. Real Play Billing / "restore purchases" lands before public release.
+// P0 SECURITY: purchases are OFF until Google Play Billing / Razorpay webhook
+// activates subscriptions server-side. Client-side activate is never offered.
+// Flip PAYMENTS_READY only after verified payment integration ships.
 import React, { useCallback, useMemo, useState } from 'react';
-import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 
@@ -13,7 +12,6 @@ import { supabase } from '../lib/supabase';
 import {
   getSubscription,
   isSubscriptionActive,
-  activateSubscription,
   cancelSubscription,
   PLAN_LIST,
   formatInr,
@@ -26,8 +24,7 @@ import { useColors, spacing, radius, font, type Palette } from '../theme';
 import { APP_NAME } from '../branding';
 import { Alert } from '../ui/dialog';
 
-// Purchases are gated until a payment gateway (Razorpay / Google Play Billing) is
-// wired. Flip to true once it's integrated and the real activate() flow takes over.
+/** MUST stay false until production payment webhook is live. */
 const PAYMENTS_READY = false;
 
 export default function PremiumScreen() {
@@ -36,7 +33,6 @@ export default function PremiumScreen() {
 
   const [sub, setSub] = useState<Subscription | null>(null);
   const [plan, setPlan] = useState<PlanId>('yearly');
-  const [busy, setBusy] = useState(false);
   const [showSoon, setShowSoon] = useState(false);
 
   const load = useCallback(async () => {
@@ -45,22 +41,6 @@ export default function PremiumScreen() {
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
   const active = isSubscriptionActive(sub);
-
-  async function activate() {
-    setBusy(true);
-    const { error } = await activateSubscription(supabase, plan, {
-      provider: 'manual',
-      providerSubscriptionId: null,
-      providerCustomerId: null,
-    } as any);
-    setBusy(false);
-    if (error) {
-      Alert.alert('Could not activate', error.message);
-      return;
-    }
-    Alert.alert('Welcome to Lumixo+', 'Premium features are now unlocked.');
-    load();
-  }
 
   async function cancel() {
     Alert.alert('Cancel subscription', 'You keep premium until the period ends. Continue?', [
@@ -130,14 +110,11 @@ export default function PremiumScreen() {
             <Text style={styles.cancelText}>Cancel subscription</Text>
           </Pressable>
         ) : null
-      ) : PAYMENTS_READY ? (
-        <Pressable style={styles.cta} onPress={activate} disabled={busy}>
-          {busy ? <ActivityIndicator color="#000" /> : <Text style={styles.ctaText}>Get {APP_NAME}+</Text>}
-        </Pressable>
       ) : (
-        <Pressable style={styles.cta} onPress={() => setShowSoon(true)}>
-          <Text style={styles.ctaText}>Get {APP_NAME}+</Text>
-          <View style={styles.soonPill}><Text style={styles.soonPillText}>🟡 Available soon</Text></View>
+        // Never offer a live "Buy" CTA until PAYMENTS_READY (Play Billing).
+        <Pressable style={styles.cta} onPress={() => setShowSoon(true)} accessibilityRole="button">
+          <Text style={styles.ctaText}>{APP_NAME}+ — Coming soon</Text>
+          <View style={styles.soonPill}><Text style={styles.soonPillText}>Not available for purchase yet</Text></View>
         </Pressable>
       )}
 
@@ -168,9 +145,10 @@ export default function PremiumScreen() {
           <Pressable style={styles.soonSheet} onPress={() => {}}>
             <View style={styles.soonHandle} />
             <Text style={styles.soonEmoji}>🟡</Text>
-            <Text style={styles.soonTitle}>Available soon</Text>
+            <Text style={styles.soonTitle}>Not for sale yet</Text>
             <Text style={styles.soonBody}>
-              Premium subscriptions will be available in a future update once secure payment integration is completed.
+              Secure in-app purchases are not enabled in this build. Lumixo+ cannot be activated from the client.
+              When billing ships, purchases will go through Google Play / a verified payment provider only.
             </Text>
             <Pressable style={styles.soonBtn} onPress={() => setShowSoon(false)}>
               <Text style={styles.soonBtnText}>Got it</Text>

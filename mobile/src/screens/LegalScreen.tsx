@@ -3,7 +3,7 @@
 import React, { useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
-import { CREDIT, APP_VERSION } from '../branding';
+import { CREDIT, APP_VERSION, SUPPORT_EMAIL, OWNER, GRIEVANCE_OFFICER } from '../branding';
 
 type Tab = 'terms' | 'privacy' | 'guidelines';
 
@@ -37,13 +37,50 @@ export default function LegalScreen() {
         {tab === 'privacy' && (
           <>
             <Text style={styles.h}>Privacy Policy</Text>
-            <Text style={styles.p}>We collect only what is needed to run the service: your profile, messages, and basic usage for delivery and safety.</Text>
+            <Text style={styles.p}>
+              Last updated for Play Store / Data Safety readiness. We collect only what is needed to run
+              Lumixo as a messaging service.
+            </Text>
+            <Text style={styles.h2}>Data we process</Text>
+            <Text style={styles.p}>
+              Account: email, display name, optional phone, profile photo. Messages and media you send
+              (including voice notes, images, video, documents). Call metadata (not call audio content
+              beyond live transport). Device push tokens for notifications. Basic diagnostics (crash
+              logs on-device; optional anonymous crash webhook if configured). Support tickets you submit.
+            </Text>
+            <Text style={styles.h2}>How we use data</Text>
+            <Text style={styles.p}>
+              Deliver messages and calls, show presence and read receipts as you configure, send push
+              notifications, prevent abuse, and provide account recovery and support.
+            </Text>
             <Text style={styles.h2}>Protection</Text>
-            <Text style={styles.p}>Conversations are protected by row-level security — only participants can read them. Data is encrypted in transit and at rest.</Text>
+            <Text style={styles.p}>
+              Conversations are protected by row-level security — only participants can read them. Data
+              is encrypted in transit (TLS) and at rest with our hosting provider. Media buckets use
+              membership-scoped access where applicable.
+            </Text>
             <Text style={styles.h2}>Your controls</Text>
-            <Text style={styles.p}>Edit your profile, manage visibility, block users, mute chats, export your data, and request account deletion anytime.</Text>
+            <Text style={styles.p}>
+              Edit your profile, manage visibility, block users, mute chats, export your data (Settings →
+              Account security → Data export), and request account deletion (Settings → Account security →
+              Delete my account) with a recovery window before permanent removal.
+            </Text>
+            <Text style={styles.h2}>Account deletion</Text>
+            <Text style={styles.p}>
+              You may request deletion at any time. We schedule permanent removal after a short recovery
+              period so you can cancel if the request was accidental. After permanent deletion, message
+              and profile data associated with your account are removed subject to legal retention
+              obligations (e.g. abuse investigations).
+            </Text>
             <Text style={styles.h2}>Sharing</Text>
-            <Text style={styles.p}>We do not sell your data. Limited processors (hosting, payments) handle data only to provide the service.</Text>
+            <Text style={styles.p}>
+              We do not sell your personal data. Limited processors (cloud hosting, push notification
+              delivery, and — when enabled — payment processors) handle data only to provide the service.
+            </Text>
+            <Text style={styles.h2}>Contact</Text>
+            <Text style={styles.p}>
+              Privacy / support: {SUPPORT_EMAIL}. Grievance officer: {GRIEVANCE_OFFICER} ({OWNER}).
+            </Text>
           </>
         )}
         {tab === 'guidelines' && (

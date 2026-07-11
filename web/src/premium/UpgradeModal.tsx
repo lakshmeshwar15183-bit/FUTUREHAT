@@ -38,6 +38,11 @@ export function UpgradeModal({ onClose }: { onClose: () => void }) {
 
   async function handleUpgrade() {
     if (!user) return;
+    // P0: never run free/manual activation. Only real Razorpay (or future gateways).
+    if (!paymentsReady) {
+      setShowSoon(true);
+      return;
+    }
     setBusy(true);
     setError('');
     try {
@@ -50,6 +55,10 @@ export function UpgradeModal({ onClose }: { onClose: () => void }) {
       });
       if (!result.ok) {
         setError(result.error || 'Payment was not completed');
+        return;
+      }
+      if (result.provider === 'manual') {
+        setError('Secure payments are not available. Manual activation is disabled.');
         return;
       }
       const { error: actErr } = await activateSubscription(supabase, plan, result);
