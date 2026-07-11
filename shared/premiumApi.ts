@@ -50,7 +50,15 @@ export async function getServerAdmin(client: SupabaseClient): Promise<boolean> {
   return !error && data === true;
 }
 
-// Activate (or renew) a subscription after a successful payment. Idempotent upsert.
+/**
+ * Activate (or renew) a subscription after a successful payment.
+ *
+ * PRODUCTION: direct client writes to `subscriptions` are blocked by RLS
+ * (migration 0042). Activation must go through a verified payment webhook /
+ * Edge Function using the service role (`admin_activate_subscription`).
+ * This client helper remains for gateways that still write via a privileged
+ * path — it will fail for end-user sessions (by design).
+ */
 export async function activateSubscription(
   client: SupabaseClient,
   plan: PlanId,
@@ -59,6 +67,23 @@ export async function activateSubscription(
   const { data: auth } = await client.auth.getUser();
   if (!auth.user) return { subscription: null, error: new Error('not authenticated') };
 
+  // Never allow free "manual" self-activation from the client. UI already gates
+  // on PAYMENTS_READY; this is defense-in-depth against API misuse.
+  if (!result?.ok || !result.provider || result.provider === 'manual') {
+    return {
+      subscription: null,
+      error: new Error('Payments are not available yet. Secure billing is required to unlock Lumixo+.'),
+    };
+  }
+
+  if (!result.providerSubscriptionId && !result.providerCustomerId) {
+    return {
+      subscription: null,
+      error: new Error('Payment could not be verified. No charge was applied.'),
+    };
+  }
+
+  // Attempt upsert — succeeds only if RLS allows (service role) or fails cleanly.
   const nowIso = new Date().toISOString();
   const row = {
     user_id: auth.user.id,
@@ -79,23 +104,37 @@ export async function activateSubscription(
     .upsert(row, { onConflict: 'user_id' })
     .select()
     .single();
-  return { subscription: data, error };
+
+  if (error) {
+    return {
+      subscription: null,
+      error: new Error(
+        /row-level|policy|permission|rls/i.test(error.message)
+          ? 'Subscription activation must complete via the payment provider. No free unlock is available.'
+          : error.message,
+      ),
+    };
+  }
+  return { subscription: data, error: null };
 }
 
-// Cancel = "don't renew." We flag cancel_at_period_end but KEEP status='active'
-// so the user retains Lumixo+ until current_period_end (matching the UI promise
-// "Cancels at period end"). is_premium()/isSubscriptionActive() both expire on the
-// date, so access drops automatically when the period ends — no status flip needed.
+// Cancel = "don't renew." SECURITY DEFINER RPC only flips cancel_at_period_end
+// (migration 0042) — users cannot change plan/status/period from the client.
 export async function cancelSubscription(
   client: SupabaseClient,
 ): Promise<{ error: Error | null }> {
   const { data: auth } = await client.auth.getUser();
   if (!auth.user) return { error: new Error('not authenticated') };
-  const { error } = await client
-    .from('subscriptions')
-    .update({ cancel_at_period_end: true, updated_at: new Date().toISOString() })
-    .eq('user_id', auth.user.id);
-  return { error };
+  const { error } = await client.rpc('cancel_my_subscription');
+  if (error) {
+    // Fallback for environments that have not applied 0042 yet.
+    const { error: e2 } = await client
+      .from('subscriptions')
+      .update({ cancel_at_period_end: true, updated_at: new Date().toISOString() })
+      .eq('user_id', auth.user.id);
+    return { error: e2 ?? error };
+  }
+  return { error: null };
 }
 
 // user_ids of all currently-premium users (for badges).

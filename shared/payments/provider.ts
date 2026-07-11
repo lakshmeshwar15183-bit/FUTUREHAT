@@ -37,13 +37,19 @@ export function computePeriodEnd(plan: PlanId, fromIso: string): string {
 }
 
 /**
- * Manual provider — no gateway. Resolves successfully so the subscription is
- * activated in the database immediately. Used when no payment keys are configured
- * (local/dev, or self-serve activation). Fully functional end-to-end.
+ * Manual provider — no gateway. Always fails closed in production builds so
+ * users cannot self-activate Lumixo+ without a verified payment provider
+ * (Razorpay / Play Billing) and service-role subscription write (migration 0042).
+ *
+ * Local developers can temporarily return ok:true for testing only — never ship that.
  */
 export class ManualProvider implements PaymentProvider {
   readonly id: PaymentProviderId = 'manual';
   async checkout(_ctx: CheckoutContext): Promise<PaymentResult> {
-    return { ok: true, provider: 'manual', providerSubscriptionId: `manual_${Date.now()}` };
+    return {
+      ok: false,
+      provider: 'manual',
+      error: 'Secure payments are not configured yet. Lumixo+ cannot be activated without a payment provider.',
+    };
   }
 }

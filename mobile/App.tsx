@@ -70,6 +70,7 @@ import HallOfLegendsScreen from './src/screens/HallOfLegendsScreen';
 import AdminGate from './src/components/AdminGate';
 import NotificationsBridge from './src/components/NotificationsBridge';
 import { DialogHost } from './src/ui/dialog';
+import ErrorBoundary from './src/components/ErrorBoundary';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator();
@@ -344,19 +345,21 @@ export default function App() {
   useEffect(() => startSync(), []);
   useEffect(() => { void hydrateAppIcon(); }, []);
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <SafeAreaProvider>
-        <ThemeProvider>
-          <AppLockProvider>
-            <ChatLockProvider>
-              <CallProvider>
-                <RootNavigator />
-              </CallProvider>
-            </ChatLockProvider>
-          </AppLockProvider>
-        </ThemeProvider>
-      </SafeAreaProvider>
-    </GestureHandlerRootView>
+    <ErrorBoundary label="App">
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <SafeAreaProvider>
+          <ThemeProvider>
+            <AppLockProvider>
+              <ChatLockProvider>
+                <CallProvider>
+                  <RootNavigator />
+                </CallProvider>
+              </ChatLockProvider>
+            </AppLockProvider>
+          </ThemeProvider>
+        </SafeAreaProvider>
+      </GestureHandlerRootView>
+    </ErrorBoundary>
   );
 }
 
