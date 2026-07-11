@@ -262,22 +262,8 @@
 
 .sidebar-header h2 { display: flex; align-items: center; gap: 8px; }
 
-.app-credit {
-  position: fixed;
-  bottom: 6px;
-  right: 14px;
-  font-size: 10.5px;
-  color: var(--fh-muted);
-  opacity: 0.5;
-  pointer-events: none;
-  z-index: 5;
-}
-
-/* When a chat is open the message input + send button sit bottom-right, so the
-   fixed credit would overlap them. Show it on the welcome screen instead. */
-.app.chat-open .app-credit {
-  display: none;
-}
+/* Credit watermark removed from the main shell (P0 friendliness) — lives in Settings. */
+.app-credit { display: none; }
 
 .conversation-item:hover {
   background: rgba(255, 255, 255, 0.03);
@@ -291,7 +277,8 @@
   width: 48px;
   height: 48px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  /* Brand teal (matches mobile initials palette) — not a purple placeholder. */
+  background: linear-gradient(135deg, #00a884 0%, #008069 100%);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -334,6 +321,79 @@
   color: var(--fh-muted);
   font-size: 14px;
 }
+.empty-state-title {
+  color: var(--fh-text);
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.empty-state-sub {
+  color: var(--fh-muted);
+  font-size: 13.5px;
+  margin-bottom: 18px;
+}
+.empty-state-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.empty-cta-primary {
+  background: var(--fh-accent);
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  padding: 11px 22px;
+  font-weight: 700;
+  font-size: 14px;
+  cursor: pointer;
+}
+.empty-cta-primary:hover { background: var(--fh-accent-2); }
+.empty-cta-secondary {
+  background: transparent;
+  border: none;
+  color: var(--fh-accent);
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 6px 12px;
+}
+.empty-cta-secondary:hover { text-decoration: underline; }
+.preview-ticks {
+  color: var(--fh-muted);
+  margin-right: 4px;
+  font-size: 13px;
+  letter-spacing: -1px;
+}
+
+/* WhatsApp-class list filter chips under search */
+.filter-chips {
+  display: flex;
+  gap: 8px;
+  padding: 0 12px 10px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.filter-chips::-webkit-scrollbar { display: none; }
+.filter-chips-more { padding-top: 0; }
+.filter-chip {
+  flex: none;
+  border: 1px solid var(--fh-border);
+  background: var(--fh-elevated);
+  color: var(--fh-muted);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.filter-chip:hover { color: var(--fh-text); }
+.filter-chip.active {
+  background: var(--fh-accent);
+  border-color: var(--fh-accent);
+  color: #fff;
+}
 
 .main-content {
   flex: 1;
@@ -365,6 +425,10 @@
 
 .empty-chat p {
   font-size: 15px;
+  margin-bottom: 18px;
+}
+.empty-chat .empty-cta-primary {
+  margin-top: 4px;
 }
 
 /* ── Responsive: single-pane on mobile browsers ───────────────────────────── */

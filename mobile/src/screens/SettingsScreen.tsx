@@ -31,6 +31,8 @@ export default function SettingsScreen() {
   const [owner, setOwner] = useState(false);
   const [moderator, setModerator] = useState(false);
   const [unseenMail, setUnseenMail] = useState(0);
+  // Diagnostics is hidden from the main list; open by tapping the version 7×.
+  const [diagTaps, setDiagTaps] = useState(0);
 
   useFocusEffect(
     React.useCallback(() => {
@@ -127,10 +129,12 @@ export default function SettingsScreen() {
         <Ionicons name="chevron-forward" size={20} color={colors.textFaint} />
       </Pressable>
 
+      {/* Primary — daily-use settings only (WhatsApp-class quiet list). */}
       <Group>
         <Row icon="person-outline" label="Account" onPress={() => navigation.navigate('EditProfile')} />
         <Row icon="key-outline" label="Account & security" onPress={() => navigation.navigate('AccountSecurity')} />
         <Row icon="lock-closed-outline" label="Privacy" onPress={() => navigation.navigate('Privacy')} />
+        <Row icon="notifications-outline" label="Notifications" onPress={() => navigation.navigate('Notifications')} />
         <Row
           icon="shield-checkmark-outline"
           label="App lock"
@@ -148,23 +152,23 @@ export default function SettingsScreen() {
                 )
           }
         />
-        <Row icon="notifications-outline" label="Notifications" onPress={() => navigation.navigate('Notifications')} />
       </Group>
 
       <Group>
-        <Row icon="color-palette-outline" label="Appearance & Themes" onPress={() => navigation.navigate('Appearance')} />
+        <Row icon="color-palette-outline" label="Appearance" onPress={() => navigation.navigate('Appearance')} />
         <Row icon="chatbubble-ellipses-outline" label="Chats" onPress={() => navigation.navigate('ChatSettings')} />
-        <Row icon="flame-outline" label="Streaks" onPress={() => navigation.navigate('Streaks')} />
+        <Row icon="folder-outline" label="Storage & data" onPress={() => navigation.navigate('StorageData')} />
+      </Group>
+
+      <Group>
         <Row icon="star-outline" label="Starred messages" onPress={() => navigation.navigate('Starred')} />
-        <Row icon="folder-outline" label="Storage & Data" onPress={() => navigation.navigate('StorageData')} />
         <Row icon="archive-outline" label="Archived chats" onPress={() => navigation.navigate('ArchivedChats')} />
+        <Row icon="flame-outline" label="Streaks" onPress={() => navigation.navigate('Streaks')} />
         <Row icon="download-outline" label="Export my data" onPress={() => navigation.navigate('DataExport')} />
       </Group>
 
       <Group>
         <Row icon="mail-outline" label="Mailbox" badge={unseenMail} onPress={() => { setUnseenMail(0); navigation.navigate('Mailbox'); }} />
-        {/* Moderator dashboard: OWNER + moderators (getServerModerator is true for
-            the owner too). Admin dashboard: OWNER only. */}
         {moderator && (
           <Row icon="shield-checkmark-outline" label="Moderator dashboard" onPress={() => navigation.navigate('Moderator')} />
         )}
@@ -177,12 +181,23 @@ export default function SettingsScreen() {
         <Row icon="share-social-outline" label="Invite a friend" onPress={() => navigation.navigate('Invite')} />
         <Row icon="help-circle-outline" label="Help & Support" onPress={() => navigation.navigate('HelpSupport')} />
         <Row icon="document-text-outline" label="Legal & policies" onPress={() => navigation.navigate('Legal')} />
-        <Row icon="pulse-outline" label="Diagnostics" onPress={() => navigation.navigate('Diagnostics')} />
         <Row icon="log-out-outline" label="Sign out" danger onPress={doSignOut} />
       </Group>
 
       <Text style={styles.credit}>{CREDIT}</Text>
-      <Text style={styles.version}>{APP_NAME} v{APP_VERSION}</Text>
+      <Pressable
+        onPress={() => {
+          const next = diagTaps + 1;
+          if (next >= 7) {
+            setDiagTaps(0);
+            navigation.navigate('Diagnostics');
+          } else {
+            setDiagTaps(next);
+          }
+        }}
+      >
+        <Text style={styles.version}>{APP_NAME} v{APP_VERSION}</Text>
+      </Pressable>
     </ScrollView>
   );
 }

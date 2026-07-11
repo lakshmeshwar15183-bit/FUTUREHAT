@@ -47,6 +47,7 @@ import {
   joinPresence,
   leavePresence,
   getCurrentUser,
+  getMyProfile,
   getMyConversations,
   createPoll,
   getPolls,
@@ -111,6 +112,7 @@ import ForwardSheet, { type ForwardPreview } from '../components/ForwardSheet';
 import PollCard from '../components/PollCard';
 import ScheduleMessageModal from '../components/ScheduleMessageModal';
 import ErrorBoundary from '../components/ErrorBoundary';
+import Avatar from '../components/Avatar';
 import { STICKERS } from '../lib/stickers';
 import { useCalls } from '../calls/CallContext';
 import { useChatLock } from '../security/ChatLock';
@@ -219,6 +221,8 @@ function ChatScreenInner() {
   const [peers, setPeers] = useState<Profile[]>([]);
   const peersRef = useRef<Profile[]>([]);
   useEffect(() => { peersRef.current = peers; }, [peers]);
+  // Header avatar: group avatar_url from conversation, or peer avatar for DMs.
+  const [chatAvatarUrl, setChatAvatarUrl] = useState<string | null>(null);
 
   // Dispatch scheduled messages whose send-time has arrived — on open + every 60s.
   // Mirrors web ChatView (dispatchDueMessages). Without this, messages scheduled
@@ -274,6 +278,12 @@ function ChatScreenInner() {
   const [forwardPreview, setForwardPreview] = useState<ForwardPreview | null>(null);
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [recSecs, setRecSecs] = useState(0); // live elapsed seconds while recording (web parity)
+  // Hold-to-record: slide left past threshold cancels instead of sending on release.
+  const recCancelRef = useRef(false);
+  const recStartX = useRef(0);
+  const [recCanceling, setRecCanceling] = useState(false);
+  const recordingRef = useRef<Audio.Recording | null>(null);
+  useEffect(() => { recordingRef.current = recording; }, [recording]);
   const [sending, setSending] = useState(false);
   // Whether pressing Return sends the message (WhatsApp-style), from Chat settings.
   const [enterToSend, setEnterToSend] = useState(true);
@@ -402,6 +412,7 @@ function ChatScreenInner() {
           const group = cs.conversation.type === 'group';
           setIsGroup(group);
           setPeers(cs.participants.filter((p) => p.id !== myId));
+          setChatAvatarUrl(cs.avatarUrl ?? null);
           if (group) {
             Promise.all([
               getMyGroupRole(supabase, conversationId),
@@ -483,6 +494,7 @@ function ChatScreenInner() {
           if (summary && active) {
             setIsGroup(summary.conversation.type === 'group');
             setPeers(summary.participants.filter((p) => p.id !== myId));
+            setChatAvatarUrl(summary.avatarUrl ?? null);
           }
         } catch { /* offline */ }
       }
@@ -604,6 +616,19 @@ function ChatScreenInner() {
       : peerOnline
         ? 'online'
         : formatLastSeen(peers[0]?.last_seen);
+  // Direct chats prefer the peer avatar; groups use conversation avatar.
+  const headerAvatarUri = isGroup
+    ? chatAvatarUrl
+    : (peers[0]?.avatar_url ?? chatAvatarUrl);
+  const headerAvatarName = isGroup ? params.title : (peers[0]?.display_name ?? params.title);
+
+  function openHeaderProfile() {
+    if (isGroup) {
+      navigation.navigate('GroupInfo', { conversationId });
+    } else if (peers[0]) {
+      navigation.navigate('Profile', { userId: peers[0].id, conversationId });
+    }
+  }
 
   useEffect(() => {
     if (selectionMode) {
@@ -633,25 +658,27 @@ function ChatScreenInner() {
     navigation.setOptions({
       headerLeft: undefined,
       headerTitle: () => (
-        <Pressable
-          onPress={() => {
-            if (isGroup) {
-              navigation.navigate('GroupInfo', { conversationId });
-            } else if (peers[0]) {
-              navigation.navigate('Profile', { userId: peers[0].id, conversationId });
-            }
-          }}
-        >
-          <View style={styles.headerTitleRow}>
-            <Text style={styles.headerTitle} numberOfLines={1}>
-              {ghost ? '👻 ' : ''}{params.title}
-            </Text>
-            {/* Disappearing-messages indicator (WhatsApp parity). */}
-            {disappearSecs > 0 && (
-              <Ionicons name="timer-outline" size={15} color={colors.textMuted} style={{ marginLeft: 5 }} />
+        <Pressable onPress={openHeaderProfile} style={styles.headerPerson}>
+          <Avatar uri={headerAvatarUri} name={headerAvatarName} size={36} />
+          <View style={styles.headerTextCol}>
+            <View style={styles.headerTitleRow}>
+              <Text style={styles.headerTitle} numberOfLines={1}>
+                {params.title}
+              </Text>
+              {/* Disappearing-messages indicator (WhatsApp parity). */}
+              {disappearSecs > 0 && (
+                <Ionicons name="timer-outline" size={14} color={colors.textMuted} style={{ marginLeft: 5 }} />
+              )}
+              {ghost && (
+                <Ionicons name="eye-off-outline" size={13} color={colors.textMuted} style={{ marginLeft: 5 }} />
+              )}
+            </View>
+            {!!subtitle && (
+              <Text style={[styles.headerSub, typingName ? styles.headerSubTyping : null]} numberOfLines={1}>
+                {subtitle}
+              </Text>
             )}
           </View>
-          {!!subtitle && <Text style={styles.headerSub}>{subtitle}</Text>}
         </Pressable>
       ),
       // Group calling: open group info for voice/video entry; 1:1 keeps direct call buttons.
@@ -681,7 +708,7 @@ function ChatScreenInner() {
         </View>
       ),
     });
-  }, [navigation, params.title, subtitle, peers, colors, styles, selectionMode, selectedIds, isGroup, ghost, disappearSecs, conversationId]);
+  }, [navigation, params.title, subtitle, peers, colors, styles, selectionMode, selectedIds, isGroup, ghost, disappearSecs, conversationId, headerAvatarUri, headerAvatarName, typingName]);
 
   function placeCall(kind: 'audio' | 'video') {
     // Only reachable from direct chats (call buttons are hidden in groups).
@@ -703,11 +730,30 @@ function ChatScreenInner() {
       .catch(() => {});
   }, []);
 
+  // First name used in group typing broadcasts ("Asha is typing…").
+  const selfNameRef = useRef<string>('User');
+  useEffect(() => {
+    let alive = true;
+    getMyProfile(supabase)
+      .then((p) => {
+        if (!alive || !p?.display_name) return;
+        selfNameRef.current = p.display_name.trim().split(/\s+/)[0] || 'User';
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [uid]);
+
   function onChangeText(t: string) {
     setText(t);
     setDraft(conversationId, t).catch(() => {}); // persist draft so it survives close/offline
     // Ghost mode: never broadcast typing.
-    if (!ghostRef.current) typingChannel.current?.notify({ userId: uid ?? '', name: 'Someone', typing: t.length > 0 });
+    if (!ghostRef.current) {
+      typingChannel.current?.notify({
+        userId: uid ?? '',
+        name: selfNameRef.current,
+        typing: t.length > 0,
+      });
+    }
   }
 
   // WhatsApp-style Return-to-send. On a hardware keyboard, Enter without Shift
@@ -731,7 +777,7 @@ function ChatScreenInner() {
     }
     setText('');
     setDraft(conversationId, '').catch(() => {}); // clear persisted draft
-    typingChannel.current?.notify({ userId: uid ?? '', name: 'Someone', typing: false });
+    typingChannel.current?.notify({ userId: uid ?? '', name: selfNameRef.current, typing: false });
 
     if (editing) {
       const target = editing;
@@ -1002,10 +1048,13 @@ function ChatScreenInner() {
       const perm = await Audio.requestPermissionsAsync();
       if (!perm.granted) return;
       await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
-      const { recording } = await Audio.Recording.createAsync(
+      const { recording: rec } = await Audio.Recording.createAsync(
         Audio.RecordingOptionsPresets.HIGH_QUALITY,
       );
-      setRecording(recording);
+      recCancelRef.current = false;
+      setRecCanceling(false);
+      setRecording(rec);
+      recordingRef.current = rec;
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
     } catch {
       // ignore
@@ -1013,15 +1062,44 @@ function ChatScreenInner() {
   }
 
   async function stopRecording(send: boolean) {
-    if (!recording) return;
+    const rec = recordingRef.current ?? recording;
+    if (!rec) return;
     try {
-      await recording.stopAndUnloadAsync();
-      const uri = recording.getURI();
+      await rec.stopAndUnloadAsync();
+      const uri = rec.getURI();
       setRecording(null);
+      recordingRef.current = null;
+      setRecCanceling(false);
       if (send && uri) await sendMedia(uri, `voice_${Date.now()}.m4a`, 'audio');
+      else Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
     } catch {
       setRecording(null);
+      recordingRef.current = null;
+      setRecCanceling(false);
     }
+  }
+
+  function onMicPressIn(e: { nativeEvent: { pageX: number } }) {
+    recStartX.current = e.nativeEvent.pageX;
+    recCancelRef.current = false;
+    setRecCanceling(false);
+    void startRecording();
+  }
+
+  function onMicTouchMove(e: { nativeEvent: { pageX: number } }) {
+    if (!recordingRef.current) return;
+    const dx = e.nativeEvent.pageX - recStartX.current;
+    const canceling = dx < -64;
+    if (canceling !== recCancelRef.current) {
+      recCancelRef.current = canceling;
+      setRecCanceling(canceling);
+      if (canceling) Haptics.selectionAsync().catch(() => {});
+    }
+  }
+
+  function onMicPressOut() {
+    if (!recordingRef.current) return;
+    void stopRecording(!recCancelRef.current);
   }
 
   // ── Multi-select ──────────────────────────────────────────────────────────
@@ -1631,27 +1709,37 @@ function ChatScreenInner() {
         </View>
       )}
 
-      {/* Composer */}
+      {/* Composer — hold mic to record; slide left to cancel (WhatsApp-class). */}
       {recording ? (
-        <View style={[styles.composer, { paddingBottom: 6 }]}>
-          <Pressable onPress={() => stopRecording(false)} hitSlop={8}>
-            <Ionicons name="trash-outline" size={24} color={colors.danger} />
-          </Pressable>
+        <View style={[styles.composer, styles.recordingComposer, { paddingBottom: 6 }]}>
+          <Ionicons
+            name={recCanceling ? 'trash' : 'mic'}
+            size={22}
+            color={recCanceling ? colors.danger : colors.primary}
+          />
           <View style={styles.recordingPill}>
-            <View style={styles.recDot} />
-            <Text style={styles.recText}>
-              {`${Math.floor(recSecs / 60)}:${String(recSecs % 60).padStart(2, '0')}`} · 🗑 cancel · ➤ send
+            <View style={[styles.recDot, recCanceling && { backgroundColor: colors.danger }]} />
+            <Text style={[styles.recText, recCanceling && { color: colors.danger }]}>
+              {recCanceling
+                ? 'Release to cancel'
+                : `${Math.floor(recSecs / 60)}:${String(recSecs % 60).padStart(2, '0')}  ·  ← slide to cancel`}
             </Text>
           </View>
-          <Pressable onPress={() => stopRecording(true)} style={styles.sendBtn}>
-            <Ionicons name="send" size={20} color="#fff" />
-          </Pressable>
         </View>
       ) : (
         <View style={[styles.composer, { paddingBottom: 6 }]}>
           <Pressable onPress={() => { Keyboard.dismiss(); setAttachOpen(true); }} hitSlop={8}>
             <Ionicons name="add-circle-outline" size={28} color={colors.textMuted} />
           </Pressable>
+          {!text.trim() && (
+            <Pressable
+              onPress={() => { Keyboard.dismiss(); void pickImage(true); }}
+              hitSlop={8}
+              style={{ marginLeft: 2 }}
+            >
+              <Ionicons name="camera-outline" size={26} color={colors.textMuted} />
+            </Pressable>
+          )}
           <TextInput
             style={styles.input}
             placeholder="Message"
@@ -1676,64 +1764,78 @@ function ChatScreenInner() {
               <Ionicons name={editing ? 'checkmark' : 'send'} size={20} color="#fff" />
             </Pressable>
           ) : (
-            <Pressable onPress={startRecording} style={({ pressed }) => [styles.sendBtn, pressed && styles.sendBtnPressed]}>
+            <Pressable
+              onPressIn={onMicPressIn}
+              onPressOut={onMicPressOut}
+              onTouchMove={onMicTouchMove}
+              // Fallback tap still starts/stops if press-in path fails on some OEMs.
+              delayLongPress={400}
+              style={({ pressed }) => [styles.sendBtn, pressed && styles.sendBtnPressed]}
+            >
               <Ionicons name="mic" size={20} color="#fff" />
             </Pressable>
           )}
         </View>
       )}
 
-      {/* Attachment sheet */}
+      {/* Attachment sheet — primary grid + demoted premium actions */}
       <Modal visible={attachOpen} transparent animationType="slide" onRequestClose={() => setAttachOpen(false)}>
         <Pressable style={styles.backdrop} onPress={() => setAttachOpen(false)}>
-          <View style={[styles.sheet, { paddingBottom: insets.bottom + 12 }]}>
-            <AttachOption icon="image" label="Photo / Video" color="#5B6EF5" onPress={openMediaPicker} />
-            <AttachOption icon="camera" label="Camera" color="#E8638A" onPress={() => pickImage(true)} />
-            <AttachOption icon="document" label="Document" color="#F7A948" onPress={pickDocument} />
-            <AttachOption
-              icon="bar-chart"
-              label="Poll"
-              color="#00A884"
-              onPress={() => {
-                setAttachOpen(false);
-                setPollBuilder(true);
-              }}
-            />
-            <AttachOption
-              icon="happy"
-              label={isPremium ? 'Stickers' : 'Stickers · Lumixo+'}
-              color="#F45D9C"
-              onPress={() => {
-                setAttachOpen(false);
-                if (isPremium) setStickersOpen(true);
-                else
-                  Alert.alert('Stickers', 'Premium stickers are a Lumixo+ feature.', [
-                    { text: 'Not now', style: 'cancel' },
-                    { text: 'See Lumixo+', onPress: () => navigation.navigate('Premium') },
-                  ]);
-              }}
-            />
-            <AttachOption
-              icon="time"
-              label={isPremium ? 'Schedule message' : 'Schedule · Lumixo+'}
-              color="#7A6FF0"
-              onPress={() => {
-                setAttachOpen(false);
-                if (!isPremium) {
-                  Alert.alert('Schedule message', 'Scheduled messages are a Lumixo+ feature.', [
-                    { text: 'Not now', style: 'cancel' },
-                    { text: 'See Lumixo+', onPress: () => navigation.navigate('Premium') },
-                  ]);
-                  return;
-                }
-                if (!text.trim()) {
-                  Alert.alert('Nothing to schedule', 'Type a message first, then schedule it.');
-                  return;
-                }
-                setScheduleOpen(true);
-              }}
-            />
-          </View>
+          <Pressable style={[styles.sheet, { paddingBottom: insets.bottom + 16 }]} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.sheetTitle}>Share</Text>
+            <View style={styles.attachGrid}>
+              <AttachTile icon="image" label="Gallery" color="#5B6EF5" onPress={openMediaPicker} />
+              <AttachTile icon="camera" label="Camera" color="#E8638A" onPress={() => pickImage(true)} />
+              <AttachTile icon="document" label="Document" color="#F7A948" onPress={pickDocument} />
+              <AttachTile
+                icon="bar-chart"
+                label="Poll"
+                color="#00A884"
+                onPress={() => {
+                  setAttachOpen(false);
+                  setPollBuilder(true);
+                }}
+              />
+            </View>
+            <View style={styles.attachMore}>
+              <AttachOption
+                icon="happy"
+                label={isPremium ? 'Stickers' : 'Stickers'}
+                color="#F45D9C"
+                locked={!isPremium}
+                onPress={() => {
+                  setAttachOpen(false);
+                  if (isPremium) setStickersOpen(true);
+                  else
+                    Alert.alert('Stickers', 'Premium stickers are a Lumixo+ feature.', [
+                      { text: 'Not now', style: 'cancel' },
+                      { text: 'See Lumixo+', onPress: () => navigation.navigate('Premium') },
+                    ]);
+                }}
+              />
+              <AttachOption
+                icon="time"
+                label={isPremium ? 'Schedule' : 'Schedule'}
+                color="#7A6FF0"
+                locked={!isPremium}
+                onPress={() => {
+                  setAttachOpen(false);
+                  if (!isPremium) {
+                    Alert.alert('Schedule message', 'Scheduled messages are a Lumixo+ feature.', [
+                      { text: 'Not now', style: 'cancel' },
+                      { text: 'See Lumixo+', onPress: () => navigation.navigate('Premium') },
+                    ]);
+                    return;
+                  }
+                  if (!text.trim()) {
+                    Alert.alert('Nothing to schedule', 'Type a message first, then schedule it.');
+                    return;
+                  }
+                  setScheduleOpen(true);
+                }}
+              />
+            </View>
+          </Pressable>
         </Pressable>
       </Modal>
 
@@ -1989,6 +2091,34 @@ function AttachOption({
   label,
   color,
   onPress,
+  locked,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  color: string;
+  onPress: () => void;
+  locked?: boolean;
+}) {
+  const colors = useColors();
+  return (
+    <Pressable style={attachStyles.opt} onPress={onPress}>
+      <View style={[attachStyles.circle, { backgroundColor: color, opacity: locked ? 0.75 : 1 }]}>
+        <Ionicons name={icon} size={22} color="#fff" />
+      </View>
+      <Text style={[attachStyles.label, { color: colors.text }]}>{label}</Text>
+      {locked ? (
+        <Ionicons name="lock-closed" size={14} color={colors.textFaint} style={{ marginLeft: 'auto' }} />
+      ) : null}
+    </Pressable>
+  );
+}
+
+/** WhatsApp-style 2×2 tile for primary attach actions. */
+function AttachTile({
+  icon,
+  label,
+  color,
+  onPress,
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
@@ -1997,11 +2127,11 @@ function AttachOption({
 }) {
   const colors = useColors();
   return (
-    <Pressable style={attachStyles.opt} onPress={onPress}>
-      <View style={[attachStyles.circle, { backgroundColor: color }]}>
-        <Ionicons name={icon} size={24} color="#fff" />
+    <Pressable style={attachStyles.tile} onPress={onPress}>
+      <View style={[attachStyles.tileCircle, { backgroundColor: color }]}>
+        <Ionicons name={icon} size={26} color="#fff" />
       </View>
-      <Text style={[attachStyles.label, { color: colors.text }]}>{label}</Text>
+      <Text style={[attachStyles.tileLabel, { color: colors.textMuted }]}>{label}</Text>
     </Pressable>
   );
 }
@@ -2038,10 +2168,16 @@ const msgMenuStyles = StyleSheet.create({
 
 const attachStyles = StyleSheet.create({
   opt: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12 },
-  circle: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
-  label: { fontSize: 16, marginLeft: 16 },
+  circle: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  label: { fontSize: 15, marginLeft: 14, fontWeight: '500' },
   actionRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 13 },
   actionLabel: { fontSize: 16, marginLeft: 16 },
+  tile: { width: '25%', alignItems: 'center', paddingVertical: 10 },
+  tileCircle: {
+    width: 56, height: 56, borderRadius: 28,
+    alignItems: 'center', justifyContent: 'center', marginBottom: 8,
+  },
+  tileLabel: { fontSize: 12, fontWeight: '600' },
 });
 
 const makeStyles = (colors: Palette) =>
@@ -2060,9 +2196,12 @@ const makeStyles = (colors: Palette) =>
       backgroundColor: colors.surface, paddingHorizontal: 12, paddingVertical: 5,
       borderRadius: radius.sm, overflow: 'hidden',
     },
+    headerPerson: { flexDirection: 'row', alignItems: 'center', maxWidth: 220 },
+    headerTextCol: { marginLeft: 10, flexShrink: 1, minWidth: 0 },
     headerTitle: { color: colors.text, fontSize: font.heading, fontWeight: '600', flexShrink: 1 },
     headerTitleRow: { flexDirection: 'row', alignItems: 'center' },
-    headerSub: { color: colors.textMuted, fontSize: font.tiny },
+    headerSub: { color: colors.textMuted, fontSize: font.tiny, marginTop: 1 },
+    headerSubTyping: { color: colors.primary, fontWeight: '600' },
     systemNotice: { alignItems: 'center', marginVertical: 8, paddingHorizontal: 24 },
     systemPill: {
       flexDirection: 'row', alignItems: 'center', maxWidth: '90%',
@@ -2151,9 +2290,15 @@ const makeStyles = (colors: Palette) =>
       justifyContent: 'center',
     },
     sendBtnPressed: { transform: [{ scale: 0.9 }], opacity: 0.9 },
+    recordingComposer: { alignItems: 'center', paddingHorizontal: 16, minHeight: 52 },
     recordingPill: { flex: 1, flexDirection: 'row', alignItems: 'center', marginHorizontal: 12 },
     recDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.danger, marginRight: 8 },
-    recText: { color: colors.textMuted, fontSize: font.small },
+    recText: { color: colors.textMuted, fontSize: font.small, fontWeight: '600' },
+    attachGrid: { flexDirection: 'row', flexWrap: 'wrap', paddingVertical: 4, marginBottom: 4 },
+    attachMore: {
+      borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border,
+      paddingTop: 4, marginTop: 4,
+    },
     backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
     // ── WhatsApp-style message context menu (premium bottom sheet) ──────────────
     msgBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },

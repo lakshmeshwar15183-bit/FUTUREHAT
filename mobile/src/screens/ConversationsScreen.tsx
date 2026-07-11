@@ -48,6 +48,7 @@ import {
   processMyStreaks,
   subscribeStreakChanges,
   indexStreaksByConversation,
+  isVideoMessage,
 } from '../lib/shared';
 import type { ConversationSummary, MessageSearchHit, StreakSummary } from '../lib/shared';
 import {
@@ -76,19 +77,24 @@ const animateSelection = () => LayoutAnimation.configureNext(LayoutAnimation.Pre
 // state hydrates instantly (offline included) and survives an app restart.
 const FLAG_KEY = { pinned: 'pinned', muted: 'muted', hidden: 'hidden', favorites: 'favorites' } as const;
 
-// WhatsApp/Telegram-style filter chips shown below the search bar. `all` means
-// no filter; every other value narrows the visible list. Order here is the
-// display order in the horizontal strip.
+// Primary filter chips (WhatsApp-class: short strip so chats stay above the fold).
+// Extra facets (Pinned / Streaks / Locked) live under "More".
 type ChatFilter = 'all' | 'unread' | 'groups' | 'favorites' | 'pinned' | 'streaks' | 'locked';
-const FILTER_CHIPS: { key: ChatFilter; label: string }[] = [
+const PRIMARY_CHIPS: { key: ChatFilter; label: string }[] = [
   { key: 'all',       label: 'All' },
   { key: 'unread',    label: 'Unread' },
   { key: 'groups',    label: 'Groups' },
-  { key: 'favorites', label: 'Favorites' },
-  { key: 'pinned',    label: 'Pinned' },
-  { key: 'streaks',   label: 'Streaks' },
-  { key: 'locked',    label: 'Locked' },
+  { key: 'favorites', label: 'Favourites' },
 ];
+const MORE_CHIPS: { key: ChatFilter; label: string }[] = [
+  { key: 'pinned',  label: 'Pinned' },
+  { key: 'streaks', label: 'Streaks' },
+  { key: 'locked',  label: 'Locked' },
+];
+const ALL_CHIP_LABELS: Record<ChatFilter, string> = {
+  all: 'All', unread: 'Unread', groups: 'Groups', favorites: 'Favourites',
+  pinned: 'Pinned', streaks: 'Streaks', locked: 'Locked',
+};
 
 export default function ConversationsScreen() {
   const navigation = useNavigation<Nav>();
@@ -121,9 +127,10 @@ export default function ConversationsScreen() {
   const [selectionGen, setSelectionGen] = useState(0);
   const selectionMode = selectedIds.size > 0;
 
-  // Filter chips (All / Unread / Groups / Favorites / Pinned / Streaks / Locked).
+  // Filter chips — primary four always visible; "More" expands secondary facets.
   // Favourites are true favourite chats (favorite_conversations), not starred msgs.
   const [filter, setFilter] = useState<ChatFilter>('all');
+  const [moreFilters, setMoreFilters] = useState(false);
   const [favIds, setFavIds] = useState<Set<string>>(new Set());
 
   const q = query.trim().toLowerCase();
@@ -413,24 +420,24 @@ export default function ConversationsScreen() {
     return () => sub.unsubscribe();
   }, [uid]);
 
-  const lastPreview = (c: ConversationSummary): string => {
+  const lastPreviewBody = (c: ConversationSummary): string => {
     const m = c.lastMessage;
     if (!m) return 'Tap to start chatting';
     if (m.is_deleted) return 'This message was deleted';
     // System notices (disappearing-messages on/off) show verbatim, no "You:" prefix.
     if (m.type === 'system') return m.content ?? '';
-    const body =
-      m.type === 'image' ? '📷 Photo' :
-      m.type === 'audio' ? '🎤 Voice message' :
-      m.type === 'file' ? '📎 Attachment' :
-      (m.content ?? '');
-    if (uid && m.sender_id === uid) return `You: ${body}`;
-    if (c.conversation.type === 'group') {
-      const name = c.participants.find((p) => p.id === m.sender_id)?.display_name;
-      return name ? `${name.split(' ')[0]}: ${body}` : body;
-    }
-    return body;
+    if (m.type === 'image') return /\.gif(\?|#|$)/i.test(m.media_url ?? '') ? '🎞️ GIF' : '📷 Photo';
+    if (m.type === 'audio') return '🎤 Voice message';
+    if (m.type === 'video' || isVideoMessage(m)) return '🎥 Video';
+    if (m.type === 'file') return m.content?.trim() ? `📄 ${m.content}` : '📄 Document';
+    // Polls ship as text with a distinctive prefix from the poll composer.
+    if (m.content?.startsWith('📊')) return m.content;
+    return m.content ?? '';
   };
+
+  const lastPreviewMine = (c: ConversationSummary): boolean =>
+    !!uid && !!c.lastMessage && !c.lastMessage.is_deleted && c.lastMessage.sender_id === uid
+    && c.lastMessage.type !== 'system';
 
   // ── Multi-select mode (WhatsApp-style) ──────────────────────────────────────
   // Selection is a set of conversation ids. Always return a NEW Set instance so
@@ -848,7 +855,10 @@ export default function ConversationsScreen() {
             {isGroup && (
               <Ionicons name="people" size={14} color={colors.textMuted} style={{ marginRight: 4 }} />
             )}
-            <Text style={styles.title} numberOfLines={1}>
+            <Text
+              style={[styles.title, item.unreadCount > 0 && styles.titleUnread]}
+              numberOfLines={1}
+            >
               {item.title}
             </Text>
             {isFav && (
@@ -863,9 +873,34 @@ export default function ConversationsScreen() {
           </Text>
         </View>
         <View style={styles.rowBottom}>
-          <Text style={styles.preview} numberOfLines={1}>
-            {lastPreview(item)}
-          </Text>
+          <View style={styles.previewWrap}>
+            {lastPreviewMine(item) && (
+              <Ionicons
+                name="checkmark-done"
+                size={16}
+                color={colors.textFaint}
+                style={styles.previewTick}
+              />
+            )}
+            <Text
+              style={[styles.preview, item.unreadCount > 0 && styles.previewUnread]}
+              numberOfLines={1}
+            >
+              {lastPreviewMine(item)
+                ? lastPreviewBody(item)
+                : (() => {
+                    const body = lastPreviewBody(item);
+                    if (!item.lastMessage || item.lastMessage.is_deleted || item.lastMessage.type === 'system') {
+                      return body;
+                    }
+                    if (isGroup) {
+                      const name = item.participants.find((p) => p.id === item.lastMessage?.sender_id)?.display_name;
+                      return name ? `${name.split(' ')[0]}: ${body}` : body;
+                    }
+                    return body;
+                  })()}
+            </Text>
+          </View>
           <View style={styles.rowIcons}>
             {streakEmoji !== '' && (
               <Text
@@ -958,8 +993,7 @@ export default function ConversationsScreen() {
                 </Pressable>
               )}
             </View>
-            {/* Filter chips (WhatsApp/Telegram folder-style) — hidden while
-                searching so results aren't accidentally narrowed. */}
+            {/* Primary filter chips — short strip so more chats stay on screen. */}
             {q === '' && (
               <ScrollView
                 horizontal
@@ -967,15 +1001,68 @@ export default function ConversationsScreen() {
                 contentContainerStyle={styles.chipsRow}
                 keyboardShouldPersistTaps="handled"
               >
-                {FILTER_CHIPS.map((chip) => {
+                {PRIMARY_CHIPS.map((chip) => {
                   const active = filter === chip.key;
                   return (
                     <Pressable
                       key={chip.key}
                       onPress={() => {
-                        // Smooth cross-fade + reflow when the chip flips.
+                        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                        setMoreFilters(false);
+                        setFilter(chip.key);
+                      }}
+                      style={({ pressed }) => [
+                        styles.chip,
+                        active && styles.chipActive,
+                        pressed && !active && styles.chipPressed,
+                      ]}
+                    >
+                      <Text style={[styles.chipText, active && styles.chipTextActive]}>
+                        {chip.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+                <Pressable
+                  onPress={() => {
+                    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                    setMoreFilters((v) => !v);
+                  }}
+                  style={({ pressed }) => [
+                    styles.chip,
+                    (moreFilters || MORE_CHIPS.some((c) => c.key === filter)) && styles.chipActive,
+                    pressed && styles.chipPressed,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.chipText,
+                      (moreFilters || MORE_CHIPS.some((c) => c.key === filter)) && styles.chipTextActive,
+                    ]}
+                  >
+                    {MORE_CHIPS.some((c) => c.key === filter) && !moreFilters
+                      ? ALL_CHIP_LABELS[filter]
+                      : 'More'}
+                  </Text>
+                </Pressable>
+              </ScrollView>
+            )}
+            {q === '' && moreFilters && (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.chipsRow}
+                keyboardShouldPersistTaps="handled"
+              >
+                {MORE_CHIPS.map((chip) => {
+                  const active = filter === chip.key;
+                  return (
+                    <Pressable
+                      key={chip.key}
+                      onPress={() => {
                         LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
                         setFilter(chip.key);
+                        setMoreFilters(false);
                       }}
                       style={({ pressed }) => [
                         styles.chip,
@@ -1055,16 +1142,35 @@ export default function ConversationsScreen() {
                 {q
                   ? 'No matching chats'
                   : filter !== 'all'
-                  ? `No ${FILTER_CHIPS.find((f) => f.key === filter)?.label.toLowerCase() ?? ''} chats`
+                  ? `No ${ALL_CHIP_LABELS[filter].toLowerCase()} chats`
                   : 'No conversations yet'}
               </Text>
               <Text style={styles.emptySub}>
                 {q
                   ? 'Try a different search.'
                   : filter !== 'all'
-                  ? 'Try a different filter.'
-                  : 'Tap the button below to find someone and say hello.'}
+                  ? 'Try a different filter, or start a new chat.'
+                  : 'Find someone you know and say hello.'}
               </Text>
+              {!q && (
+                <View style={styles.emptyActions}>
+                  <Pressable
+                    style={({ pressed }) => [styles.emptyBtnPrimary, pressed && { opacity: 0.88 }]}
+                    onPress={() => navigation.navigate('NewChat')}
+                  >
+                    <Ionicons name="create-outline" size={18} color="#fff" />
+                    <Text style={styles.emptyBtnPrimaryText}>Start a chat</Text>
+                  </Pressable>
+                  {filter === 'all' && (
+                    <Pressable
+                      style={({ pressed }) => [styles.emptyBtnSecondary, pressed && { opacity: 0.88 }]}
+                      onPress={() => navigation.navigate('NewGroup')}
+                    >
+                      <Text style={styles.emptyBtnSecondaryText}>Create a group</Text>
+                    </Pressable>
+                  )}
+                </View>
+              )}
             </View>
           ) : null
         }
@@ -1184,6 +1290,10 @@ const makeStyles = (colors: Palette) =>
     },
     titleWrap: { flexDirection: 'row', alignItems: 'center', flex: 1 },
     title: { color: colors.text, fontSize: font.heading, fontWeight: '600', flexShrink: 1 },
+    titleUnread: { fontWeight: '700' },
+    previewWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', minWidth: 0 },
+    previewTick: { marginRight: 3, flexShrink: 0 },
+    previewUnread: { color: colors.text, fontWeight: '500' },
     onlineDot: {
       position: 'absolute', right: 0, bottom: 0,
       width: 14, height: 14, borderRadius: 7,
@@ -1203,7 +1313,7 @@ const makeStyles = (colors: Palette) =>
     hiddenToggleText: { color: colors.primary, fontSize: font.small, fontWeight: '600' },
     time: { color: colors.textFaint, fontSize: font.tiny, marginLeft: spacing(2) },
     timeUnread: { color: colors.primary },
-    preview: { color: colors.textMuted, fontSize: font.small, flex: 1 },
+    preview: { color: colors.textMuted, fontSize: font.small, flexShrink: 1 },
     badge: {
       backgroundColor: colors.primary,
       minWidth: 20,
@@ -1233,6 +1343,17 @@ const makeStyles = (colors: Palette) =>
       textAlign: 'center',
       marginTop: spacing(2),
     },
+    emptyActions: { marginTop: spacing(5), alignItems: 'center', gap: spacing(2.5), width: '100%' },
+    emptyBtnPrimary: {
+      flexDirection: 'row', alignItems: 'center', gap: 8,
+      backgroundColor: colors.primary, paddingHorizontal: spacing(5), paddingVertical: spacing(3),
+      borderRadius: radius.pill, minWidth: 180, justifyContent: 'center',
+    },
+    emptyBtnPrimaryText: { color: '#fff', fontSize: font.body, fontWeight: '700' },
+    emptyBtnSecondary: {
+      paddingHorizontal: spacing(4), paddingVertical: spacing(2),
+    },
+    emptyBtnSecondaryText: { color: colors.primary, fontSize: font.body, fontWeight: '600' },
     fab: {
       position: 'absolute',
       right: spacing(5),

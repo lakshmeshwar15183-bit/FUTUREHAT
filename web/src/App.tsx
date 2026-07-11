@@ -8,7 +8,7 @@ import { usePresence } from './PresenceContext';
 import { UpgradeProvider, useUpgrade } from './premium/UpgradeProvider';
 import { PremiumBadge } from './premium/PremiumBadge';
 import { supabase } from './supabase';
-import { signOut, getMyConversations, searchProfiles, startDirectConversation, searchAllMessages, type MessageSearchHit } from '@shared/api';
+import { signOut, getMyConversations, searchProfiles, startDirectConversation, searchAllMessages, isVideoMessage, type MessageSearchHit } from '@shared/api';
 import { listRecentContacts, removeRecentContact, type RecentContact } from '@shared/recentContactsApi';
 import {
   getPinnedIds, pinConversation, unpinConversation,
@@ -365,6 +365,10 @@ function AppInner() {
   // message search across all chats.
   const [chatFilter, setChatFilter] = useState('');
   const [msgHits, setMsgHits] = useState<MessageSearchHit[]>([]);
+  // WhatsApp-class facet chips (mobile parity) — keep the primary strip short.
+  type ListFilter = 'all' | 'unread' | 'groups' | 'favorites' | 'pinned' | 'streaks' | 'locked';
+  const [listFilter, setListFilter] = useState<ListFilter>('all');
+  const [moreFilters, setMoreFilters] = useState(false);
   const filterQ = chatFilter.trim().toLowerCase();
   const convById = useMemo(() => {
     const m = new Map<string, ConversationSummary>();
@@ -388,8 +392,21 @@ function AppInner() {
   );
 
   const visibleConvs = useMemo(() => {
-    const list = conversations.filter((c) => (locksRevealed || !lockedIds.has(c.conversation.id))
-      && (!filterQ || c.title.toLowerCase().includes(filterQ)));
+    const list = conversations.filter((c) => {
+      const id = c.conversation.id;
+      // Locked chats stay hidden until unlocked this session (except Locked chip).
+      if (!locksRevealed && listFilter !== 'locked' && lockedIds.has(id)) return false;
+      if (filterQ && !c.title.toLowerCase().includes(filterQ)) return false;
+      switch (listFilter) {
+        case 'unread': return c.unreadCount > 0;
+        case 'groups': return c.conversation.type === 'group';
+        case 'favorites': return favIds.has(id);
+        case 'pinned': return pinnedIds.has(id);
+        case 'streaks': return (streaks[id]?.score ?? 0) > 0;
+        case 'locked': return lockedIds.has(id);
+        default: return true;
+      }
+    });
     const pinIndex = new Map(pinnedOrder.map((id, i) => [id, i]));
     return [...list].sort((a, b) => {
       const ai = pinIndex.has(a.conversation.id) ? pinIndex.get(a.conversation.id)! : 1e9;
@@ -399,7 +416,7 @@ function AppInner() {
       const bt = b.lastMessage?.created_at || b.conversation.created_at;
       return new Date(bt).getTime() - new Date(at).getTime();
     });
-  }, [conversations, pinnedOrder, lockedIds, locksRevealed, filterQ]);
+  }, [conversations, pinnedOrder, lockedIds, locksRevealed, filterQ, listFilter, favIds, pinnedIds, streaks]);
 
   const selectedConv = conversations.find((c) => c.conversation.id === selectedConvId);
 
@@ -422,18 +439,26 @@ function AppInner() {
     const d = new Date(t);
     return isToday(d) ? format(d, 'h:mm a') : isYesterday(d) ? 'Yesterday' : format(d, 'MM/dd/yy');
   }
-  function previewText(conv: ConversationSummary): string {
+  function previewBody(conv: ConversationSummary): string {
     const m = conv.lastMessage;
-    if (!m) return 'No messages yet';
+    if (!m) return 'Tap to start chatting';
     if (m.is_deleted) return 'This message was deleted';
     // System notices (disappearing-messages on/off) show verbatim, no "You:" prefix.
     if (m.type === 'system') return m.content ?? '';
-    const body =
-      m.type === 'image' ? '📷 Photo' :
-      m.type === 'audio' ? '🎤 Voice message' :
-      m.type === 'file' ? `📎 ${m.content || 'File'}` :
-      (m.content || '');
-    if (m.sender_id === profile?.id) return `You: ${body}`;
+    if (m.type === 'image') return /\.gif(\?|#|$)/i.test(m.media_url ?? '') ? '🎞️ GIF' : '📷 Photo';
+    if (m.type === 'audio') return '🎤 Voice message';
+    if (m.type === 'video' || isVideoMessage(m)) return '🎥 Video';
+    if (m.type === 'file') return m.content?.trim() ? `📄 ${m.content}` : '📄 Document';
+    return m.content || '';
+  }
+  function previewMine(conv: ConversationSummary): boolean {
+    const m = conv.lastMessage;
+    return !!m && !m.is_deleted && m.type !== 'system' && m.sender_id === profile?.id;
+  }
+  function previewText(conv: ConversationSummary): string {
+    const m = conv.lastMessage;
+    const body = previewBody(conv);
+    if (!m || m.is_deleted || m.type === 'system' || previewMine(conv)) return body;
     if (conv.conversation.type === 'group') {
       const s = conv.participants.find((p) => p.id === m.sender_id)?.display_name;
       return s ? `${s.split(' ')[0]}: ${body}` : body;
@@ -561,7 +586,59 @@ function AppInner() {
           {chatFilter && <button className="chatlist-search-clear" onClick={() => setChatFilter('')} aria-label="Clear search">✕</button>}
         </div>
 
-        {lockedCount > 0 && (
+        {/* Primary filter chips (mobile parity) — All / Unread / Groups / Favourites + More */}
+        {!filterQ && (
+          <div className="filter-chips" role="tablist" aria-label="Chat filters">
+            {([
+              { key: 'all' as const, label: 'All' },
+              { key: 'unread' as const, label: 'Unread' },
+              { key: 'groups' as const, label: 'Groups' },
+              { key: 'favorites' as const, label: 'Favourites' },
+            ]).map((chip) => (
+              <button
+                key={chip.key}
+                type="button"
+                role="tab"
+                aria-selected={listFilter === chip.key}
+                className={`filter-chip ${listFilter === chip.key ? 'active' : ''}`}
+                onClick={() => { setListFilter(chip.key); setMoreFilters(false); }}
+              >
+                {chip.label}
+              </button>
+            ))}
+            <button
+              type="button"
+              className={`filter-chip ${moreFilters || ['pinned', 'streaks', 'locked'].includes(listFilter) ? 'active' : ''}`}
+              onClick={() => setMoreFilters((v) => !v)}
+            >
+              {(['pinned', 'streaks', 'locked'] as ListFilter[]).includes(listFilter) && !moreFilters
+                ? ({ pinned: 'Pinned', streaks: 'Streaks', locked: 'Locked' } as Record<string, string>)[listFilter]
+                : 'More'}
+            </button>
+          </div>
+        )}
+        {!filterQ && moreFilters && (
+          <div className="filter-chips filter-chips-more" role="tablist" aria-label="More filters">
+            {([
+              { key: 'pinned' as const, label: 'Pinned' },
+              { key: 'streaks' as const, label: 'Streaks' },
+              { key: 'locked' as const, label: 'Locked' },
+            ]).map((chip) => (
+              <button
+                key={chip.key}
+                type="button"
+                role="tab"
+                aria-selected={listFilter === chip.key}
+                className={`filter-chip ${listFilter === chip.key ? 'active' : ''}`}
+                onClick={() => { setListFilter(chip.key); setMoreFilters(false); }}
+              >
+                {chip.label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {lockedCount > 0 && (listFilter === 'locked' || !locksRevealed) && (
           <button className="locked-toggle" onClick={toggleLockReveal}>
             {locksRevealed ? '🔓 Hide locked chats' : `🔒 Locked chats (${lockedCount})`}
           </button>
@@ -618,7 +695,10 @@ function AppInner() {
                       <span className="conversation-time">{lastMsgTime(conv)}</span>
                     </div>
                     <div className="conversation-bottom">
-                      <div className="conversation-preview">{previewText(conv)}</div>
+                      <div className="conversation-preview">
+                        {previewMine(conv) && <span className="preview-ticks" aria-hidden>✓</span>}
+                        {previewText(conv)}
+                      </div>
                       {/* Server-authoritative streak emoji (direct chats only), next
                           to the unread badge. Real data — empty when there's no streak. */}
                       {conv.conversation.type !== 'group' && streaks[id]?.tier && (
@@ -654,7 +734,34 @@ function AppInner() {
               );
             })}
           </AnimatePresence>
-          {visibleConvs.length === 0 && <div className="empty-state">No conversations yet. Start a new chat!</div>}
+          {visibleConvs.length === 0 && (
+            <div className="empty-state">
+              <div className="empty-state-title">
+                {filterQ
+                  ? 'No matching chats'
+                  : listFilter !== 'all'
+                  ? `No ${listFilter} chats`
+                  : 'No conversations yet'}
+              </div>
+              <p className="empty-state-sub">
+                {filterQ
+                  ? 'Try a different search.'
+                  : listFilter !== 'all'
+                  ? 'Try another filter, or start a new chat.'
+                  : 'Find someone you know and say hello.'}
+              </p>
+              <div className="empty-state-actions">
+                <button type="button" className="empty-cta-primary" onClick={() => setShowSearch(true)}>
+                  Start a chat
+                </button>
+                {listFilter === 'all' && !filterQ && (
+                  <button type="button" className="empty-cta-secondary" onClick={() => setShowGroup(true)}>
+                    Create a group
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -678,6 +785,9 @@ function AppInner() {
               <motion.div className="empty-chat-icon" animate={{ y: [0, -8, 0] }} transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}>💬</motion.div>
               <h3>Welcome to Lumixo</h3>
               <p>Select a conversation or start a new chat</p>
+              <button type="button" className="empty-cta-primary" onClick={() => setShowSearch(true)}>
+                Start a chat
+              </button>
             </motion.div>
           )}
         </AnimatePresence>
@@ -737,7 +847,7 @@ function AppInner() {
 
       <WebNotifications conversations={conversations} selectedConvId={selectedConvId} onOpenChat={(id) => setSelectedConvId(id)} />
 
-      <div className="app-credit">Developed by LAKSHMESHWAR PANDEY</div>
+      {/* Credit lives in Settings / About — not over the chat UI. */}
     </div>
   );
 }
