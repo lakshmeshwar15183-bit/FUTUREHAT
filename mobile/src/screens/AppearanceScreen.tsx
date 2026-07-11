@@ -1,10 +1,10 @@
 // Lumixo mobile — theme & appearance picker. A live mock-chat preview at the
 // top reflects the selected mode / color theme / wallpaper instantly (premium
 // themes can be previewed even when locked), and the pickers below switch the
-// live palette and let premium members choose a font, chat-bubble style and app
-// icon. Font / bubble / icon persist to user_preferences (shared with web).
+// live palette and let users choose a font, chat-bubble style and app icon.
+// Font / bubble / icon persist to user_preferences (shared with web).
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -18,6 +18,12 @@ import {
 import { getCache, setCache } from '../lib/localCache';
 import { queueAction } from '../lib/sync';
 import {
+  APP_ICON_OPTIONS,
+  getActiveAppIcon,
+  setAppIcon,
+  type AppIconId,
+} from '../lib/appIcon';
+import {
   useTheme,
   palettes,
   spacing,
@@ -29,6 +35,7 @@ import {
   type ThemePreference,
 } from '../theme';
 import type { RootStackParamList } from '../navigation/types';
+import { Alert } from '../ui/dialog';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -56,15 +63,6 @@ const BUBBLES: { id: string; label: string; premium: boolean }[] = [
   { id: 'classic', label: 'Tailed', premium: true },
 ];
 
-// Mirrors web theme/themes.ts APP_ICONS. Only 'classic' is free.
-const APP_ICONS: { id: string; label: string; premium: boolean; glyph: string }[] = [
-  { id: 'classic', label: 'Classic', premium: false, glyph: '🎩' },
-  { id: 'neon', label: 'Neon', premium: true, glyph: '🪩' },
-  { id: 'gold', label: 'Gold', premium: true, glyph: '👑' },
-  { id: 'star', label: 'Star', premium: true, glyph: '✨' },
-  { id: 'ghost', label: 'Ghost', premium: true, glyph: '👻' },
-];
-
 type AppearancePrefs = { font: string; bubble_style: string; app_icon: string };
 
 export default function AppearanceScreen() {
@@ -76,7 +74,7 @@ export default function AppearanceScreen() {
   const [loaded, setLoaded] = useState(false);
   const [fontPref, setFontPref] = useState('system');
   const [bubblePref, setBubblePref] = useState('rounded');
-  const [iconPref, setIconPref] = useState('classic');
+  const [iconPref, setIconPref] = useState<AppIconId>('icon1');
 
   // Preview selection — starts on whatever is applied, follows taps (even on
   // locked premium themes, which preview without being applied) so the mock chat
@@ -95,10 +93,11 @@ export default function AppearanceScreen() {
         if (active && c) {
           setFontPref(c.font || 'system');
           setBubblePref(c.bubble_style || 'rounded');
-          setIconPref(c.app_icon || 'classic');
+          setIconPref((c.app_icon as AppIconId) || 'icon1');
           setLoaded(true);
         }
       });
+      getActiveAppIcon().then((id) => { if (active) setIconPref(id); });
       (async () => {
         const [prefs, sub] = await Promise.all([
           getPreferences(supabase),
@@ -110,12 +109,14 @@ export default function AppearanceScreen() {
           const next: AppearancePrefs = {
             font: prefs.font || 'system',
             bubble_style: prefs.bubble_style || 'rounded',
-            app_icon: prefs.app_icon || 'classic',
+            app_icon: prefs.app_icon || 'icon1',
           };
           setFontPref(next.font);
           setBubblePref(next.bubble_style);
-          setIconPref(next.app_icon);
-          setCache('appearance', next);
+          // Prefer native/local launcher icon as source of truth for display
+          const local = await getActiveAppIcon();
+          setIconPref(local);
+          setCache('appearance', { ...next, app_icon: local });
         }
         setLoaded(true);
       })();
@@ -135,11 +136,33 @@ export default function AppearanceScreen() {
       if (isPremiumOption && !premium) return;
       apply(id);
       getCache<AppearancePrefs | null>('appearance', null).then((c) =>
-        setCache('appearance', { ...(c ?? {}), [field]: id } as AppearancePrefs),
+        setCache('appearance', { ...(c ?? { font: 'system', bubble_style: 'rounded', app_icon: 'icon1' }), [field]: id } as AppearancePrefs),
       );
       queueAction('updatePreferences', { updates: { [field]: id } });
     },
     [premium],
+  );
+
+  const pickAppIcon = useCallback(
+    async (id: AppIconId) => {
+      setIconPref(id);
+      getCache<AppearancePrefs | null>('appearance', null).then((c) =>
+        setCache('appearance', {
+          font: c?.font ?? 'system',
+          bubble_style: c?.bubble_style ?? 'rounded',
+          app_icon: id,
+        }),
+      );
+      queueAction('updatePreferences', { updates: { app_icon: id } });
+      const result = await setAppIcon(id);
+      if (!result.ok) {
+        Alert.alert('Could not change icon', result.error ?? 'Try again.');
+      } else if (result.error) {
+        // Preference saved; native apply deferred (e.g. Expo Go).
+        Alert.alert('Icon saved', result.error);
+      }
+    },
+    [],
   );
 
   // Tapping a color theme always previews it; it's applied globally only if the
@@ -310,26 +333,38 @@ export default function AppearanceScreen() {
       </View>
 
       {/* ── App icon ─────────────────────────────────────────────────────── */}
-      <View style={styles.premiumHeader}>
-        <Text style={styles.sectionTitle}>App icon</Text>
-        {!premium && <PlusTag colors={colors} />}
+      <Text style={styles.sectionTitle}>App icon</Text>
+      <Text style={styles.currentIconLabel}>Current icon</Text>
+      <View style={styles.currentIconRow}>
+        {(() => {
+          const current = APP_ICON_OPTIONS.find((a) => a.id === iconPref) ?? APP_ICON_OPTIONS[0];
+          return (
+            <>
+              <Image source={current.preview} style={styles.currentIconImg} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.currentIconName}>{current.label}</Text>
+                <Text style={styles.currentIconSub}>App name stays Lumixo</Text>
+              </View>
+              <Ionicons name="checkmark-circle" size={22} color={colors.primary} />
+            </>
+          );
+        })()}
       </View>
       <View style={styles.iconRow}>
-        {APP_ICONS.map((a) => {
+        {APP_ICON_OPTIONS.map((a) => {
           const on = iconPref === a.id;
-          const locked = a.premium && !premium;
           return (
             <Pressable
               key={a.id}
-              style={[styles.iconTile, on && styles.iconTileOn, locked && styles.pillLocked]}
-              onPress={() => choose('app_icon', a.id, a.premium, setIconPref)}
+              style={[styles.iconTile, on && styles.iconTileOn]}
+              onPress={() => pickAppIcon(a.id)}
               disabled={!loaded}
             >
-              <Text style={styles.iconGlyph}>{a.glyph}</Text>
+              <Image source={a.preview} style={styles.iconPreview} />
               <Text style={[styles.iconLabel, on && styles.iconLabelOn]}>{a.label}</Text>
-              {locked && (
-                <View style={styles.iconLockBadge}>
-                  <Ionicons name="lock-closed" size={9} color="#fff" />
+              {on && (
+                <View style={styles.iconOnBadge}>
+                  <Ionicons name="checkmark" size={10} color="#fff" />
                 </View>
               )}
             </Pressable>
@@ -337,8 +372,8 @@ export default function AppearanceScreen() {
         })}
       </View>
       <Text style={styles.hint}>
-        The launcher icon can’t change without a full app update, so your choice is saved and
-        applied on the web app and future releases.
+        Tap an icon to change the home-screen launcher icon immediately. Your choice is saved
+        on this device and syncs with your account. The app name always remains Lumixo.
       </Text>
 
       {!loaded && (
@@ -475,19 +510,55 @@ const makeStyles = (colors: Palette) =>
     pillText: { color: colors.text, fontSize: font.small, fontWeight: '600' },
     pillTextOn: { color: '#fff' },
     // App icon tiles
+    currentIconLabel: {
+      color: colors.textMuted,
+      fontSize: font.tiny,
+      fontWeight: '700',
+      letterSpacing: 0.4,
+      textTransform: 'uppercase',
+      marginBottom: spacing(2),
+      marginLeft: spacing(1),
+    },
+    currentIconRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing(3),
+      backgroundColor: colors.surface,
+      borderRadius: radius.lg,
+      padding: spacing(3.5),
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      marginBottom: spacing(4),
+    },
+    currentIconImg: { width: 56, height: 56, borderRadius: 14 },
+    currentIconName: { color: colors.text, fontSize: font.heading, fontWeight: '700' },
+    currentIconSub: { color: colors.textMuted, fontSize: font.small, marginTop: 2 },
     iconRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing(3) },
     iconTile: {
-      width: 66, alignItems: 'center', backgroundColor: colors.surface, borderRadius: radius.md,
-      paddingVertical: spacing(3), borderWidth: 1.5, borderColor: colors.border,
+      width: 96,
+      alignItems: 'center',
+      backgroundColor: colors.surface,
+      borderRadius: radius.lg,
+      paddingVertical: spacing(3),
+      paddingHorizontal: spacing(2),
+      borderWidth: 1.5,
+      borderColor: colors.border,
     },
-    iconTileOn: { borderColor: colors.primary },
-    iconGlyph: { fontSize: 28 },
-    iconLabel: { color: colors.textMuted, fontSize: font.tiny, fontWeight: '600', marginTop: 5 },
+    iconTileOn: { borderColor: colors.primary, backgroundColor: colors.primary + '12' },
+    iconPreview: { width: 56, height: 56, borderRadius: 14 },
+    iconLabel: { color: colors.textMuted, fontSize: font.tiny, fontWeight: '600', marginTop: 8 },
     iconLabelOn: { color: colors.primary },
-    iconLockBadge: {
-      position: 'absolute', top: 5, right: 5, width: 16, height: 16, borderRadius: 8,
-      backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center',
+    iconOnBadge: {
+      position: 'absolute',
+      top: 8,
+      right: 8,
+      width: 18,
+      height: 18,
+      borderRadius: 9,
+      backgroundColor: colors.primary,
+      alignItems: 'center',
+      justifyContent: 'center',
     },
-    hint: { color: colors.textFaint, fontSize: font.small, marginTop: spacing(3) },
+    hint: { color: colors.textFaint, fontSize: font.small, marginTop: spacing(3), lineHeight: 18 },
     loadingRow: { paddingVertical: spacing(6), alignItems: 'center' },
   });

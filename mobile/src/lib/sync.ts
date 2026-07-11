@@ -18,6 +18,8 @@ import {
   sendPush,
   pinConversation,
   unpinConversation,
+  favoriteConversation,
+  unfavoriteConversation,
   muteConversation,
   unmuteConversation,
   archiveConversation,
@@ -202,6 +204,8 @@ async function mergeExtra(payload: { path: string[]; value: unknown }): Promise<
 const actionHandlers: Record<string, (payload: any) => Promise<ActionResult>> = {
   pin: (p) => pinConversation(supabase, p.conversationId),
   unpin: (p) => unpinConversation(supabase, p.conversationId),
+  favorite: (p) => favoriteConversation(supabase, p.conversationId),
+  unfavorite: (p) => unfavoriteConversation(supabase, p.conversationId),
   mute: (p) => muteConversation(supabase, p.conversationId),
   unmute: (p) => unmuteConversation(supabase, p.conversationId),
   archive: (p) => archiveConversation(supabase, p.conversationId),

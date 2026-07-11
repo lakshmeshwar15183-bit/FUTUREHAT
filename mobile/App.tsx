@@ -15,6 +15,7 @@ import { supabase } from './src/lib/supabase';
 import { getCurrentUser, onAuthChange } from './src/lib/shared';
 import { isRecoveryLink, parseRecoveryLink, RESET_PASSWORD_PATH } from './src/lib/authLinks';
 import { startSync } from './src/lib/sync';
+import { hydrateAppIcon } from './src/lib/appIcon';
 import { ThemeProvider, useTheme } from './src/theme';
 import { AppLockProvider, useAppLock } from './src/security/AppLock';
 import { ChatLockProvider } from './src/security/ChatLock';
@@ -341,6 +342,7 @@ function RootNavigator() {
 export default function App() {
   // Start background sync + offline outbox flushing for the whole app lifetime.
   useEffect(() => startSync(), []);
+  useEffect(() => { void hydrateAppIcon(); }, []);
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>

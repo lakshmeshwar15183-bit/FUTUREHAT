@@ -111,7 +111,7 @@ export const DEFAULT_PREFERENCES: Omit<UserPreferences, 'user_id' | 'updated_at'
   font: 'system',
   bubble_style: 'rounded',
   wallpaper: 'default',
-  app_icon: 'classic',
+  app_icon: 'icon1',
   ghost_mode: false,
   app_lock: false,
   extra: {},
@@ -147,23 +147,31 @@ export async function updatePreferences(
 }
 
 // ── Pinned conversations ───────────────────────────────────────────────────────
+// Ordered by pinned_at ASC so the first pin stays on top (WhatsApp-style).
 
 export async function getPinnedIds(client: SupabaseClient): Promise<UUID[]> {
   const { data: auth } = await client.auth.getUser();
   if (!auth.user) return [];
   const { data } = await client
     .from('pinned_conversations')
-    .select('conversation_id')
-    .eq('user_id', auth.user.id);
-  return (data || []).map((r: any) => r.conversation_id);
+    .select('conversation_id, pinned_at')
+    .eq('user_id', auth.user.id)
+    .order('pinned_at', { ascending: true });
+  return (data || []).map((r: any) => r.conversation_id as UUID);
 }
 
 export async function pinConversation(client: SupabaseClient, conversationId: UUID) {
   const { data: auth } = await client.auth.getUser();
   if (!auth.user) return { error: new Error('not authenticated') };
+  // Re-pinning updates pinned_at so the chat moves to the end of the pin list
+  // only when newly inserted; upsert with ignoreDuplicates would skip that.
+  // We upsert with a fresh pinned_at so re-pin after unpin gets a new timestamp.
   const { error } = await client
     .from('pinned_conversations')
-    .upsert({ user_id: auth.user.id, conversation_id: conversationId });
+    .upsert(
+      { user_id: auth.user.id, conversation_id: conversationId, pinned_at: new Date().toISOString() },
+      { onConflict: 'user_id,conversation_id' },
+    );
   return { error };
 }
 
@@ -172,6 +180,42 @@ export async function unpinConversation(client: SupabaseClient, conversationId: 
   if (!auth.user) return { error: new Error('not authenticated') };
   const { error } = await client
     .from('pinned_conversations')
+    .delete()
+    .eq('user_id', auth.user.id)
+    .eq('conversation_id', conversationId);
+  return { error };
+}
+
+// ── Favourite conversations (distinct from starred messages) ───────────────────
+
+export async function getFavoriteIds(client: SupabaseClient): Promise<UUID[]> {
+  const { data: auth } = await client.auth.getUser();
+  if (!auth.user) return [];
+  const { data } = await client
+    .from('favorite_conversations')
+    .select('conversation_id, favorited_at')
+    .eq('user_id', auth.user.id)
+    .order('favorited_at', { ascending: false });
+  return (data || []).map((r: any) => r.conversation_id as UUID);
+}
+
+export async function favoriteConversation(client: SupabaseClient, conversationId: UUID) {
+  const { data: auth } = await client.auth.getUser();
+  if (!auth.user) return { error: new Error('not authenticated') };
+  const { error } = await client
+    .from('favorite_conversations')
+    .upsert(
+      { user_id: auth.user.id, conversation_id: conversationId, favorited_at: new Date().toISOString() },
+      { onConflict: 'user_id,conversation_id' },
+    );
+  return { error };
+}
+
+export async function unfavoriteConversation(client: SupabaseClient, conversationId: UUID) {
+  const { data: auth } = await client.auth.getUser();
+  if (!auth.user) return { error: new Error('not authenticated') };
+  const { error } = await client
+    .from('favorite_conversations')
     .delete()
     .eq('user_id', auth.user.id)
     .eq('conversation_id', conversationId);

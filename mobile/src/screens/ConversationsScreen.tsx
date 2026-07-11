@@ -26,8 +26,7 @@ import {
   getCurrentUser,
   searchAllMessages,
   getPinnedIds,
-  pinConversation,
-  unpinConversation,
+  getFavoriteIds,
   getMutedIds,
   muteConversation,
   unmuteConversation,
@@ -49,7 +48,6 @@ import {
   processMyStreaks,
   subscribeStreakChanges,
   indexStreaksByConversation,
-  getStarredMessages,
 } from '../lib/shared';
 import type { ConversationSummary, MessageSearchHit, StreakSummary } from '../lib/shared';
 import {
@@ -76,7 +74,7 @@ const animateSelection = () => LayoutAnimation.configureNext(LayoutAnimation.Pre
 
 // Cache-key bases for the per-user conversation flag sets, so pinned/muted/hidden
 // state hydrates instantly (offline included) and survives an app restart.
-const FLAG_KEY = { pinned: 'pinned', muted: 'muted', hidden: 'hidden' } as const;
+const FLAG_KEY = { pinned: 'pinned', muted: 'muted', hidden: 'hidden', favorites: 'favorites' } as const;
 
 // WhatsApp/Telegram-style filter chips shown below the search bar. `all` means
 // no filter; every other value narrows the visible list. Order here is the
@@ -104,7 +102,9 @@ export default function ConversationsScreen() {
   const [uid, setUid] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [msgHits, setMsgHits] = useState<MessageSearchHit[]>([]);
-  const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
+  // Ordered pin list (WhatsApp: first-pinned stays first). Set is derived for O(1) has().
+  const [pinnedOrder, setPinnedOrder] = useState<string[]>([]);
+  const pinnedIds = useMemo(() => new Set(pinnedOrder), [pinnedOrder]);
   const [mutedIds, setMutedIds] = useState<Set<string>>(new Set());
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
   const [onlineIds, setOnlineIds] = useState<Set<string>>(new Set());
@@ -115,13 +115,14 @@ export default function ConversationsScreen() {
   const [streaks, setStreaks] = useState<Record<string, StreakSummary>>({});
   // WhatsApp-style multi-select: a non-empty set puts the list in selection mode
   // and swaps the top bar for a contextual action bar.
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  // Use a Map-like Set + generation counter so FlatList rows re-render immediately
+  // when selection changes (extraData alone is not always enough with memoized rows).
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [selectionGen, setSelectionGen] = useState(0);
   const selectionMode = selectedIds.size > 0;
 
-  // Filter chips (All / Unread / Groups / Favorites / Pinned / Streaks / Locked)
-  // — narrow the visible list to a facet. `favIds` is the set of conversations
-  // that contain at least one starred message, so Favorites acts as a "bookmarked
-  // chats" filter without needing a new DB table.
+  // Filter chips (All / Unread / Groups / Favorites / Pinned / Streaks / Locked).
+  // Favourites are true favourite chats (favorite_conversations), not starred msgs.
   const [filter, setFilter] = useState<ChatFilter>('all');
   const [favIds, setFavIds] = useState<Set<string>>(new Set());
 
@@ -163,14 +164,17 @@ export default function ConversationsScreen() {
       }
     });
     const searched = q ? faceted.filter((c) => c.title.toLowerCase().includes(q)) : faceted;
-    // Pinned conversations float to the top (WhatsApp-style), otherwise the
-    // getMyConversations order (most-recent first) is preserved.
+    // Pinned conversations float to the top in pin order (oldest pin first).
+    // Unpinned keep getMyConversations recency order.
+    const pinIndex = new Map(pinnedOrder.map((id, i) => [id, i]));
     return [...searched].sort((a, b) => {
-      const pa = pinnedIds.has(a.conversation.id) ? 1 : 0;
-      const pb = pinnedIds.has(b.conversation.id) ? 1 : 0;
-      return pb - pa;
+      const ai = pinIndex.has(a.conversation.id) ? pinIndex.get(a.conversation.id)! : 1e9;
+      const bi = pinIndex.has(b.conversation.id) ? pinIndex.get(b.conversation.id)! : 1e9;
+      if (ai !== bi) return ai - bi;
+      // Both unpinned (or same pin rank) — preserve list order (stable sort).
+      return 0;
     });
-  }, [items, q, hiddenIds, pinnedIds, chatLock, filter, favIds, streaks]);
+  }, [items, q, hiddenIds, pinnedOrder, chatLock, filter, favIds, streaks]);
 
   // Per-conversation peer helpers for direct chats (presence dot + premium badge).
   const peerOf = useCallback(
@@ -224,17 +228,19 @@ export default function ConversationsScreen() {
             // Instant hydrate: list + the pin/mute/hidden flag sets, all from
             // local cache, so the chats AND their badges/order appear offline
             // with zero network wait. The background load() reconciles later.
-            const [cached, pinned, muted, hidden, cachedStreaks] = await Promise.all([
+            const [cached, pinned, muted, hidden, favs, cachedStreaks] = await Promise.all([
               getCachedConversations(id),
               getCache<string[]>(`${FLAG_KEY.pinned}:${id}`, []),
               getCache<string[]>(`${FLAG_KEY.muted}:${id}`, []),
               getCache<string[]>(`${FLAG_KEY.hidden}:${id}`, []),
+              getCache<string[]>(`${FLAG_KEY.favorites}:${id}`, []),
               getCache<StreakSummary[]>(`streaks:${id}`, []),
             ]);
             if (!alive) return;
-            if (pinned.length) setPinnedIds(new Set(pinned));
+            if (pinned.length) setPinnedOrder(pinned);
             if (muted.length) setMutedIds(new Set(muted));
             if (hidden.length) setHiddenIds(new Set(hidden));
+            if (favs.length) setFavIds(new Set(favs));
             if (cachedStreaks.length) setStreaks(indexStreaksByConversation(cachedStreaks));
             if (cached.length) {
               setItems(cached);
@@ -263,54 +269,54 @@ export default function ConversationsScreen() {
         pendingConversationEffects(['pin'], ['unpin']),
         pendingConversationEffects(['mute'], ['unmute']),
         pendingConversationEffects(['archive'], ['unarchive']),
+        pendingConversationEffects(['favorite'], ['unfavorite']),
       ]);
       Promise.all([
         getPinnedIds(supabase),
         getMutedIds(supabase),
         getArchivedIds(supabase),
         getDeletedConversationIds(supabase),
+        getFavoriteIds(supabase),
       ])
-        .then(async ([pinned, muted, archived, deleted]) => {
-          // Fold in optimistic pin/mute/archive/unarchive still queued (not yet
+        .then(async ([pinned, muted, archived, deleted, favorites]) => {
+          // Fold in optimistic pin/mute/archive/favorite still queued (not yet
           // synced) so this background server read never reverts a flag the user
-          // just toggled — the "archived chat pops back into the list" race. The
-          // queue is the source of truth for in-flight changes; the server is the
-          // source of truth for everything else. Merge the before/after queue
-          // snapshots so the change survives even if its sync landed (and dequeued)
-          // in the window between the two awaits.
-          const [pinEffA, muteEffA, arcEffA] = await Promise.all([
+          // just toggled. Merge before/after queue snapshots so the change survives
+          // even if its sync landed (and dequeued) between the two awaits.
+          const [pinEffA, muteEffA, arcEffA, favEffA] = await Promise.all([
             pendingConversationEffects(['pin'], ['unpin']),
             pendingConversationEffects(['mute'], ['unmute']),
             pendingConversationEffects(['archive'], ['unarchive']),
+            pendingConversationEffects(['favorite'], ['unfavorite']),
           ]);
           const pinEff = mergeEffects(effBefore[0], pinEffA);
           const muteEff = mergeEffects(effBefore[1], muteEffA);
           const arcEff = mergeEffects(effBefore[2], arcEffA);
+          const favEff = mergeEffects(effBefore[3], favEffA);
+          // Preserve server pin order, then apply add/remove effects.
           const pinnedSet = reconcileIds(pinned, pinEff);
+          const pinnedOrdered = [
+            ...pinned.filter((id) => pinnedSet.has(id)),
+            ...[...pinnedSet].filter((id) => !pinned.includes(id)),
+          ];
           const mutedSet = reconcileIds(muted, muteEff);
-          setPinnedIds(pinnedSet);
+          const favSet = reconcileIds(favorites, favEff);
+          setPinnedOrder(pinnedOrdered);
           setMutedIds(mutedSet);
-          // Archived + "Delete for me" chats leave the main list. Merge them into
-          // one hidden set, then apply pending archive/unarchive on top; a chat
-          // revived by a new message is restored by clearing its row.
+          setFavIds(favSet);
+          // Archived + "Delete for me" chats leave the main list.
           const hiddenSet = reconcileIds([...archived, ...deleted], arcEff);
           setHiddenIds(hiddenSet);
-          // Refresh the flag caches (reconciled values) so the next cold/offline
-          // open is accurate and still reflects the pending changes.
           if (uid) {
-            setCache(`${FLAG_KEY.pinned}:${uid}`, [...pinnedSet]).catch(() => {});
+            setCache(`${FLAG_KEY.pinned}:${uid}`, pinnedOrdered).catch(() => {});
             setCache(`${FLAG_KEY.muted}:${uid}`, [...mutedSet]).catch(() => {});
             setCache(`${FLAG_KEY.hidden}:${uid}`, [...hiddenSet]).catch(() => {});
+            setCache(`${FLAG_KEY.favorites}:${uid}`, [...favSet]).catch(() => {});
           }
         })
         .catch(() => {});
       getPremiumUserIds(supabase).then((ids) => setPremiumIds(new Set(ids))).catch(() => {});
       getServerPremium(supabase).then(setIsPremium).catch(() => {});
-      // Favorites chip — chats containing any starred message. Cached-tolerant:
-      // on failure (offline) we keep whatever we had.
-      getStarredMessages(supabase)
-        .then((rows) => setFavIds(new Set(rows.map((r) => r.conversation_id))))
-        .catch(() => {});
       // Streaks: finalise any of the caller's pending days (idempotent server-side
       // catch-up — never computes points on-device), then refresh the authoritative
       // summaries and rewrite the local cache so the emoji is instant next launch.
@@ -353,7 +359,7 @@ export default function ConversationsScreen() {
     });
   }, [uid]);
 
-  // Flip a flag set (pinned/muted/hidden) locally AND persist it to cache in one
+  // Flip a flag set (muted/hidden/favorites) locally AND persist it to cache in one
   // step, so the change is instant, offline-safe, and survives an app restart.
   const setFlagSet = useCallback((
     setter: React.Dispatch<React.SetStateAction<Set<string>>>,
@@ -365,6 +371,22 @@ export default function ConversationsScreen() {
       const next = new Set(prev);
       ids.forEach((id) => (add ? next.add(id) : next.delete(id)));
       if (uid) setCache(`${keyBase}:${uid}`, [...next]).catch(() => {});
+      return next;
+    });
+  }, [uid]);
+
+  /** Pin order-preserving add/remove (WhatsApp: new pins append to the end). */
+  const setPinnedFlags = useCallback((ids: string[], add: boolean) => {
+    setPinnedOrder((prev) => {
+      let next: string[];
+      if (add) {
+        const existing = new Set(prev);
+        next = [...prev, ...ids.filter((id) => !existing.has(id))];
+      } else {
+        const drop = new Set(ids);
+        next = prev.filter((id) => !drop.has(id));
+      }
+      if (uid) setCache(`${FLAG_KEY.pinned}:${uid}`, next).catch(() => {});
       return next;
     });
   }, [uid]);
@@ -411,25 +433,29 @@ export default function ConversationsScreen() {
   };
 
   // ── Multi-select mode (WhatsApp-style) ──────────────────────────────────────
-  // Selection is a set of conversation ids. Entering/leaving it animates the
-  // contextual bar in/out. All batch actions call the SAME shared functions the
-  // web app uses, so state stays in sync across devices.
+  // Selection is a set of conversation ids. Always return a NEW Set instance so
+  // React + FlatList (extraData) re-render every affected row immediately — this
+  // is what fixes the "blue checkmark stays after deselect" bug.
   const toggleSelect = useCallback((id: string) => {
     animateSelection();
     setSelectedIds((prev) => {
       const n = new Set(prev);
-      n.has(id) ? n.delete(id) : n.add(id);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
       return n;
     });
+    setSelectionGen((g) => g + 1);
   }, []);
   const enterSelection = useCallback((id: string) => {
     Haptics.selectionAsync().catch(() => {});
     animateSelection();
     setSelectedIds(new Set([id]));
+    setSelectionGen((g) => g + 1);
   }, []);
   const clearSelection = useCallback(() => {
     animateSelection();
     setSelectedIds(new Set());
+    setSelectionGen((g) => g + 1);
   }, []);
 
   // Hardware Back exits selection mode instead of leaving the tab (Android).
@@ -459,13 +485,12 @@ export default function ConversationsScreen() {
   const singlePeer = singleDirect ? singleConv?.participants.find((p) => p.id !== uid) ?? null : null;
 
   // Pin / unpin the whole selection (mixed → pin all; all-pinned → unpin all).
-  async function batchPin() {
+  function batchPin() {
     const ids = selConvs.map((c) => c.conversation.id);
     const unpin = allPinned;
     if (!unpin) {
       const toPin = ids.filter((id) => !pinnedIds.has(id));
-      // Free tier caps pinned chats (web parity via FREE_LIMITS).
-      if (!isPremium && pinnedIds.size + toPin.length > FREE_LIMITS.pinnedChats) {
+      if (!isPremium && pinnedOrder.length + toPin.length > FREE_LIMITS.pinnedChats) {
         clearSelection();
         Alert.alert(
           'Pin limit reached',
@@ -476,10 +501,122 @@ export default function ConversationsScreen() {
       }
     }
     clearSelection();
-    // Instant + durable: flip local state, persist the flag to cache, and queue
-    // the sync. No await, no revert — offline just means it syncs on reconnect.
-    setFlagSet(setPinnedIds, FLAG_KEY.pinned, ids, !unpin);
+    setPinnedFlags(ids, !unpin);
     ids.forEach((id) => queueAction(unpin ? 'unpin' : 'pin', { conversationId: id }));
+  }
+
+  function batchFavorite() {
+    const ids = selConvs.map((c) => c.conversation.id);
+    const remove = ids.length > 0 && ids.every((id) => favIds.has(id));
+    clearSelection();
+    setFlagSet(setFavIds, FLAG_KEY.favorites, ids, !remove);
+    ids.forEach((id) => queueAction(remove ? 'unfavorite' : 'favorite', { conversationId: id }));
+  }
+
+  /** Single-chat pin/unpin (long-press menu). */
+  function togglePinOne(id: string) {
+    const was = pinnedIds.has(id);
+    if (!was && !isPremium && pinnedOrder.length >= FREE_LIMITS.pinnedChats) {
+      Alert.alert(
+        'Pin limit reached',
+        `Free accounts can pin up to ${FREE_LIMITS.pinnedChats} chats. Upgrade to Lumixo+ for unlimited pins.`,
+        [{ text: 'Not now', style: 'cancel' }, { text: 'Upgrade', onPress: () => navigation.navigate('Premium') }],
+      );
+      return;
+    }
+    setPinnedFlags([id], !was);
+    queueAction(was ? 'unpin' : 'pin', { conversationId: id });
+  }
+
+  function toggleFavoriteOne(id: string) {
+    const was = favIds.has(id);
+    setFlagSet(setFavIds, FLAG_KEY.favorites, [id], !was);
+    queueAction(was ? 'unfavorite' : 'favorite', { conversationId: id });
+  }
+
+  /** Long-press opens a WhatsApp-style action sheet (pin / favourites / select…). */
+  function openChatMenu(id: string) {
+    Haptics.selectionAsync().catch(() => {});
+    const isPinned = pinnedIds.has(id);
+    const isFav = favIds.has(id);
+    const isMuted = mutedIds.has(id);
+    showSheet({
+      title: convById.get(id)?.title ?? 'Chat',
+      actions: [
+        {
+          text: isPinned ? 'Unpin chat' : 'Pin chat',
+          icon: 'info',
+          onPress: () => togglePinOne(id),
+        },
+        {
+          text: isFav ? 'Remove from favourites' : 'Add to favourites',
+          icon: 'success',
+          onPress: () => toggleFavoriteOne(id),
+        },
+        {
+          text: isMuted ? 'Unmute' : 'Mute',
+          icon: 'settings',
+          onPress: () => {
+            setFlagSet(setMutedIds, FLAG_KEY.muted, [id], !isMuted);
+            queueAction(isMuted ? 'unmute' : 'mute', { conversationId: id });
+          },
+        },
+        {
+          text: 'Archive',
+          icon: 'file',
+          onPress: () => {
+            setFlagSet(setHiddenIds, FLAG_KEY.hidden, [id], true);
+            queueAction('archive', { conversationId: id });
+          },
+        },
+        {
+          text: 'Select',
+          icon: 'check',
+          onPress: () => enterSelection(id),
+        },
+        {
+          text: 'Delete chat',
+          icon: 'trash',
+          style: 'destructive',
+          onPress: () => deleteOneChat(id),
+        },
+      ],
+    });
+  }
+
+  function deleteOneChat(id: string) {
+    const conv = convById.get(id);
+    const canEveryone =
+      !!conv &&
+      (conv.conversation.type === 'direct' || conv.conversation.created_by === uid);
+    const buttons: any[] = [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete for me',
+        style: 'destructive',
+        onPress: () => {
+          dropConversationsLocally([id]);
+          queueAction('deleteForMe', { conversationId: id });
+        },
+      },
+    ];
+    if (canEveryone) {
+      buttons.push({
+        text: 'Delete for everyone',
+        style: 'destructive',
+        onPress: () => {
+          dropConversationsLocally([id]);
+          queueAction('deleteForEveryone', { conversationId: id });
+        },
+      });
+    }
+    Alert.alert(
+      'Delete chat?',
+      canEveryone
+        ? 'Delete this chat just for you, or delete it for everyone in the conversation.'
+        : 'This removes the chat from your list. The other person will still have their copy.',
+      buttons,
+    );
   }
 
   async function batchMute() {
@@ -621,6 +758,16 @@ export default function ConversationsScreen() {
     if (anyUnread) {
       actions.push({ text: 'Mark as read', icon: 'success', onPress: () => batchMarkRead() });
     }
+    actions.push({
+      text: allFav ? 'Remove from favourites' : 'Add to favourites',
+      icon: 'success',
+      onPress: () => batchFavorite(),
+    });
+    actions.push({
+      text: allPinned ? 'Unpin chat' : 'Pin chat',
+      icon: 'info',
+      onPress: () => batchPin(),
+    });
     if (allHidden) {
       actions.push({
         text: selCount > 1 ? 'Unhide chats' : 'Unhide',
@@ -642,6 +789,7 @@ export default function ConversationsScreen() {
     animateSelection();
     const visible = filteredItems.map((c) => c.conversation.id);
     setSelectedIds((prev) => (prev.size >= visible.length ? new Set() : new Set(visible)));
+    setSelectionGen((g) => g + 1);
   }
 
   // Stable separator so the list doesn't rebuild every separator each render.
@@ -653,37 +801,46 @@ export default function ConversationsScreen() {
     const peerPremium = !!peer && premiumIds.has(peer.id);
     const isGroup = item.conversation.type === 'group';
     const id = item.conversation.id;
+    // Read selection from the live Set — selectionGen in FlatList.extraData forces
+    // this callback to re-run when ticks change so the checkmark never goes stale.
     const selected = selectedIds.has(id);
+    const isFav = favIds.has(id);
     const disappearing = (item.conversation.disappear_seconds ?? 0) > 0;
     const locked = chatLock.isLocked(id);
-    // Server-authoritative streak emoji for this pair (empty string when no streak
-    // or score 0). Direct chats only — group chats have no pair streak.
     const streakEmoji = !isGroup ? (streaks[id]?.tier ?? '') : '';
     return (
     <Pressable
       style={({ pressed }) => [styles.row, selected && styles.rowSelected, pressed && styles.rowPressed]}
-      onPress={() =>
-        selectionMode
-          ? toggleSelect(id)
-          : navigation.navigate('Chat', { conversationId: id, title: item.title })
-      }
-      onLongPress={() => (selectionMode ? toggleSelect(id) : enterSelection(id))}
+      onPress={() => {
+        if (selectionMode) {
+          toggleSelect(id);
+          return;
+        }
+        // Opening a chat marks it read optimistically so Unread filter updates instantly.
+        if (item.unreadCount > 0) {
+          setItems((prev) =>
+            prev.map((c) => (c.conversation.id === id ? { ...c, unreadCount: 0 } : c)),
+          );
+          queueAction('markRead', { conversationId: id });
+        }
+        navigation.navigate('Chat', { conversationId: id, title: item.title });
+      }}
+      onLongPress={() => (selectionMode ? toggleSelect(id) : openChatMenu(id))}
       delayLongPress={280}
     >
       <View>
         <Avatar uri={item.avatarUrl} name={item.title} size={48} />
         {peerOnline && !selected && <View style={styles.onlineDot} />}
-        {/* Disappearing-messages timer indicator (WhatsApp parity) — subtle clock. */}
         {disappearing && !selected && (
           <View style={styles.disappearBadge}>
             <Ionicons name="timer-outline" size={11} color="#fff" />
           </View>
         )}
-        {selected && (
-          <View style={styles.checkOverlay}>
+        {selected ? (
+          <View style={styles.checkOverlay} key={`sel-on-${id}-${selectionGen}`}>
             <Ionicons name="checkmark" size={16} color="#fff" />
           </View>
-        )}
+        ) : null}
       </View>
       <View style={styles.rowBody}>
         <View style={styles.rowTop}>
@@ -694,8 +851,11 @@ export default function ConversationsScreen() {
             <Text style={styles.title} numberOfLines={1}>
               {item.title}
             </Text>
-            {peerPremium && (
+            {isFav && (
               <Ionicons name="star" size={13} color="#f5b800" style={{ marginLeft: 4 }} />
+            )}
+            {peerPremium && !isFav && (
+              <Ionicons name="sparkles" size={12} color={colors.primary} style={{ marginLeft: 4 }} />
             )}
           </View>
           <Text style={[styles.time, item.unreadCount > 0 && styles.timeUnread]}>
@@ -707,8 +867,6 @@ export default function ConversationsScreen() {
             {lastPreview(item)}
           </Text>
           <View style={styles.rowIcons}>
-            {/* Streak tier emoji (server-authoritative). Sits with the right-side
-                indicator cluster, adjacent to the unread badge. Real data only. */}
             {streakEmoji !== '' && (
               <Text
                 style={styles.streakEmoji}
@@ -741,6 +899,8 @@ export default function ConversationsScreen() {
     );
   };
 
+  const allFav = selCount > 0 && selConvs.every((c) => favIds.has(c.conversation.id));
+
   return (
     <View style={styles.container}>
       {offline && (
@@ -760,6 +920,7 @@ export default function ConversationsScreen() {
           <Text style={styles.selCount}>{selCount}</Text>
           <View style={styles.selActions}>
             <SelIcon name={allPinned ? 'pin' : 'pin-outline'} onPress={batchPin} />
+            <SelIcon name={allFav ? 'star' : 'star-outline'} onPress={batchFavorite} />
             <SelIcon name={allMuted ? 'notifications' : 'notifications-off-outline'} onPress={batchMute} />
             <SelIcon name="archive-outline" onPress={batchArchive} />
             <SelIcon name="trash-outline" onPress={batchDelete} danger />
@@ -772,6 +933,7 @@ export default function ConversationsScreen() {
         data={filteredItems}
         keyExtractor={(c) => c.conversation.id}
         renderItem={renderItem}
+        extraData={`${selectionGen}:${selectedIds.size}:${filter}:${pinnedOrder.join(',')}:${[...favIds].join(',')}`}
         keyboardShouldPersistTaps="handled"
         initialNumToRender={14}
         maxToRenderPerBatch={12}

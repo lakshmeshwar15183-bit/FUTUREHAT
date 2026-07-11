@@ -176,14 +176,16 @@ export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin, onModer
           </div>
 
           <label className="setting-label">App icon</label>
+          <p className="hint" style={{ marginTop: 0 }}>Current: {APP_ICONS.find((x) => x.id === preferences.app_icon)?.label ?? 'Icon 1'}. App name stays Lumixo.</p>
           <div className="chip-row">
             {APP_ICONS.map((a) => (
               <button key={a.id}
-                className={`icon-swatch ${preferences.app_icon === a.id ? 'active' : ''} ${a.premium && !isPremium ? 'locked' : ''}`}
-                onClick={() => choose('app_icon', a.id, a.premium)}
-                title={a.label}>
+                className={`icon-swatch ${preferences.app_icon === a.id ? 'active' : ''}`}
+                onClick={() => choose('app_icon', a.id, false)}
+                title={a.label}
+                style={{ background: a.color, color: '#fff', minWidth: 64 }}>
                 <span className="icon-glyph">{a.glyph}</span>
-                {a.premium && !isPremium && <span className="swatch-lock">🔒</span>}
+                <span style={{ fontSize: 10, display: 'block' }}>{a.label}</span>
               </button>
             ))}
           </div>

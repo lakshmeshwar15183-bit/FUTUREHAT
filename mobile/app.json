@@ -34,7 +34,7 @@
       "allowBackup": false,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#0B141A"
+        "backgroundColor": "#FFFFFF"
       },
       "intentFilters": [
         {
@@ -138,7 +138,8 @@
       "@config-plugins/react-native-webrtc",
       "./plugins/withReleaseSigning",
       "expo-asset",
-      "expo-font"
+      "expo-font",
+      "./plugins/withAppIcons"
     ]
   }
 }

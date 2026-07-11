@@ -12,6 +12,7 @@ import { signOut, getMyConversations, searchProfiles, startDirectConversation, s
 import { listRecentContacts, removeRecentContact, type RecentContact } from '@shared/recentContactsApi';
 import {
   getPinnedIds, pinConversation, unpinConversation,
+  getFavoriteIds, favoriteConversation, unfavoriteConversation,
 } from '@shared/premiumApi';
 import { getLockedIds, lockConversation, unlockConversation, getChatLockSettings } from '@shared/chatLockApi';
 import type { ChatLockSettings } from '@shared/types';
@@ -88,6 +89,8 @@ function AppInner() {
   const [showCalls, setShowCalls] = useState(false);
 
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
+  const [pinnedOrder, setPinnedOrder] = useState<string[]>([]);
+  const [favIds, setFavIds] = useState<Set<string>>(new Set());
   // Chat Lock (0027): per-chat locks secured by the device's own auth (fingerprint /
   // face / PIN via WebAuthn). Locked chats stay hidden from the list until revealed
   // with device auth this session; they re-lock when the tab is hidden.
@@ -113,7 +116,14 @@ function AppInner() {
   useEffect(() => {
     mountedRef.current = true;
     loadConversations();
-    getPinnedIds(supabase).then((ids) => { if (mountedRef.current) setPinnedIds(new Set(ids)); }).catch(() => {});
+    getPinnedIds(supabase).then((ids) => {
+      if (!mountedRef.current) return;
+      setPinnedOrder(ids);
+      setPinnedIds(new Set(ids));
+    }).catch(() => {});
+    getFavoriteIds(supabase).then((ids) => {
+      if (mountedRef.current) setFavIds(new Set(ids));
+    }).catch(() => {});
     getLockedIds(supabase).then((ids) => { if (mountedRef.current) setLockedIds(new Set(ids)); }).catch(() => {});
     getChatLockSettings(supabase).then((s) => { if (mountedRef.current) setLockSettings(s); }).catch(() => {});
     getMutedIds(supabase).then((ids) => { if (mountedRef.current) setMutedIds(new Set(ids)); }).catch(() => {});
@@ -252,12 +262,40 @@ function AppInner() {
   async function togglePin(id: string) {
     setMenuFor(null);
     const wasPinned = pinnedIds.has(id);
-    if (!wasPinned && !isPremium && pinnedIds.size >= FREE_LIMITS.pinnedChats) return openUpgrade();
-    // optimistic
-    setPinnedIds((s) => { const n = new Set(s); wasPinned ? n.delete(id) : n.add(id); return n; });
+    if (!wasPinned && !isPremium && pinnedOrder.length >= FREE_LIMITS.pinnedChats) return openUpgrade();
+    // optimistic — preserve pin order (new pins append)
+    setPinnedOrder((prev) => {
+      const next = wasPinned ? prev.filter((x) => x !== id) : [...prev.filter((x) => x !== id), id];
+      setPinnedIds(new Set(next));
+      return next;
+    });
     const { error } = wasPinned ? await unpinConversation(supabase, id) : await pinConversation(supabase, id);
-    if (error) { // roll back
-      setPinnedIds((s) => { const n = new Set(s); wasPinned ? n.add(id) : n.delete(id); return n; });
+    if (error) {
+      setPinnedOrder((prev) => {
+        const next = wasPinned ? [...prev.filter((x) => x !== id), id] : prev.filter((x) => x !== id);
+        setPinnedIds(new Set(next));
+        return next;
+      });
+    }
+  }
+
+  async function toggleFavorite(id: string) {
+    setMenuFor(null);
+    const was = favIds.has(id);
+    setFavIds((s) => {
+      const n = new Set(s);
+      was ? n.delete(id) : n.add(id);
+      return n;
+    });
+    const { error } = was
+      ? await unfavoriteConversation(supabase, id)
+      : await favoriteConversation(supabase, id);
+    if (error) {
+      setFavIds((s) => {
+        const n = new Set(s);
+        was ? n.add(id) : n.delete(id);
+        return n;
+      });
     }
   }
 
@@ -352,15 +390,16 @@ function AppInner() {
   const visibleConvs = useMemo(() => {
     const list = conversations.filter((c) => (locksRevealed || !lockedIds.has(c.conversation.id))
       && (!filterQ || c.title.toLowerCase().includes(filterQ)));
+    const pinIndex = new Map(pinnedOrder.map((id, i) => [id, i]));
     return [...list].sort((a, b) => {
-      const ap = pinnedIds.has(a.conversation.id) ? 1 : 0;
-      const bp = pinnedIds.has(b.conversation.id) ? 1 : 0;
-      if (ap !== bp) return bp - ap;
+      const ai = pinIndex.has(a.conversation.id) ? pinIndex.get(a.conversation.id)! : 1e9;
+      const bi = pinIndex.has(b.conversation.id) ? pinIndex.get(b.conversation.id)! : 1e9;
+      if (ai !== bi) return ai - bi;
       const at = a.lastMessage?.created_at || a.conversation.created_at;
       const bt = b.lastMessage?.created_at || b.conversation.created_at;
       return new Date(bt).getTime() - new Date(at).getTime();
     });
-  }, [conversations, pinnedIds, lockedIds, locksRevealed, filterQ]);
+  }, [conversations, pinnedOrder, lockedIds, locksRevealed, filterQ]);
 
   const selectedConv = conversations.find((c) => c.conversation.id === selectedConvId);
 
@@ -571,6 +610,7 @@ function AppInner() {
                   <div className="conversation-info">
                     <div className="conversation-title">
                       {pinnedIds.has(id) && <span className="pin-mark">📌</span>}
+                      {favIds.has(id) && <span className="pin-mark" title="Favourite">⭐</span>}
                       {conv.conversation.type === 'group' && <CommunitiesIcon size={14} className="group-mark" />}
                       <span className="conv-name">{conv.title}</span>
                       {otherIsPremium(conv) && <PremiumBadge compact />}
@@ -595,7 +635,8 @@ function AppInner() {
                     {menuFor === id && (
                       <motion.div className="conv-menu glass" initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }}
                         onClick={(e) => e.stopPropagation()}>
-                        <button onClick={() => togglePin(id)}>{pinnedIds.has(id) ? 'Unpin' : '📌 Pin'}</button>
+                        <button onClick={() => togglePin(id)}>{pinnedIds.has(id) ? 'Unpin chat' : '📌 Pin chat'}</button>
+                        <button onClick={() => toggleFavorite(id)}>{favIds.has(id) ? '★ Remove from favourites' : '⭐ Add to favourites'}</button>
                         <button onClick={() => toggleLock(id)}>{lockedIds.has(id) ? '🔓 Unlock' : '🔒 Lock'}</button>
                         <button onClick={() => toggleMute(id)}>{mutedIds.has(id) ? '🔔 Unmute' : '🔕 Mute'}</button>
                         {otherId(conv) && (
