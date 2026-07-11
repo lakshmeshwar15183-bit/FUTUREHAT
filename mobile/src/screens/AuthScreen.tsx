@@ -34,6 +34,8 @@ export default function AuthScreen() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // Client-side throttle so spam-tapping “Send reset link” cannot hammer Supabase.
+  const [lastResetAt, setLastResetAt] = useState(0);
 
   const isSignup = mode === 'signup';
   const isForgot = mode === 'forgot';
@@ -68,14 +70,18 @@ export default function AuthScreen() {
     setBusy(true);
     try {
       if (isForgot) {
-        // Compute the redirect at call-time so Expo Go / dev-client / standalone
-        // builds all get the right scheme — hardcoding `futurehat://…` broke
-        // the dev flow because Expo Go can't handle a custom scheme. The URL
-        // used here MUST also be added to Supabase → Auth → URL Configuration.
+        const now = Date.now();
+        if (now - lastResetAt < 45_000) {
+          setError('Please wait a moment before requesting another reset email.');
+          return;
+        }
+        // redirectTo never uses localhost (see authLinks.ts). Must also be listed
+        // in Supabase → Auth → URL Configuration → Redirect URLs.
         const { error } = await supabase.auth.resetPasswordForEmail(mail, {
           redirectTo: resetPasswordRedirectUrl(),
         });
         if (error) throw error;
+        setLastResetAt(now);
         setNotice('Password reset link sent. Check your email.');
         setMode('signin');
       } else if (isSignup) {

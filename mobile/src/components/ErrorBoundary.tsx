@@ -9,6 +9,7 @@ import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
+import { recordCrash } from '../lib/prodLog';
 
 interface Props {
   children: React.ReactNode;
@@ -27,9 +28,11 @@ export default class ErrorBoundary extends React.Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
-    // Surfaced in Metro / device logs and any crash reporter — this is where the
-    // ACTUAL cause of a blank screen becomes visible for follow-up fixes.
-    console.error(`[ErrorBoundary${this.props.label ? `:${this.props.label}` : ''}]`, error, info.componentStack);
+    // Surfaced in Metro / device logs and persisted for Diagnostics.
+    // When Sentry/Crashlytics is wired, also report here.
+    const label = this.props.label ?? 'root';
+    console.error(`[ErrorBoundary:${label}]`, error, info.componentStack);
+    void recordCrash(label, error, info.componentStack);
   }
 
   reset = () => this.setState({ error: null });

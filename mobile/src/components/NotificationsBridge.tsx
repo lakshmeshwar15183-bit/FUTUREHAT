@@ -45,6 +45,8 @@ export default function NotificationsBridge({
   const meRef = useRef<string | null>(null);
   const settingsRef = useRef<Awaited<ReturnType<typeof getNotificationSettings>> | null>(null);
   const unreadByChat = useRef<Map<string, number>>(new Map());
+  // Deduplicate realtime INSERT echoes (Supabase can fire twice on reconnect).
+  const seenMsgIds = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     let cancelled = false;
@@ -78,6 +80,15 @@ export default function NotificationsBridge({
             try {
               const m = payload.new as Message;
               if (!m || m.sender_id === me || m.is_deleted || m.type === 'system') return;
+              if (m.id) {
+                if (seenMsgIds.current.has(m.id)) return;
+                seenMsgIds.current.add(m.id);
+                // Cap set size to avoid unbounded growth in long sessions.
+                if (seenMsgIds.current.size > 500) {
+                  const drop = [...seenMsgIds.current].slice(0, 200);
+                  drop.forEach((id) => seenMsgIds.current.delete(id));
+                }
+              }
 
               // Suppress only for the open foreground chat.
               if (

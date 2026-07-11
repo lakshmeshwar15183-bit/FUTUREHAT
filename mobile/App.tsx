@@ -1,7 +1,7 @@
 // Lumixo mobile — root component. Providers (safe-area, theme, app-lock),
 // auth gate, bottom tabs, and the full navigation stack.
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import * as Linking from 'expo-linking';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -228,12 +228,33 @@ function RootNavigator() {
       })
       .catch(() => active && setLoading(false));
 
-    const { unsubscribe } = onAuthChange(supabase, (_e, session) => {
-      if (active) setSignedIn(!!session);
+    const { unsubscribe } = onAuthChange(supabase, (event, session) => {
+      if (!active) return;
+      // TOKEN_REFRESHED / SIGNED_IN keep the user signed in; SIGNED_OUT clears.
+      if (event === 'SIGNED_OUT') setSignedIn(false);
+      else setSignedIn(!!session?.user);
     });
+
+    // Resume: refresh session when app returns to foreground so expired JWTs
+    // recover before the next API call fails with 401.
+    const appSub = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') return;
+      void supabase.auth.getSession().then(({ data }) => {
+        if (!active) return;
+        if (data.session) {
+          setSignedIn(true);
+          // Proactively refresh near-expiry tokens (best-effort).
+          const exp = data.session.expires_at ?? 0;
+          const soon = exp > 0 && exp * 1000 - Date.now() < 120_000;
+          if (soon) void supabase.auth.refreshSession().catch(() => {});
+        }
+      });
+    });
+
     return () => {
       active = false;
       unsubscribe();
+      appSub.remove();
     };
   }, []);
 

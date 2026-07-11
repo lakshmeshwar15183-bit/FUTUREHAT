@@ -81,6 +81,9 @@ export function onOutboxSent(fn: OutboxListener): () => void {
   return () => sentListeners.delete(fn);
 }
 
+/** Drop permanently-failed sends so they cannot burn battery forever. */
+const MAX_OUTBOX_ATTEMPTS = 30;
+
 /** Try to send everything in the outbox, oldest first. Safe to call repeatedly;
  *  re-entrancy-guarded. Stops early if the network drops mid-flush. */
 export async function flushOutbox(): Promise<void> {
@@ -90,6 +93,11 @@ export async function flushOutbox(): Promise<void> {
     const box = await getOutbox();
     for (const item of box) {
       if (!online) break;
+      // Dead-letter: stop retrying poison pills (deleted conversation, etc.).
+      if ((item.attempts ?? 0) >= MAX_OUTBOX_ATTEMPTS) {
+        await removeFromOutbox(item.tempId);
+        continue;
+      }
       try {
         // Offline media (0030): if this item still holds a LOCAL file:// URI, upload
         // it now (on reconnect) and swap in the remote URL before inserting the row.

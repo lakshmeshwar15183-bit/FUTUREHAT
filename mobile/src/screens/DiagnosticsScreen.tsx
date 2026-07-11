@@ -18,6 +18,7 @@ import { useFocusEffect } from '@react-navigation/native';
 
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import { APP_NAME, APP_VERSION, CREDIT } from '../branding';
+import { getLastCrash } from '../lib/prodLog';
 
 // Device locale from RN's built-in native settings (no extra dependency).
 // iOS exposes an array under AppleLanguages; Android exposes a `localeIdentifier`.
@@ -38,6 +39,7 @@ export default function DiagnosticsScreen() {
 
   const [online, setOnline] = useState('checking…');
   const [connection, setConnection] = useState('unknown');
+  const [lastCrash, setLastCrash] = useState<string>('none');
 
   const { width, height } = Dimensions.get('window');
   const scale = PixelRatio.get();
@@ -52,6 +54,7 @@ export default function DiagnosticsScreen() {
     Online: online,
     Connection: connection,
     Screen: `${Math.round(width)}×${Math.round(height)} @${scale}x`,
+    'Last crash': lastCrash,
   };
 
   useFocusEffect(
@@ -61,6 +64,10 @@ export default function DiagnosticsScreen() {
         if (!active) return;
         setOnline(state.isConnected ? 'yes' : 'no');
         setConnection(state.type || 'unknown');
+      });
+      getLastCrash().then((c) => {
+        if (!active) return;
+        setLastCrash(c ? `${c.at} · ${c.label}: ${c.message}` : 'none');
       });
       return () => { active = false; };
     }, []),
