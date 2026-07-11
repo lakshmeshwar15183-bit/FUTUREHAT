@@ -40,9 +40,13 @@ export interface IceServer {
  * configured, so the UI can warn instead of hanging.
  */
 export const DEFAULT_ICE_SERVERS: IceServer[] = [
+  // Multiple public STUN endpoints for NAT discovery (not a substitute for TURN).
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun2.l.google.com:19302' },
+  { urls: 'stun:stun3.l.google.com:19302' },
+  { urls: 'stun:stun4.l.google.com:19302' },
+  { urls: 'stun:stun.cloudflare.com:3478' },
 ];
 
 /**

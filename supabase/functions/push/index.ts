@@ -12,11 +12,26 @@
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
-const cors = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
+// CORS allowlist — never reflect arbitrary origins. Mobile app invoke uses
+// apikey + Authorization (no browser Origin). Browser calls only from known hosts.
+const ALLOWED_ORIGINS = new Set(
+  (Deno.env.get('PUSH_CORS_ORIGINS') ??
+    'https://futurehat-app.netlify.app,https://lumixo.app,http://localhost:5173,http://localhost:3000')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean),
+);
+
+function corsHeaders(req: Request): Record<string, string> {
+  const origin = req.headers.get('Origin') ?? '';
+  const allow = ALLOWED_ORIGINS.has(origin) ? origin : [...ALLOWED_ORIGINS][0] ?? 'https://futurehat-app.netlify.app';
+  return {
+    'Access-Control-Allow-Origin': allow,
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    Vary: 'Origin',
+  };
+}
 
 const CHANNEL: Record<string, string> = {
   message: 'messages',
@@ -48,7 +63,10 @@ interface Prefs {
   messageVibrate?: boolean;
 }
 
+let _req: Request | null = null;
+
 Deno.serve(async (req) => {
+  _req = req;
   if (req.method === 'OPTIONS') return json({ ok: true }, 200);
 
   try {
@@ -452,8 +470,15 @@ function b64url(bytes: Uint8Array): string {
 }
 
 function json(body: unknown, status = 200) {
+  const base = _req
+    ? corsHeaders(_req)
+    : {
+        'Access-Control-Allow-Origin': 'https://futurehat-app.netlify.app',
+        'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      };
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...cors, 'content-type': 'application/json' },
+    headers: { ...base, 'content-type': 'application/json' },
   });
 }

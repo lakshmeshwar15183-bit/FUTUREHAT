@@ -14,7 +14,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Dimensions,
   FlatList,
   Modal,
   Pressable,
@@ -22,6 +21,7 @@ import {
   StyleSheet,
   Text,
   View,
+  useWindowDimensions,
   type ListRenderItemInfo,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
@@ -50,6 +50,7 @@ import {
   isValidTransform,
   safeClampScale,
   clampOffset as clamp,
+  maxOffset,
 } from './mediaViewerMath';
 import SignedImage from './SignedImage';
 import { Alert } from '../ui/dialog';
@@ -84,12 +85,10 @@ interface Props {
   onDelete?: (item: ViewerItem) => void;
 }
 
-const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
-const MEDIA_H = SCREEN_H; // full-bleed page; content is letterboxed by contentFit
-
 // ── Zoomable image page ───────────────────────────────────────────────────────
 function ZoomableImage({
   item, onZoomChange, onSingleTap, onSwipeDown, onNaturalSize,
+  screenW, screenH,
 }: {
   item: ViewerItem;
   onZoomChange: (zoomed: boolean) => void;
@@ -97,6 +96,9 @@ function ZoomableImage({
   /** WhatsApp-style swipe-down to dismiss when not zoomed. */
   onSwipeDown?: () => void;
   onNaturalSize?: (w: number, h: number) => void;
+  /** Live window size — never freeze Dimensions at module load (rotation crash). */
+  screenW: number;
+  screenH: number;
 }) {
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
@@ -105,6 +107,22 @@ function ZoomableImage({
   const savedTx = useSharedValue(0);
   const savedTy = useSharedValue(0);
   const isGesturing = useSharedValue(false);
+  // Shared dimensions so worklets always use current orientation.
+  const dimW = useSharedValue(screenW);
+  const dimH = useSharedValue(screenH);
+  useEffect(() => {
+    dimW.value = screenW;
+    dimH.value = screenH;
+    // Reset zoom on rotate — pan bounds otherwise become invalid.
+    scale.value = 1;
+    tx.value = 0;
+    ty.value = 0;
+    savedScale.value = 1;
+    savedTx.value = 0;
+    savedTy.value = 0;
+    onZoomChange(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [screenW, screenH]);
 
   const reset = () => {
     scale.value = withTiming(1);
@@ -136,8 +154,8 @@ function ZoomableImage({
       if (finalScale <= 1.02) {
         runOnJS(reset)();
       } else if (isValidScale(finalScale)) {
-        const maxX = (SCREEN_W * (finalScale - 1)) / 2;
-        const maxY = (MEDIA_H * (finalScale - 1)) / 2;
+        const maxX = maxOffset(dimW.value, finalScale);
+        const maxY = maxOffset(dimH.value, finalScale);
         tx.value = clamp(tx.value, maxX);
         ty.value = clamp(ty.value, maxY);
         savedTx.value = tx.value;
@@ -162,8 +180,8 @@ function ZoomableImage({
       }
       if (!isValidScale(currentScale)) return;
       if (!isFinite(e.translationX) || !isFinite(e.translationY)) return;
-      const maxX = (SCREEN_W * (currentScale - 1)) / 2;
-      const maxY = (MEDIA_H * (currentScale - 1)) / 2;
+      const maxX = maxOffset(dimW.value, currentScale);
+      const maxY = maxOffset(dimH.value, currentScale);
       const newTx = clamp(savedTx.value + e.translationX, maxX);
       const newTy = clamp(savedTy.value + e.translationY, maxY);
       if (isValidTransform(newTx) && isValidTransform(newTy)) {
@@ -194,10 +212,10 @@ function ZoomableImage({
       }
       const target = 2.6;
       if (!isFinite(e.x) || !isFinite(e.y)) return;
-      const offX = e.x - SCREEN_W / 2;
-      const offY = e.y - MEDIA_H / 2;
-      const maxX = (SCREEN_W * (target - 1)) / 2;
-      const maxY = (MEDIA_H * (target - 1)) / 2;
+      const offX = e.x - dimW.value / 2;
+      const offY = e.y - dimH.value / 2;
+      const maxX = maxOffset(dimW.value, target);
+      const maxY = maxOffset(dimH.value, target);
       const dstX = clamp(offX * (1 - target), maxX);
       const dstY = clamp(offY * (1 - target), maxY);
       if (isValidTransform(dstX) && isValidTransform(dstY)) {
@@ -304,6 +322,7 @@ function VideoPage({ item, onSingleTap }: { item: ViewerItem; onSingleTap: () =>
 }
 
 export default function MediaViewer({ items, index, onClose, onForward, onDelete }: Props) {
+  const { width: screenW, height: screenH } = useWindowDimensions();
   const [current, setCurrent] = useState(index);
   const [zoomed, setZoomed] = useState(false);
   const [chrome, setChrome] = useState(true);
@@ -346,14 +365,14 @@ export default function MediaViewer({ items, index, onClose, onForward, onDelete
   const chromeStyle = useAnimatedStyle(() => ({ opacity: chromeOpacity.value }));
 
   const onScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const i = Math.round(e.nativeEvent.contentOffset.x / SCREEN_W);
+    const i = Math.round(e.nativeEvent.contentOffset.x / Math.max(1, screenW));
     if (i !== current) {
       setCurrent(i);
       // Small tactile beat when swiping between items — matches the counter update.
       Haptics.selectionAsync().catch(() => {});
       if (!chrome) setChrome(true);
     }
-  }, [current, chrome]);
+  }, [current, chrome, screenW]);
 
   const jumpTo = useCallback((i: number) => {
     setCurrent(i);
@@ -460,18 +479,26 @@ export default function MediaViewer({ items, index, onClose, onForward, onDelete
   // exit. The chrome state itself is left alone so an intentional tap-to-hide
   // survives a subsequent pinch.
 
-  const renderItem = ({ item: it }: ListRenderItemInfo<ViewerItem>) =>
-    it.kind === 'video' ? (
-      <VideoPage item={it} onSingleTap={toggleChrome} />
+  const renderItem = useCallback(({ item: it }: ListRenderItemInfo<ViewerItem>) => {
+    const pageStyle = { width: screenW, height: screenH };
+    return it.kind === 'video' ? (
+      <View style={pageStyle}>
+        <VideoPage item={it} onSingleTap={toggleChrome} />
+      </View>
     ) : (
-      <ZoomableImage
-        item={it}
-        onZoomChange={setZoomed}
-        onSingleTap={toggleChrome}
-        onSwipeDown={requestClose}
-        onNaturalSize={(w, h) => setNatural((prev) => (prev[it.id] ? prev : { ...prev, [it.id]: { w, h } }))}
-      />
+      <View style={pageStyle}>
+        <ZoomableImage
+          item={it}
+          screenW={screenW}
+          screenH={screenH}
+          onZoomChange={setZoomed}
+          onSingleTap={toggleChrome}
+          onSwipeDown={requestClose}
+          onNaturalSize={(w, h) => setNatural((prev) => (prev[it.id] ? prev : { ...prev, [it.id]: { w, h } }))}
+        />
+      </View>
     );
+  }, [screenW, screenH, toggleChrome, requestClose]);
 
   const canDownload = !!item && !item.viewOnce;
   const canShare = !!item && !item.viewOnce;
@@ -493,9 +520,11 @@ export default function MediaViewer({ items, index, onClose, onForward, onDelete
             scrollEnabled={!zoomed}
             showsHorizontalScrollIndicator={false}
             initialScrollIndex={index}
-            getItemLayout={(_, i) => ({ length: SCREEN_W, offset: SCREEN_W * i, index: i })}
+            getItemLayout={(_, i) => ({ length: screenW, offset: screenW * i, index: i })}
             onMomentumScrollEnd={onScroll}
             windowSize={3}
+            maxToRenderPerBatch={3}
+            initialNumToRender={1}
             removeClippedSubviews
           />
         </Animated.View>
@@ -689,7 +718,7 @@ const styles = StyleSheet.create({
   headerBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 20 },
   headerBtnPressed: { backgroundColor: 'rgba(255,255,255,0.10)' },
   counter: { color: '#fff', fontSize: 15, fontWeight: '600' },
-  page: { width: SCREEN_W, height: SCREEN_H, alignItems: 'center', justifyContent: 'center' },
+  page: { flex: 1, width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center' },
   centerOverlay: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', gap: 8 },
   retryText: { color: '#fff', fontSize: 13, fontWeight: '600' },
   footer: {

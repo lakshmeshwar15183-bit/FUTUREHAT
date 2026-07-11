@@ -15,8 +15,22 @@ import './Auth.css';
 // VITE_SITE_URL overrides `window.location.origin` for cases where the app is
 // hosted behind a proxy that reports a different origin than the public domain.
 function resetRedirectUrl(): string {
-  const base = (import.meta as any).env?.VITE_SITE_URL || window.location.origin;
-  return `${String(base).replace(/\/+$/, '')}/reset-password`;
+  // Prefer explicit production site URL so reset emails never embed localhost
+  // when the developer happens to trigger forgot-password from a local tab.
+  const envSite = (import.meta as any).env?.VITE_SITE_URL as string | undefined;
+  let base = envSite?.replace(/\/+$/, '') || '';
+  if (!base) {
+    const origin = window.location.origin;
+    const isLocal = /localhost|127\.0\.0\.1/.test(origin);
+    if (isLocal) {
+      // Fall back to known production host rather than poisoning reset emails.
+      base = 'https://futurehat-app.netlify.app';
+      console.warn('[auth] VITE_SITE_URL unset on localhost — using production site for reset redirect');
+    } else {
+      base = origin.replace(/\/+$/, '');
+    }
+  }
+  return `${base}/reset-password`;
 }
 
 export function AuthScreen() {

@@ -1,58 +1,80 @@
 // Lumixo mobile — auth callback URL helpers.
 // Supabase email links (reset password / magic link / email confirm) redirect
-// back to a URL we control. That URL has to work in EVERY environment we run
-// in — Expo Go (exp://…), dev-client, standalone `futurehat://` builds, and
-// (optionally) the https universal-link. `Linking.createURL()` handles the
-// first three; the https fallback comes from EXPO_PUBLIC_SITE_URL.
+// back to a URL we control. Production MUST use the HTTPS site URL so links
+// never open localhost / Expo Go addresses on another device.
 //
-// The URL you use here MUST also be added to Supabase → Authentication →
-// URL Configuration → Additional Redirect URLs. If it isn't, the auth
-// server strips the redirectTo and falls back to the project's Site URL,
-// which is why the link "opens the wrong page".
+// Configure Supabase → Authentication → URL Configuration:
+//   Site URL:                 https://<your-production-host>
+//   Additional redirect URLs: https://<your-production-host>/reset-password
+//                             futurehat://reset-password
+//                             lumixo://reset-password
 import * as Linking from 'expo-linking';
+import { Platform } from 'react-native';
+import Constants from 'expo-constants';
 
-/** Path we route the recovery deep link to. Kept as a constant so the app-side
- *  route matcher and the outgoing redirectTo can never drift apart. */
+/** Path we route the recovery deep link to. */
 export const RESET_PASSWORD_PATH = 'reset-password';
 
-/** Build the redirect URL sent to Supabase for the reset-password email.
- *
- *  Production strategy = App Link with web fallback: we send the HTTPS site URL
- *  (`https://<site>/reset-password`). On a device where the app is installed and
- *  the Android App Link is verified (via /.well-known/assetlinks.json), tapping
- *  the email link opens the app directly; otherwise it opens the web reset page.
- *  Either way the recovery tokens ride in the URL fragment, which both the app
- *  (parseRecoveryLink) and the web app read.
- *
- *  When EXPO_PUBLIC_SITE_URL is unset (local dev / Expo Go), we fall back to the
- *  runtime app-scheme URL from Linking.createURL() — e.g. `futurehat://…` in a
- *  standalone build or `exp://192.168.x.x:8081/--/…` under Expo Go — so the flow
- *  still works without any hosted web page. */
-export function resetPasswordRedirectUrl(): string {
-  return resetPasswordSiteUrl() ?? Linking.createURL(RESET_PASSWORD_PATH);
+/** App schemes that installed builds accept (AndroidManifest + app.json). */
+const APP_SCHEMES = ['futurehat', 'lumixo', 'dev.lakshmeshwar.futurehat'] as const;
+
+function isUnsafeRedirect(url: string): boolean {
+  return /localhost|127\.0\.0\.1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|exp:\/\/|exps:\/\//i.test(url);
 }
 
-/** Optional HTTPS fallback (universal link) — only usable when EXPO_PUBLIC_SITE_URL
- *  is set AND the web app hosts a matching `/reset-password` route. Callers can
- *  attach this as an alternative in the redirect email template or use it when
- *  the app scheme is known to fail. */
+/** Production HTTPS site (universal / app link). */
 export function resetPasswordSiteUrl(): string | null {
-  const site = process.env.EXPO_PUBLIC_SITE_URL?.replace(/\/+$/, '');
+  const site =
+    process.env.EXPO_PUBLIC_SITE_URL?.replace(/\/+$/, '') ||
+    (Constants.expoConfig?.extra as { siteUrl?: string } | undefined)?.siteUrl?.replace(/\/+$/, '');
   return site ? `${site}/${RESET_PASSWORD_PATH}` : null;
 }
 
-/** Extract the recovery tokens from a deep link. Supabase puts them in the
- *  URL FRAGMENT (`#access_token=…&refresh_token=…&type=recovery`) — never the
- *  query string. `expo-linking`'s parse() only reads the query, so we do this
- *  by hand. Returns null when the URL isn't a recovery callback. */
+/** Custom-scheme deep link for the installed APK (never uses Expo Go host). */
+export function resetPasswordAppSchemeUrl(): string {
+  // Prefer the first scheme that matches app.json; futurehat is the registered one.
+  return `${APP_SCHEMES[0]}://${RESET_PASSWORD_PATH}`;
+}
+
+/**
+ * Redirect URL sent to Supabase for password-reset emails.
+ *
+ * Priority:
+ *  1) HTTPS site URL (App Link → opens app if installed, else web)
+ *  2) Custom app scheme for standalone builds
+ *  3) Linking.createURL only when it is NOT a localhost/Expo Go URL
+ *
+ * This prevents the production bug where reset emails open localhost:8081.
+ */
+export function resetPasswordRedirectUrl(): string {
+  const site = resetPasswordSiteUrl();
+  if (site && !isUnsafeRedirect(site)) return site;
+
+  // Standalone / production native: always use the custom scheme, never exp://
+  const appOwnership = (Constants as any).appOwnership as string | null | undefined;
+  const isExpoGo = appOwnership === 'expo';
+  if (!isExpoGo && Platform.OS !== 'web') {
+    return resetPasswordAppSchemeUrl();
+  }
+
+  try {
+    const dynamic = Linking.createURL(RESET_PASSWORD_PATH);
+    if (dynamic && !isUnsafeRedirect(dynamic)) return dynamic;
+  } catch {
+    /* fall through */
+  }
+
+  // Last resort — custom scheme (works once the production app is installed).
+  return resetPasswordAppSchemeUrl();
+}
+
+/** Extract recovery tokens from a deep link (fragment or query). */
 export function parseRecoveryLink(url: string | null | undefined):
   | { accessToken: string; refreshToken: string }
   | null {
   if (!url) return null;
   const hashIndex = url.indexOf('#');
   const queryIndex = url.indexOf('?');
-  // Tokens may show up in either the fragment (Supabase default) or the query,
-  // depending on the email template / auth version. Handle both defensively.
   const raw =
     hashIndex >= 0 ? url.slice(hashIndex + 1)
     : queryIndex >= 0 ? url.slice(queryIndex + 1)
@@ -62,14 +84,14 @@ export function parseRecoveryLink(url: string | null | undefined):
   const type = params.get('type');
   const accessToken = params.get('access_token');
   const refreshToken = params.get('refresh_token');
-  if (type !== 'recovery' || !accessToken || !refreshToken) return null;
-  return { accessToken, refreshToken };
+  // Accept type=recovery; also tolerate missing type when tokens are present
+  // (some Supabase email templates omit type in the fragment).
+  if ((!type || type === 'recovery') && accessToken && refreshToken) {
+    return { accessToken, refreshToken };
+  }
+  return null;
 }
 
-/** Does the URL look like the recovery callback (regardless of token validity)?
- *  Useful for cold-start routing when we want to show the ResetPassword screen
- *  even if the tokens turn out to be expired (that's a UX message, not a
- *  wrong-route bug). */
 export function isRecoveryLink(url: string | null | undefined): boolean {
   if (!url) return false;
   if (url.includes(`/${RESET_PASSWORD_PATH}`)) return true;

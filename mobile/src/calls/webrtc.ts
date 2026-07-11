@@ -26,11 +26,16 @@ import {
   type UUID,
 } from '../lib/shared';
 
-const clog = (...args: unknown[]) => console.log('[call]', ...args);
+// Silence verbose call logs in production (battery + privacy).
+const clog = (...args: unknown[]) => {
+  if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[call]', ...args);
+};
 
 const CONNECT_TIMEOUT_MS = 45000;
 const ICE_RESTART_GRACE_MS = 4000;
 const DISCONNECT_TEARDOWN_MS = 16000;
+/** Max ICE restart attempts on flaky mobile networks (was 2 — too low for handoff). */
+const MAX_ICE_RESTARTS = 3;
 
 const ICE_SERVERS = buildIceServers(
   process.env.EXPO_PUBLIC_TURN_URL
@@ -326,7 +331,7 @@ export class CallSession {
 
   private async tryIceRestart(reason: string) {
     if (this.ended || !this.pc) return;
-    if (this.iceRestartAttempts >= 2) {
+    if (this.iceRestartAttempts >= MAX_ICE_RESTARTS) {
       clog('❌ ICE restart exhausted (', reason, ') → ending');
       this.end(false);
       return;
