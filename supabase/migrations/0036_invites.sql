@@ -61,6 +61,9 @@ create policy "delete invites" on public.invites
 -- Join via a token. SECURITY DEFINER so it can write membership rows the caller
 -- can't write directly (mirrors create_group_conversation). Validates state and
 -- is idempotent per (target, user).
+-- DROP first: CREATE OR REPLACE cannot change OUT/return row type if an older
+-- signature (e.g. with status text) already exists on remote.
+drop function if exists public.join_by_invite(text);
 create or replace function public.join_by_invite(p_token text)
 returns table (target_type text, target_id uuid)
 language plpgsql

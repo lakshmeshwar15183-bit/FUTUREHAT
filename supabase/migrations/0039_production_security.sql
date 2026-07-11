@@ -68,6 +68,7 @@ update storage.buckets set public = false where id = 'media';
 -- 2) INVITES — stop token enumeration (CRITICAL)
 -- ─────────────────────────────────────────────────────────────────────────────
 drop policy if exists "read invites" on public.invites;
+drop policy if exists "read own target invites" on public.invites;
 
 -- Admins of the target may list their invites; nobody else can SELECT freely.
 create policy "read own target invites" on public.invites
