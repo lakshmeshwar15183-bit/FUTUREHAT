@@ -279,10 +279,17 @@ function ChatScreenInner() {
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [recSecs, setRecSecs] = useState(0); // live elapsed seconds while recording (web parity)
   // Hold-to-record: slide left past threshold cancels instead of sending on release.
+  // Guards against the common race where pressOut fires before createAsync resolves
+  // (permission dialog / cold start) — without this the UI can stick in recording mode.
   const recCancelRef = useRef(false);
   const recStartX = useRef(0);
   const [recCanceling, setRecCanceling] = useState(false);
   const recordingRef = useRef<Audio.Recording | null>(null);
+  const recStartingRef = useRef(false);
+  /** null while finger is down; boolean = desired send/cancel after async start finishes. */
+  const recPendingStopRef = useRef<boolean | null>(null);
+  const recStoppingRef = useRef(false);
+  const recStartedAtRef = useRef(0);
   useEffect(() => { recordingRef.current = recording; }, [recording]);
   const [sending, setSending] = useState(false);
   // Whether pressing Return sends the message (WhatsApp-style), from Chat settings.
@@ -1044,50 +1051,100 @@ function ChatScreenInner() {
   }, [recording]);
 
   async function startRecording() {
+    // Ignore re-entry (double press-in) and in-flight starts.
+    if (recordingRef.current || recStartingRef.current || recStoppingRef.current) return;
+    recStartingRef.current = true;
+    recPendingStopRef.current = null;
     try {
       const perm = await Audio.requestPermissionsAsync();
-      if (!perm.granted) return;
+      if (!perm.granted) {
+        recStartingRef.current = false;
+        recPendingStopRef.current = null;
+        return;
+      }
+      // User already released during the permission prompt — do not start.
+      if (recPendingStopRef.current !== null) {
+        recStartingRef.current = false;
+        recPendingStopRef.current = null;
+        return;
+      }
       await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+      if (recPendingStopRef.current !== null) {
+        recStartingRef.current = false;
+        recPendingStopRef.current = null;
+        return;
+      }
       const { recording: rec } = await Audio.Recording.createAsync(
         Audio.RecordingOptionsPresets.HIGH_QUALITY,
       );
+      // Released mid-createAsync: discard immediately, never flash stuck UI.
+      if (recPendingStopRef.current !== null) {
+        const wantSend = recPendingStopRef.current;
+        recPendingStopRef.current = null;
+        recStartingRef.current = false;
+        try {
+          await rec.stopAndUnloadAsync();
+          const uri = rec.getURI();
+          // Only auto-send if they held long enough and didn't cancel.
+          const heldMs = Date.now() - recStartedAtRef.current;
+          if (wantSend && !recCancelRef.current && uri && heldMs >= 400) {
+            await sendMedia(uri, `voice_${Date.now()}.m4a`, 'audio');
+          }
+        } catch { /* discard */ }
+        return;
+      }
       recCancelRef.current = false;
       setRecCanceling(false);
+      recStartedAtRef.current = Date.now();
       setRecording(rec);
       recordingRef.current = rec;
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
     } catch {
-      // ignore
+      setRecording(null);
+      recordingRef.current = null;
+    } finally {
+      recStartingRef.current = false;
     }
   }
 
   async function stopRecording(send: boolean) {
-    const rec = recordingRef.current ?? recording;
+    if (recStoppingRef.current) return;
+    const rec = recordingRef.current;
     if (!rec) return;
+    recStoppingRef.current = true;
     try {
+      // Drop ultra-short taps (accidental) so we never send a broken note.
+      const heldMs = Date.now() - recStartedAtRef.current;
+      const shouldSend = send && !recCancelRef.current && heldMs >= 400;
       await rec.stopAndUnloadAsync();
       const uri = rec.getURI();
       setRecording(null);
       recordingRef.current = null;
       setRecCanceling(false);
-      if (send && uri) await sendMedia(uri, `voice_${Date.now()}.m4a`, 'audio');
-      else Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+      if (shouldSend && uri) await sendMedia(uri, `voice_${Date.now()}.m4a`, 'audio');
+      else if (!shouldSend) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
     } catch {
       setRecording(null);
       recordingRef.current = null;
       setRecCanceling(false);
+    } finally {
+      recStoppingRef.current = false;
+      recPendingStopRef.current = null;
     }
   }
 
   function onMicPressIn(e: { nativeEvent: { pageX: number } }) {
     recStartX.current = e.nativeEvent.pageX;
     recCancelRef.current = false;
+    recPendingStopRef.current = null;
+    recStartedAtRef.current = Date.now();
     setRecCanceling(false);
     void startRecording();
   }
 
   function onMicTouchMove(e: { nativeEvent: { pageX: number } }) {
-    if (!recordingRef.current) return;
+    // Track cancel even while start is still in flight so release uses correct intent.
+    if (!recordingRef.current && !recStartingRef.current) return;
     const dx = e.nativeEvent.pageX - recStartX.current;
     const canceling = dx < -64;
     if (canceling !== recCancelRef.current) {
@@ -1098,8 +1155,15 @@ function ChatScreenInner() {
   }
 
   function onMicPressOut() {
-    if (!recordingRef.current) return;
-    void stopRecording(!recCancelRef.current);
+    const send = !recCancelRef.current;
+    if (recordingRef.current) {
+      void stopRecording(send);
+      return;
+    }
+    // Still starting — remember the release intent so startRecording can finish cleanly.
+    if (recStartingRef.current) {
+      recPendingStopRef.current = send;
+    }
   }
 
   // ── Multi-select ──────────────────────────────────────────────────────────
