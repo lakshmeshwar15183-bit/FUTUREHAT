@@ -1,9 +1,11 @@
 // Lumixo mobile — circular avatar with graceful initials fallback.
-import React from 'react';
+// Offline-first: permanent media cache is checked so avatars open without network.
+import React, { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 // expo-image gives memory+disk caching so avatars in long lists aren't re-fetched
 // on every scroll (a major scroll-jank source with react-native's <Image>).
 import { Image } from 'expo-image';
+import { ensureMediaCached, peekCachedMediaUri } from '../lib/mediaCache';
 
 interface Props {
   uri?: string | null;
@@ -28,15 +30,38 @@ function colorFor(name?: string | null): string {
 
 function Avatar({ uri, name, size = 48 }: Props) {
   const dim = { width: size, height: size, borderRadius: size / 2 };
-  if (uri) {
+  const [src, setSrc] = useState<string | null>(() => (uri ? peekCachedMediaUri(uri) ?? uri : null));
+
+  useEffect(() => {
+    if (!uri) {
+      setSrc(null);
+      return;
+    }
+    const peek = peekCachedMediaUri(uri);
+    if (peek) {
+      setSrc(peek);
+      return;
+    }
+    setSrc(uri);
+    // Background: pull into permanent cache for offline.
+    let alive = true;
+    void ensureMediaCached(uri).then((local) => {
+      if (alive && local) setSrc(local);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [uri]);
+
+  if (src) {
     return (
       <Image
-        source={uri}
+        source={src}
         style={[styles.img, dim]}
         cachePolicy="memory-disk"
         contentFit="cover"
         transition={120}
-        recyclingKey={uri}
+        recyclingKey={uri ?? src}
       />
     );
   }

@@ -107,6 +107,7 @@ import { useColors, useTheme, spacing, radius, font, type Palette } from '../the
 import MessageBubble, { type TickStatus, replySummary } from '../components/MessageBubble';
 import SwipeToReply from '../components/SwipeToReply';
 import MediaViewer, { type ViewerItem } from '../components/MediaViewer';
+import { prefetchMedia, registerLocalMedia } from '../lib/mediaCache';
 import ForwardSheet, { type ForwardPreview } from '../components/ForwardSheet';
 import PollCard from '../components/PollCard';
 import ScheduleMessageModal from '../components/ScheduleMessageModal';
@@ -438,6 +439,12 @@ function ChatScreenInner() {
         setMsgs(() => mergeById(msgs, pend));
         setLoading(false);
         cacheMessages(conversationId, msgs).catch(() => {});
+        // Offline-first: permanently cache media already in the thread so opens
+        // are instant next time (and work fully offline).
+        void prefetchMedia(
+          msgs.filter((m) => m.media_url && !m.is_deleted).map((m) => m.media_url!),
+          3,
+        );
 
         const ids = msgs.map((m) => m.id);
         const [rx, rc] = await Promise.all([getReactions(supabase, ids), getReceipts(supabase, ids)]);
@@ -817,6 +824,8 @@ function ChatScreenInner() {
         Alert.alert('Upload failed', error?.message ?? 'Could not upload file.');
         return;
       }
+      // Map remote URL → local file so we never re-download our own send.
+      void registerLocalMedia(url, uri);
       const { message } = await sendMessage(
         supabase, conversationId, caption ?? fileName, type, url, undefined, undefined, mediaMeta,
       );

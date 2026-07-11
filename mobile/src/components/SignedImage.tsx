@@ -53,8 +53,9 @@ export default function SignedImage({
   onNaturalSize,
   stallTimeoutMs = 12000,
 }: Props) {
-  const { url, loading: resolving, error: signError, retry: retrySign } = useSignedUrl(source);
-  const [decoding, setDecoding] = useState(true);
+  const { url, loading: resolving, error: signError, retry: retrySign, fromCache } = useSignedUrl(source);
+  // Local/offline hits should not flash a spinner — only network first-loads.
+  const [decoding, setDecoding] = useState(!fromCache);
   const [decodeError, setDecodeError] = useState(false);
   const [stalled, setStalled] = useState(false);
   // Bumped on every retry to force expo-image to drop its cached decode and refetch.
@@ -70,21 +71,25 @@ export default function SignedImage({
     stallTimer.current = setTimeout(() => setStalled(true), stallTimeoutMs);
   };
 
-  // Reset decode state whenever we get a fresh signed url (or retry).
+  // Reset decode state whenever we get a fresh url (or retry).
+  // Cached local files skip the stall timer — they should decode almost instantly.
   useEffect(() => {
     if (!url) return;
     setDecoding(true);
     setDecodeError(false);
     setStalled(false);
-    armStallTimer();
+    if (!fromCache && !url.startsWith('file://') && !url.startsWith('data:')) {
+      armStallTimer();
+    }
     return clearStallTimer;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [url, nonce]);
+  }, [url, nonce, fromCache]);
 
   useEffect(() => () => clearStallTimer(), []);
 
   const failed = decodeError || stalled || (signError && !url);
-  const busy = !failed && (resolving || (!!url && decoding));
+  // Never spin for local/offline cache hits after first frame attempt.
+  const busy = !failed && (resolving || (!!url && decoding && !fromCache));
 
   const onRetry = () => {
     setDecodeError(false);

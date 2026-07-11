@@ -12,6 +12,7 @@ import NetInfo from '@react-native-community/netinfo';
 
 import { supabase } from './supabase';
 import { uploadMediaFromUri } from './media';
+import { registerLocalMedia } from './mediaCache';
 import {
   sendMessage,
   sendPush,
@@ -101,6 +102,8 @@ export async function flushOutbox(): Promise<void> {
             continue;
           }
           mediaUrl = url;
+          // Keep local file mapped to remote URL so open never re-downloads.
+          if (item.localUri) void registerLocalMedia(url, item.localUri);
           await updateOutboxItem(item.tempId, { mediaUrl: url, localUri: undefined });
         }
         const { message, error } = await sendMessage(

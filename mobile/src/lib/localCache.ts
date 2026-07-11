@@ -23,7 +23,9 @@ const K = {
 
 // Cap how many messages we retain per conversation so the cache stays bounded
 // (AsyncStorage on Android is backed by a size-limited SQLite store).
-const MSG_CACHE_LIMIT = 200;
+// Raised for WhatsApp-class offline history (recent slice still sufficient for
+// near-instant open; older history loads from network on scroll).
+const MSG_CACHE_LIMIT = 800;
 
 // RFC-4122 v4 id, generated client-side. Not cryptographically strong (fine for
 // message ids); lets us render optimistically and dedupe the realtime echo by id.

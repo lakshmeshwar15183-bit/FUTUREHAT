@@ -34,6 +34,7 @@ import type { MediaMeta } from '../lib/shared';
 import { signedMediaUrl } from '../lib/shared';
 import { supabase } from '../lib/supabase';
 import { useSignedUrl } from '../lib/useSignedUrl';
+import { ensureMediaCached, prefetchMedia } from '../lib/mediaCache';
 import { formatBytes } from '../media/qualityEstimate';
 import {
   isValidScale,
@@ -78,11 +79,13 @@ const MEDIA_H = SCREEN_H; // full-bleed page; content is letterboxed by contentF
 
 // ── Zoomable image page ───────────────────────────────────────────────────────
 function ZoomableImage({
-  item, onZoomChange, onSingleTap, onNaturalSize,
+  item, onZoomChange, onSingleTap, onSwipeDown, onNaturalSize,
 }: {
   item: ViewerItem;
   onZoomChange: (zoomed: boolean) => void;
   onSingleTap: () => void;
+  /** WhatsApp-style swipe-down to dismiss when not zoomed. */
+  onSwipeDown?: () => void;
   onNaturalSize?: (w: number, h: number) => void;
 }) {
   const scale = useSharedValue(1);
@@ -133,11 +136,21 @@ function ZoomableImage({
       }
     });
 
+  // When zoomed: free pan. When not: vertical-dominant drag dismisses (fails to
+  // horizontal pager so left/right swipe between photos still works).
   const pan = Gesture.Pan()
     .minPointers(1)
+    .activeOffsetY([-18, 18])
+    .failOffsetX([-28, 28])
     .onUpdate((e) => {
       const currentScale = scale.value;
-      if (currentScale <= 1 || !isValidScale(currentScale)) return;
+      // Swipe-down dismiss when not zoomed (WhatsApp).
+      if (currentScale <= 1.02) {
+        if (!isFinite(e.translationY)) return;
+        ty.value = Math.max(0, e.translationY * 0.85);
+        return;
+      }
+      if (!isValidScale(currentScale)) return;
       if (!isFinite(e.translationX) || !isFinite(e.translationY)) return;
       const maxX = (SCREEN_W * (currentScale - 1)) / 2;
       const maxY = (MEDIA_H * (currentScale - 1)) / 2;
@@ -148,7 +161,16 @@ function ZoomableImage({
         ty.value = newTy;
       }
     })
-    .onEnd(() => {
+    .onEnd((e) => {
+      if (scale.value <= 1.02) {
+        if ((e.translationY > 110 || e.velocityY > 800) && onSwipeDown) {
+          runOnJS(onSwipeDown)();
+          return;
+        }
+        ty.value = withTiming(0);
+        savedTy.value = 0;
+        return;
+      }
       savedTx.value = tx.value;
       savedTy.value = ty.value;
     });
@@ -330,14 +352,27 @@ export default function MediaViewer({ items, index, onClose, onForward, onDelete
 
   const toggleChrome = useCallback(() => setChrome((v) => !v), []);
 
+  // Prefetch neighbours so swipe feels instant (WhatsApp parity).
+  useEffect(() => {
+    const urls: string[] = [];
+    for (let i = Math.max(0, current - 1); i <= Math.min(items.length - 1, current + 2); i++) {
+      if (items[i]?.url) urls.push(items[i].url);
+    }
+    void prefetchMedia(urls, 2);
+  }, [current, items]);
+
   // Resolve the current item's signed url for file operations (download/share).
   const resolveUrl = useCallback(async (it: ViewerItem) => {
+    const cached = await ensureMediaCached(it.url);
+    if (cached) return cached;
     const signed = await signedMediaUrl(supabase, it.url);
     return signed ?? it.url;
   }, []);
 
-  // Download the current media to a local cache file. Returns the local uri.
+  // Prefer permanent offline cache; fall back to a one-shot download.
   const downloadToCache = useCallback(async (it: ViewerItem): Promise<string> => {
+    const cached = await ensureMediaCached(it.url);
+    if (cached) return cached;
     const src = await resolveUrl(it);
     const clean = it.url.split('?')[0];
     const ext = clean.split('.').pop()?.slice(0, 5) || (it.kind === 'video' ? 'mp4' : 'jpg');
@@ -423,6 +458,7 @@ export default function MediaViewer({ items, index, onClose, onForward, onDelete
         item={it}
         onZoomChange={setZoomed}
         onSingleTap={toggleChrome}
+        onSwipeDown={requestClose}
         onNaturalSize={(w, h) => setNatural((prev) => (prev[it.id] ? prev : { ...prev, [it.id]: { w, h } }))}
       />
     );

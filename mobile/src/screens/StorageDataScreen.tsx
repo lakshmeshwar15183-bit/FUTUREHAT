@@ -13,6 +13,7 @@ import { supabase } from '../lib/supabase';
 import { getPreferences } from '../lib/shared';
 import { getCache, setCache } from '../lib/localCache';
 import { queueAction } from '../lib/sync';
+import { clearMediaCache, getMediaCacheStats } from '../lib/mediaCache';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 
 interface StorageSettings { dataSaverCalls: boolean; lowDataMode: boolean; autoDownloadWifiOnly: boolean }
@@ -56,8 +57,14 @@ export default function StorageDataScreen() {
 
   const measure = useCallback(async () => {
     const dir = FileSystem.cacheDirectory;
-    if (!dir) { setUsed(null); return; }
-    setUsed(await dirSize(dir));
+    const tmp = dir ? await dirSize(dir) : 0;
+    // Permanent media cache (documentDirectory) is the bulk of offline media.
+    let permanent = 0;
+    try {
+      const stats = await getMediaCacheStats();
+      permanent = stats.bytes;
+    } catch { /* ignore */ }
+    setUsed(tmp + permanent);
     // Device-level usage → used/quota + % bar (parity with web navigator.storage.estimate).
     try {
       const [free, total] = await Promise.all([
@@ -102,10 +109,12 @@ export default function StorageDataScreen() {
         const base = dir.endsWith('/') ? dir : `${dir}/`;
         await Promise.all(entries.map((name) => FileSystem.deleteAsync(base + name, { idempotent: true }).catch(() => {})));
       }
-      // 2) Drop the local-first AsyncStorage cache (cached conversations/messages/
+      // 2) Permanent offline media cache (documentDirectory/lumixo-media).
+      await clearMediaCache();
+      // 3) Drop the local-first AsyncStorage cache (cached conversations/messages/
       //    profiles). Auth session and drafts/outbox are left untouched.
       const keys = await AsyncStorage.getAllKeys().catch(() => [] as readonly string[]);
-      const cacheKeys = keys.filter((k) => k.startsWith('fh:cache:'));
+      const cacheKeys = keys.filter((k) => k.startsWith('fh:cache:') || k.startsWith('fh:media-index'));
       if (cacheKeys.length) await AsyncStorage.multiRemove(cacheKeys);
       await measure();
       Alert.alert('Storage', 'Cached media cleared.');

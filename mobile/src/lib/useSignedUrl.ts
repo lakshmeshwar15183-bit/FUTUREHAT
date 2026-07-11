@@ -1,40 +1,46 @@
-// Lumixo mobile — resolve a stored media_url into a displayable (signed) url.
-// The `media` bucket is PRIVATE, so a public url returns 403 and renders as a
-// black frame in expo-image with no reliable onError signal. This hook:
-//   • passes data-uris / stickers / external urls through unchanged;
-//   • signs supabase-media urls via signedMediaUrl (60m TTL, cached);
-//   • on a signing failure for a private-media url, returns { url: null, error: true }
-//     so callers show a retry button instead of trying to render a doomed public url;
-//   • exposes retry() to force a re-sign (bumps a nonce → re-runs the effect).
+// Lumixo mobile — resolve a stored media_url into a displayable uri.
+// Offline-first: permanent disk cache → signed network URL → download for next time.
+//
+// The `media` bucket is PRIVATE, so a public url returns 403. Flow:
+//   1) file:// / data:// / content:// → pass through (already local)
+//   2) permanent media cache hit → return local file:// (NO network)
+//   3) sign private path (if needed) and return signed https URL for display
+//   4) fire-and-forget download into permanent cache for next open
 import { useCallback, useEffect, useState } from 'react';
 
 import { invalidateSignedMediaUrl, mediaPathFromUrl, signedMediaUrl } from './shared';
 import { supabase } from './supabase';
+import {
+  ensureMediaCached,
+  getCachedMediaUri,
+  mediaCacheKey,
+  peekCachedMediaUri,
+} from './mediaCache';
 
 export interface SignedUrlState {
-  /** The resolved, displayable url (signed for private media), or null while
-   *  first resolving OR when signing has definitively failed. */
+  /** Displayable uri (local file:// preferred, else signed https). */
   url: string | null;
-  /** True until the url has been resolved at least once. */
   loading: boolean;
-  /** True if resolving failed after a resolve attempt. */
   error: boolean;
-  /** Force a re-resolve (busts the signed-url cache for this path). */
   retry: () => void;
+  /** True when serving from permanent local cache (instant offline). */
+  fromCache: boolean;
 }
 
 export function useSignedUrl(source: string | null | undefined): SignedUrlState {
-  const [url, setUrl] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  // Seed from memory cache so the first paint can be local without waiting.
+  const mem = peekCachedMediaUri(source);
+  const [url, setUrl] = useState<string | null>(mem);
+  const [loading, setLoading] = useState(!mem && !!source);
   const [error, setError] = useState(false);
+  const [fromCache, setFromCache] = useState(!!mem);
   const [nonce, setNonce] = useState(0);
 
   const retry = useCallback(() => {
-    // Force a re-sign — a cached signed url that 403s (e.g. bucket policy just
-    // changed, token was invalidated) would otherwise stay stale for an hour.
     invalidateSignedMediaUrl(source);
     setError(false);
     setLoading(true);
+    setFromCache(false);
     setNonce((n) => n + 1);
   }, [source]);
 
@@ -44,49 +50,101 @@ export function useSignedUrl(source: string | null | undefined): SignedUrlState 
       setUrl(null);
       setLoading(false);
       setError(false);
+      setFromCache(false);
       return;
     }
+
+    // Already a local / inline asset.
+    if (
+      source.startsWith('file://') ||
+      source.startsWith('data:') ||
+      source.startsWith('content://')
+    ) {
+      setUrl(source);
+      setLoading(false);
+      setError(false);
+      setFromCache(true);
+      return;
+    }
+
+    // Instant memory hit.
+    const peek = peekCachedMediaUri(source);
+    if (peek) {
+      setUrl(peek);
+      setLoading(false);
+      setError(false);
+      setFromCache(true);
+      // Still revalidate disk async (noop if present).
+      void getCachedMediaUri(source);
+      return;
+    }
+
     setLoading(true);
     setError(false);
 
-    // Non-media paths (data-uri, sticker, external http, local file:) resolve
-    // synchronously — signedMediaUrl would pass them through anyway, but doing
-    // it here avoids a needless await and its render flicker.
-    const isPrivateMedia = !!mediaPathFromUrl(source);
-    if (!isPrivateMedia) {
-      setUrl(source);
-      setLoading(false);
-      return;
-    }
+    (async () => {
+      // 1) Disk cache
+      const local = await getCachedMediaUri(source);
+      if (!alive) return;
+      if (local) {
+        setUrl(local);
+        setLoading(false);
+        setError(false);
+        setFromCache(true);
+        return;
+      }
 
-    signedMediaUrl(supabase, source)
-      .then((resolved) => {
+      // 2) Network: sign if private media, else use source as-is (avatars, etc.)
+      const isPrivate = !!mediaPathFromUrl(source);
+      let remote: string | null = source;
+      if (isPrivate) {
+        remote = await signedMediaUrl(supabase, source);
         if (!alive) return;
-        // signedMediaUrl falls back to the raw url when signing fails — for a
-        // private bucket that url will 403 and render as a black frame. Detect
-        // that case by requiring the returned url to be a `/object/sign/` link
-        // (or an already-authenticated variant). Otherwise surface error so the
-        // caller shows retry instead of trying to render a doomed public url.
-        const isSigned = !!resolved && /\/object\/(sign|authenticated)\//.test(resolved);
-        if (isSigned) {
-          setUrl(resolved);
-          setError(false);
-        } else {
+        if (!remote || !/\/object\/(sign|authenticated)\//.test(remote)) {
           setUrl(null);
+          setLoading(false);
           setError(true);
+          setFromCache(false);
+          return;
         }
-        setLoading(false);
-      })
-      .catch(() => {
-        if (!alive) return;
-        setUrl(null);
-        setLoading(false);
-        setError(true);
+      }
+
+      setUrl(remote);
+      setLoading(false);
+      setError(false);
+      setFromCache(false);
+
+      // 3) Background: permanently cache so the next open is offline-instant.
+      void ensureMediaCached(source).then((cached) => {
+        if (!alive || !cached) return;
+        // Prefer local path once download completes (same session).
+        setUrl(cached);
+        setFromCache(true);
       });
+    })().catch(() => {
+      if (!alive) return;
+      setUrl(null);
+      setLoading(false);
+      setError(true);
+      setFromCache(false);
+    });
+
     return () => {
       alive = false;
     };
   }, [source, nonce]);
 
-  return { url, loading, error, retry };
+  return { url, loading, error, retry, fromCache };
 }
+
+// Re-export helpers for callers that need them without a hook.
+export {
+  mediaCacheKey,
+  ensureMediaCached,
+  getCachedMediaUri,
+  prefetchMedia,
+  peekCachedMediaUri,
+  registerLocalMedia,
+  clearMediaCache,
+  getMediaCacheStats,
+} from './mediaCache';
