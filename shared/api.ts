@@ -103,16 +103,36 @@ export async function updateMyProfile(
   return { error };
 }
 
+/** Strip PostgREST filter metacharacters so user input cannot break `.or()` / `.ilike()`. */
+function sanitizeSearchTerm(raw: string, maxLen = 64): string {
+  return raw
+    .trim()
+    .slice(0, maxLen)
+    .replace(/[%_,.()"'\\]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export async function searchProfiles(
   client: SupabaseClient,
   query: string,
 ): Promise<Profile[]> {
-  const { data } = await client
-    .from('profiles')
-    .select('*')
-    .or(`username.ilike.%${query}%,display_name.ilike.%${query}%`)
+  const q = sanitizeSearchTerm(query);
+  if (q.length < 1) return [];
+  // Prefer public_profiles (no phone/moderation columns) when the view exists;
+  // fall back to profiles for older DBs.
+  const { data, error } = await client
+    .from('public_profiles')
+    .select('id, username, display_name, about, avatar_url, last_seen, created_at')
+    .or(`username.ilike.%${q}%,display_name.ilike.%${q}%`)
     .limit(20);
-  return data || [];
+  if (!error && data) return data as Profile[];
+  const { data: fallback } = await client
+    .from('profiles')
+    .select('id, username, display_name, about, avatar_url, last_seen, created_at')
+    .or(`username.ilike.%${q}%,display_name.ilike.%${q}%`)
+    .limit(20);
+  return (fallback as Profile[]) || [];
 }
 
 // ── Conversations ───────────────────────────────────────────────────────────
@@ -382,7 +402,7 @@ export async function searchAllMessages(
   query: string,
   limit = 40,
 ): Promise<MessageSearchHit[]> {
-  const q = query.trim();
+  const q = sanitizeSearchTerm(query, 100);
   if (!q) return [];
   try {
     const { data } = await client
@@ -391,7 +411,7 @@ export async function searchAllMessages(
       .eq('is_deleted', false)
       .ilike('content', `%${q}%`)
       .order('created_at', { ascending: false })
-      .limit(limit);
+      .limit(Math.min(limit, 100));
     return (data || []).map((m) => ({ message: m as Message, conversationId: (m as Message).conversation_id }));
   } catch {
     return [];
@@ -426,6 +446,11 @@ export function messageMatchesKind(m: Message, kind: SearchKind): boolean {
   }
 }
 
+const MAX_MESSAGE_CHARS = 16000;
+const ALLOWED_MESSAGE_TYPES = new Set<MessageType>([
+  'text', 'image', 'video', 'file', 'audio', 'system',
+]);
+
 export async function sendMessage(
   client: SupabaseClient,
   conversationId: UUID,
@@ -438,6 +463,14 @@ export async function sendMessage(
 ): Promise<{ message: Message | null; error: Error | null }> {
   const user = await getCurrentUser(client);
   if (!user) return { message: null, error: new Error('not authenticated') };
+  if (!conversationId) return { message: null, error: new Error('missing conversation') };
+  // Clients must not forge system messages or unknown types.
+  if (type === 'system' || !ALLOWED_MESSAGE_TYPES.has(type)) {
+    return { message: null, error: new Error('invalid message type') };
+  }
+  if (content && content.length > MAX_MESSAGE_CHARS) {
+    return { message: null, error: new Error('message too long') };
+  }
 
   // An explicit client-generated `id` lets the app render the message
   // optimistically and, when the realtime INSERT echoes back, dedupe by the SAME
@@ -449,7 +482,7 @@ export async function sendMessage(
       conversation_id: conversationId,
       sender_id: user.id,
       type,
-      content,
+      content: content ?? null,
       media_url: mediaUrl,
       reply_to: replyTo,
       // Only send media_meta when provided & non-empty, so text messages and the
@@ -1072,6 +1105,39 @@ export function subscribeStatusViews(
 // plus an explicit contentType (RN has no File/Blob upload that reliably works
 // against Supabase storage). Keeping one implementation avoids duplicating the
 // bucket/path/public-url logic across platforms.
+/** Allowed media extensions (block executables / scripts). */
+const SAFE_MEDIA_EXT = new Set([
+  'jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif',
+  'mp4', 'mov', 'webm', 'm4v',
+  'm4a', 'mp3', 'aac', 'ogg', 'wav', 'opus',
+  'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'csv', 'zip',
+]);
+
+const SAFE_MIME_PREFIX = /^(image\/|video\/|audio\/|application\/pdf|application\/zip|application\/msword|application\/vnd\.|text\/plain|text\/csv)/i;
+
+function assertSafeUpload(
+  fileName: string,
+  contentType?: string,
+  byteLength?: number,
+): Error | null {
+  const ext = (fileName.split('.').pop() || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (!ext || !SAFE_MEDIA_EXT.has(ext)) {
+    return new Error('unsupported file type');
+  }
+  if (
+    contentType &&
+    contentType !== 'application/octet-stream' &&
+    !SAFE_MIME_PREFIX.test(contentType)
+  ) {
+    return new Error('unsupported content type');
+  }
+  // Hard ceiling 100 MB even if caller skips premium check.
+  if (typeof byteLength === 'number' && byteLength > 100 * 1024 * 1024) {
+    return new Error('file too large');
+  }
+  return null;
+}
+
 export async function uploadMedia(
   client: SupabaseClient,
   conversationId: UUID,
@@ -1079,7 +1145,20 @@ export async function uploadMedia(
   fileName: string,
   contentType?: string,
 ): Promise<{ url: string | null; error: Error | null }> {
-  const ext = fileName.split('.').pop() || 'bin';
+  if (!conversationId || !/^[0-9a-fA-F-]{36}$/.test(conversationId)) {
+    return { url: null, error: new Error('invalid conversation') };
+  }
+  const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120) || 'file.bin';
+  const byteLength =
+    typeof (file as ArrayBuffer).byteLength === 'number'
+      ? (file as ArrayBuffer).byteLength
+      : typeof (file as Blob).size === 'number'
+        ? (file as Blob).size
+        : undefined;
+  const bad = assertSafeUpload(safeName, contentType, byteLength);
+  if (bad) return { url: null, error: bad };
+
+  const ext = safeName.split('.').pop() || 'bin';
   const path = `${conversationId}/${Date.now()}.${ext}`;
   const { error } = await client.storage
     .from('media')
