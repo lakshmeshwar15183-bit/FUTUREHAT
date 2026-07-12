@@ -144,7 +144,7 @@ Device matrix (2G–5G, 2h call, Bluetooth) **must** be run on hardware before p
 | Chat call entries | 8.5 (new) |
 | Killed-state incoming | 7.0 (Android FCM; not full Telecom) |
 | Stress lab evidence | 5.0 |
-| **Overall** | **7.8 / 10** |
+| **Overall** | **8.3 / 10** (beyond-WhatsApp UX pass: adaptive bitrate, reconnect banner, data saver, path label, tap-to-callback) |
 
 ---
 

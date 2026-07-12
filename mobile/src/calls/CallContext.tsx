@@ -17,13 +17,14 @@ import {
   StyleSheet,
   Text,
   View,
+  AppState,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { RTCView, type MediaStream } from 'react-native-webrtc';
 import InCallManager from 'react-native-incall-manager';
+import * as Haptics from 'expo-haptics';
 
-import { AppState } from 'react-native';
 import { supabase } from '../lib/supabase';
 import {
   getCurrentUser,
@@ -35,6 +36,8 @@ import {
   onAuthChange,
   sendPush,
   recordStreakActivity,
+  buildIceServers,
+  hasTurn,
   type Call,
   type CallType,
   type Profile,
@@ -45,8 +48,9 @@ import {
   clearCallNotification,
   presentMissedCallNotification,
 } from '../lib/notifications';
-import { CallSession } from './webrtc';
+import { CallSession, type ConnectionPath } from './webrtc';
 import Avatar from '../components/Avatar';
+import { Alert, showConfirm } from '../ui/dialog';
 
 interface ActiveCall {
   callId: UUID;
@@ -212,20 +216,37 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
 
   const startCall = useCallback(
     async (conversationId: UUID, peer: Profile, type: CallType) => {
-      if (active) return;
-      // Resolve our id on demand if the auth subscription hasn't latched yet,
-      // so the very first call right after login still works.
+      if (activeRef.current) return;
+      // Pre-flight: warn if TURN missing (cross-network will fail) — better than silent hang.
+      const ice = buildIceServers(
+        process.env.EXPO_PUBLIC_TURN_URL
+          ? {
+              urls: process.env.EXPO_PUBLIC_TURN_URL,
+              username: process.env.EXPO_PUBLIC_TURN_USERNAME,
+              credential: process.env.EXPO_PUBLIC_TURN_CREDENTIAL,
+            }
+          : null,
+      );
+      if (!hasTurn(ice)) {
+        const proceed = await showConfirm({
+          title: 'Weak call network setup',
+          message: 'No TURN relay is configured. Calls may only work on the same Wi‑Fi. Continue anyway?',
+          confirmText: 'Call anyway',
+          cancelText: 'Cancel',
+        });
+        if (!proceed) return;
+      }
       const me = uid ?? (await getCurrentUser(supabase))?.id ?? null;
       if (!me) return;
-      if (!uid) setUid(me); // unblock the in-call render gate ({active && uid})
+      if (!uid) setUid(me);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
       const { call, error } = await createCall(supabase, conversationId, me, type);
       if (!call) {
         console.warn('[call] createCall failed:', error?.message);
+        Alert.alert('Could not start call', error?.message ?? 'Try again.');
         return;
       }
       setActive({ callId: call.id, conversationId, peer, type, isCaller: true });
-      // Notify a backgrounded/killed callee via push (best-effort).
-      // Use caller's display name for the callee's notification title.
       const meProfile = await getProfile(supabase, me).catch(() => null);
       void sendPush(supabase, {
         conversationId,
@@ -239,7 +260,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
         },
       });
     },
-    [uid, active],
+    [uid],
   );
 
   const acceptIncoming = useCallback(async () => {
@@ -249,6 +270,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       ringTimeoutRef.current = null;
     }
     stopAllCallTones();
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
     void clearCallNotification(incoming.call.id);
     const snap = incoming;
     setIncoming(null);
@@ -269,6 +291,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       ringTimeoutRef.current = null;
     }
     stopAllCallTones();
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     void clearCallNotification(incoming.call.id);
     const id = incoming.call.id;
     setIncoming(null);
@@ -377,7 +400,11 @@ function ActiveCallView({
   const [elapsed, setElapsed] = useState(0);
   const [netQuality, setNetQuality] = useState(4);
   const [minimized, setMinimized] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
+  const [connPath, setConnPath] = useState<ConnectionPath>('unknown');
+  const [lowData, setLowData] = useState(false);
   const lastTapRef = useRef(0);
+  const connectedRef = useRef(false);
 
   // Build + start the WebRTC session once per call id.
   useEffect(() => {
@@ -405,9 +432,18 @@ function ActiveCallView({
       onConnected: () => {
         stopAllCallTones();
         setConnected(true);
+        connectedRef.current = true;
+        setReconnecting(false);
+        if (ringTimer) {
+          clearTimeout(ringTimer);
+          ringTimer = null;
+        }
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       },
       onEnded: () => finish('ended'),
       onFacingChange: (f) => setFacing(f),
+      onReconnecting: (r) => setReconnecting(r),
+      onConnectionPath: (p) => setConnPath(p),
     });
     sessionRef.current = session;
     session.start().catch((e) => {
@@ -422,8 +458,7 @@ function ActiveCallView({
     let ringTimer: ReturnType<typeof setTimeout> | null = null;
     if (call.isCaller) {
       ringTimer = setTimeout(() => {
-        if (finished || sessionRef.current !== session) return;
-        // Still not connected → treat as missed for callee, end for us.
+        if (finished || sessionRef.current !== session || connectedRef.current) return;
         void updateCallStatus(supabase, call.callId, 'missed').catch(() => {});
         session.end(true);
         finish('missed');
@@ -436,7 +471,6 @@ function ActiveCallView({
         session.end(false);
         finish(c.status === 'missed' ? 'missed' : 'ended');
       }
-      // Remote accepted: stop ringback even before ICE connects.
       if (c.status === 'accepted') {
         stopAllCallTones();
         session.stopAllTones();
@@ -447,7 +481,6 @@ function ActiveCallView({
       if (ringTimer) clearTimeout(ringTimer);
       supabase.removeChannel(statusCh);
       session.end(false);
-      // Unmount without re-entering hangup if already finished.
       if (!finished) {
         finished = true;
         stopAllCallTones();
@@ -505,11 +538,16 @@ function ActiveCallView({
 
   const showVideo = call.type === 'video';
   const timer = `${Math.floor(elapsed / 60)}:${(elapsed % 60).toString().padStart(2, '0')}`;
-  const status = connected
-    ? timer
-    : call.isCaller
-      ? 'Ringing…'
-      : 'Connecting…';
+  const status = reconnecting
+    ? 'Reconnecting…'
+    : connected
+      ? timer
+      : call.isCaller
+        ? 'Ringing…'
+        : 'Connecting…';
+
+  const pathLabel =
+    connPath === 'relay' ? 'Secured via relay' : connPath === 'direct' ? 'Direct connection' : null;
 
   // Remote has a *live* video track (not just audio) — otherwise RTCView paints white.
   const remoteHasVideo = !!(
@@ -747,7 +785,27 @@ function ActiveCallView({
       <View style={[styles.callHeader, { top: insets.top + 16 }]} pointerEvents="none">
         <Text style={styles.callPeer}>{call.peer?.display_name ?? 'Lumixo user'}</Text>
         <Text style={styles.callStatus}>{status}</Text>
+        {!!pathLabel && connected && !reconnecting && (
+          <Text style={styles.pathLabel}>{pathLabel}</Text>
+        )}
       </View>
+
+      {/* Banners WhatsApp doesn't show — quality transparency. */}
+      {reconnecting && (
+        <View style={styles.bannerWarn}>
+          <ActivityIndicator color="#fff" size="small" />
+          <Text style={styles.bannerText}>Reconnecting — keep the call open</Text>
+        </View>
+      )}
+      {!reconnecting && connected && netQuality <= 2 && (
+        <View style={[styles.bannerWarn, netQuality <= 1 && styles.bannerDanger]}>
+          <Ionicons name="cellular-outline" size={14} color="#fff" />
+          <Text style={styles.bannerText}>
+            {netQuality <= 1 ? 'Poor connection' : 'Weak connection'}
+            {lowData ? ' · Data saver on' : ' · try Data saver'}
+          </Text>
+        </View>
+      )}
 
       <View style={[styles.controls, { paddingBottom: insets.bottom + 24 }]}>
         <RoundCtl
@@ -773,14 +831,29 @@ function ActiveCallView({
                 void sessionRef.current?.switchCamera();
               }}
             />
+            <RoundCtl
+              icon="speedometer-outline"
+              active={lowData}
+              onPress={() => {
+                const next = sessionRef.current!.setLowDataMode(!lowData);
+                setLowData(next);
+                Haptics.selectionAsync().catch(() => {});
+              }}
+            />
           </>
         )}
-        <Pressable style={styles.hangup} onPress={() => sessionRef.current!.end(true)}>
+        <Pressable
+          style={styles.hangup}
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {});
+            sessionRef.current!.end(true);
+          }}
+        >
           <Ionicons name="call" size={30} color="#fff" style={{ transform: [{ rotate: '135deg' }] }} />
         </Pressable>
       </View>
 
-      {!connected && (
+      {(!connected || reconnecting) && (
         <ActivityIndicator
           color="#fff"
           style={{ position: 'absolute', alignSelf: 'center', bottom: 160 }}
@@ -865,6 +938,23 @@ const styles = StyleSheet.create({
   callHeader: { position: 'absolute', alignSelf: 'center', alignItems: 'center' },
   callPeer: { color: '#fff', fontSize: 22, fontWeight: '700' },
   callStatus: { color: '#cfd9d6', fontSize: 14, marginTop: 4 },
+  pathLabel: { color: 'rgba(255,255,255,0.55)', fontSize: 11, marginTop: 4, fontWeight: '600' },
+  bannerWarn: {
+    position: 'absolute',
+    top: '22%',
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(245, 185, 66, 0.92)',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    zIndex: 30,
+    maxWidth: '88%',
+  },
+  bannerDanger: { backgroundColor: 'rgba(241, 92, 109, 0.94)' },
+  bannerText: { color: '#fff', fontSize: 13, fontWeight: '700', flexShrink: 1 },
   minimizeBtn: { position: 'absolute', left: 16, zIndex: 10 },
   netTop: { position: 'absolute', right: 20, alignItems: 'flex-end', zIndex: 10 },
   bubbleBase: { position: 'absolute', left: 0, borderRadius: 16, overflow: 'hidden', backgroundColor: '#0B141A', zIndex: 300, elevation: 12, shadowColor: '#000', shadowOpacity: 0.4, shadowRadius: 10, shadowOffset: { width: 0, height: 4 } },

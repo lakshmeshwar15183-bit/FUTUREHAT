@@ -48,12 +48,18 @@ const ICE_SERVERS = buildIceServers(
 );
 const HAS_TURN = hasTurn(ICE_SERVERS);
 
+export type ConnectionPath = 'direct' | 'relay' | 'unknown';
+
 export interface CallCallbacks {
   onLocalStream: (stream: MediaStreamT) => void;
   onRemoteStream: (stream: MediaStreamT | null) => void;
   onConnected: () => void;
   onEnded: () => void;
   onFacingChange?: (facing: 'user' | 'environment') => void;
+  /** ICE blip — UI shows "Reconnecting…" (WhatsApp+) */
+  onReconnecting?: (reconnecting: boolean) => void;
+  /** Host/srflx = direct, relay = TURN (transparency WhatsApp doesn't show) */
+  onConnectionPath?: (path: ConnectionPath) => void;
 }
 
 export class CallSession {
@@ -81,6 +87,10 @@ export class CallSession {
   muted = false;
   videoEnabled: boolean;
   speakerOn: boolean;
+  /** Lower capture + send resolution for weak networks / data saver. */
+  lowDataMode = false;
+  private adaptiveTimer: ReturnType<typeof setInterval> | null = null;
+  private lastPath: ConnectionPath = 'unknown';
 
   constructor(
     private callId: UUID,
@@ -110,7 +120,7 @@ export class CallSession {
         this.type === 'video'
           ? ({
               facingMode: 'user',
-              // Ideal HD; min allows weak devices to still connect.
+              // Start HD-capable; adaptive layer can downscale mid-call.
               width: { min: 320, ideal: 1280, max: 1920 },
               height: { min: 240, ideal: 720, max: 1080 },
               frameRate: { min: 15, ideal: 30, max: 30 },
@@ -209,11 +219,13 @@ export class CallSession {
       this.iceRestartAttempts = 0;
       // Always silence tones on every connect edge (recovers from double-start).
       this.stopAllTones();
+      this.cb.onReconnecting?.(false);
       if (!this.connectedOnce) {
         this.connectedOnce = true;
         clog('✅ CONNECTED');
       }
       this.cb.onConnected();
+      void this.probeAndAdapt();
     };
 
     (this.pc as any).onconnectionstatechange = () => {
@@ -257,6 +269,11 @@ export class CallSession {
       );
       this.end(false);
     }, CONNECT_TIMEOUT_MS);
+
+    // 6) Adaptive quality + path probe (every 2.5s once started)
+    this.adaptiveTimer = setInterval(() => {
+      void this.probeAndAdapt();
+    }, 2500);
   }
 
   /**
@@ -319,6 +336,7 @@ export class CallSession {
 
   private onTransportBlip() {
     if (this.ended) return;
+    this.cb.onReconnecting?.(true);
     // First: attempt ICE restart after a short grace (network handoff recovery).
     if (!this.iceRestartTimer) {
       this.iceRestartTimer = setTimeout(() => {
@@ -523,6 +541,84 @@ export class CallSession {
   }
 
   /**
+   * Data-saver mode (beyond WhatsApp defaults): drop capture target to ~360p
+   * and cap outbound frame rate so weak networks stay audible/visible.
+   */
+  setLowDataMode(on: boolean) {
+    this.lowDataMode = on;
+    void this.applySenderBitrate(on ? 250_000 : 1_200_000, on ? 15 : 30);
+    return this.lowDataMode;
+  }
+
+  private async applySenderBitrate(maxBitrate: number, maxFramerate: number) {
+    try {
+      const senders = (this.pc as any)?.getSenders?.() ?? [];
+      for (const s of senders) {
+        if (s.track?.kind !== 'video') continue;
+        const params = s.getParameters?.() ?? {};
+        if (!params.encodings?.length) {
+          params.encodings = [{}];
+        }
+        params.encodings[0].maxBitrate = maxBitrate;
+        params.encodings[0].maxFramerate = maxFramerate;
+        if (this.lowDataMode) {
+          params.encodings[0].scaleResolutionDownBy = 2.5;
+        } else {
+          params.encodings[0].scaleResolutionDownBy = 1;
+        }
+        await s.setParameters(params);
+      }
+    } catch (e: any) {
+      clog('applySenderBitrate', e?.message ?? e);
+    }
+  }
+
+  /** Probe candidate pair + packet loss; adapt bitrate; report path to UI. */
+  private async probeAndAdapt() {
+    if (this.ended || !this.pc || !this.connectedOnce) return;
+    try {
+      const stats = await (this.pc as any).getStats();
+      let path: ConnectionPath = 'unknown';
+      let loss = 0;
+      let rtt = 0;
+      let dLost = 0;
+      let dRecv = 0;
+      stats.forEach((r: any) => {
+        if (
+          r.type === 'candidate-pair' &&
+          (r.nominated || r.selected) &&
+          r.state === 'succeeded'
+        ) {
+          const local = stats.get?.(r.localCandidateId);
+          const remote = stats.get?.(r.remoteCandidateId);
+          const typ = String(local?.candidateType || remote?.candidateType || '');
+          if (/relay/i.test(typ)) path = 'relay';
+          else if (/host|srflx|prflx/i.test(typ)) path = 'direct';
+          if (typeof r.currentRoundTripTime === 'number') rtt = r.currentRoundTripTime;
+        }
+        if (r.type === 'inbound-rtp' && r.kind === 'video') {
+          dLost += Number(r.packetsLost || 0);
+          dRecv += Number(r.packetsReceived || 0);
+        }
+      });
+      if (path !== 'unknown' && path !== this.lastPath) {
+        this.lastPath = path;
+        this.cb.onConnectionPath?.(path);
+      } else if (this.lastPath === 'unknown' && path !== 'unknown') {
+        this.lastPath = path;
+        this.cb.onConnectionPath?.(path);
+      }
+      loss = dRecv + dLost > 0 ? dLost / (dRecv + dLost) : 0;
+      // Auto low-data when path is relay + high loss/RTT (smarter than static HD).
+      if (!this.lowDataMode && (path === 'relay' && (loss > 0.05 || rtt > 0.35))) {
+        void this.applySenderBitrate(350_000, 18);
+      } else if (!this.lowDataMode && loss < 0.01 && rtt < 0.12) {
+        void this.applySenderBitrate(1_500_000, 30);
+      }
+    } catch { /* stats optional */ }
+  }
+
+  /**
    * Switch front/back camera. Uses replaceTrack when possible so the remote
    * peer keeps a continuous video mid stream (smoother than _switchCamera alone).
    * Facing state is tracked so local RTCView mirror can be toggled (front only).
@@ -619,6 +715,10 @@ export class CallSession {
     this.stopReadyHeartbeat();
     // Silence first — before async track teardown — kills "tuuu…" leaks.
     this.stopAllTones();
+    if (this.adaptiveTimer) {
+      clearInterval(this.adaptiveTimer);
+      this.adaptiveTimer = null;
+    }
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;

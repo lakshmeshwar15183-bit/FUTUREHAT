@@ -1589,14 +1589,25 @@ function ChatScreenInner() {
     // replyable, editable or deletable — just an informational pill.
     if (msg.type === 'system') {
       // Call system lines: "Voice call · 1:23 [call:uuid]" — strip tag, show call icon.
+      // Tap → call back (WhatsApp+).
       const raw = msg.content ?? '';
       const callMatch = raw.match(/\[call:([0-9a-f-]{36})\]\s*$/i);
       const text = callMatch ? raw.replace(/\s*\[call:[0-9a-f-]{36}\]\s*$/i, '').trim() : raw;
       const isCallLine = !!callMatch || /^(missed|declined|cancelled|voice|video)\b/i.test(text);
       const isMissed = /^missed\b/i.test(text);
+      const isVideoCall = /\bvideo\b/i.test(text);
+      const onCallBack = isCallLine && !isGroup && peers[0]
+        ? () => placeCall(isVideoCall ? 'video' : 'audio')
+        : undefined;
       return (
         <View style={styles.systemNotice}>
-          <View style={styles.systemPill}>
+          <Pressable
+            style={styles.systemPill}
+            onPress={onCallBack}
+            disabled={!onCallBack}
+            accessibilityRole={onCallBack ? 'button' : undefined}
+            accessibilityLabel={onCallBack ? `Call back: ${text}` : undefined}
+          >
             <Ionicons
               name={isCallLine ? (isMissed ? 'call' : 'call-outline') : 'timer-outline'}
               size={12}
@@ -1604,7 +1615,15 @@ function ChatScreenInner() {
               style={{ marginRight: 5, transform: isMissed ? [{ rotate: '135deg' }] : undefined }}
             />
             <Text style={[styles.systemNoticeText, isMissed && { color: colors.danger }]}>{text}</Text>
-          </View>
+            {!!onCallBack && (
+              <Ionicons
+                name={isVideoCall ? 'videocam' : 'call'}
+                size={14}
+                color={colors.primary}
+                style={{ marginLeft: 8 }}
+              />
+            )}
+          </Pressable>
         </View>
       );
     }
