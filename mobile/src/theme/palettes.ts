@@ -105,19 +105,40 @@ export const palettes: Record<ThemeMode, Palette> = {
 };
 
 // Static design tokens — identical across all themes.
+// Tuned for production messenger density (WhatsApp / Telegram / iMessage class):
+// compact rows, soft corners, readable type without game-like oversizing.
 export const spacing = (n: number) => n * 4;
 
 export const radius = {
   sm: 8,
   md: 12,
-  lg: 18,
+  lg: 16,
+  xl: 20,
   pill: 999,
 };
 
 export const font = {
-  title: 22,
-  heading: 17,
+  title: 20,
+  heading: 16.5,
   body: 15,
   small: 13,
-  tiny: 11,
+  tiny: 11.5,
+};
+
+/** Shared elevation for FABs / floating controls (subtle, not bulky). */
+export const elevation = {
+  fab: {
+    shadowColor: '#000' as const,
+    shadowOpacity: 0.22,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 5,
+  },
+  card: {
+    shadowColor: '#000' as const,
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 4,
+  },
 };

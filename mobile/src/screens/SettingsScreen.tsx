@@ -91,7 +91,7 @@ export default function SettingsScreen() {
         style={styles.profileRow}
         onPress={() => uid && navigation.navigate('Profile', { userId: uid })}
       >
-        <Avatar uri={profile?.avatar_url} name={profile?.display_name} size={64} />
+        <Avatar uri={profile?.avatar_url} name={profile?.display_name} size={56} />
         <View style={styles.profileBody}>
           <View style={styles.nameRow}>
             <Text style={styles.profileName} numberOfLines={1}>{profile?.display_name ?? 'Your name'}</Text>
@@ -108,11 +108,11 @@ export default function SettingsScreen() {
               : profile?.about || 'Hey there! I am using Lumixo.'}
           </Text>
         </View>
-        <Ionicons name="chevron-forward" size={22} color={colors.textFaint} />
+        <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
       </Pressable>
 
       <Pressable style={styles.premiumCard} onPress={() => navigation.navigate('Premium')}>
-        <Ionicons name="diamond" size={26} color={colors.accentPlusText} />
+        <Ionicons name="diamond" size={22} color={colors.accentPlusText} />
         <View style={{ flex: 1, marginLeft: spacing(3) }}>
           <View style={styles.premiumTitleRow}>
             <Text style={styles.premiumTitle}>{APP_NAME}+{admin ? ' · Lifetime' : premium ? ' · Active' : ''}</Text>
@@ -205,7 +205,17 @@ export default function SettingsScreen() {
 function Group({ children }: { children: React.ReactNode }) {
   const colors = useColors();
   return (
-    <View style={{ backgroundColor: colors.surface, marginTop: spacing(3), borderRadius: radius.md, marginHorizontal: spacing(3), overflow: 'hidden' }}>
+    <View
+      style={{
+        backgroundColor: colors.surface,
+        marginTop: spacing(2.5),
+        borderRadius: radius.md,
+        marginHorizontal: spacing(3),
+        overflow: 'hidden',
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: colors.isLight ? 'rgba(0,0,0,0.05)' : colors.border,
+      }}
+    >
       {children}
     </View>
   );
@@ -231,22 +241,41 @@ function Row({
   return (
     <Pressable
       style={({ pressed }) => [
-        { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing(4), paddingVertical: spacing(3.5) },
+        {
+          flexDirection: 'row',
+          alignItems: 'center',
+          paddingHorizontal: spacing(3.5),
+          paddingVertical: 12,
+          minHeight: 48,
+        },
         pressed && { backgroundColor: colors.surfaceAlt },
       ]}
       onPress={onPress}
     >
-      <Ionicons name={icon} size={22} color={danger ? colors.danger : colors.textMuted} />
-      <Text style={{ flex: 1, color: tint, fontSize: font.body, marginLeft: spacing(4) }}>{label}</Text>
+      <Ionicons name={icon} size={20} color={danger ? colors.danger : colors.textMuted} />
+      <Text style={{ flex: 1, color: tint, fontSize: font.body, marginLeft: spacing(3.5), letterSpacing: -0.1 }}>
+        {label}
+      </Text>
       {badge ? (
-        <View style={{ minWidth: 20, height: 20, paddingHorizontal: 6, borderRadius: 10, backgroundColor: colors.danger, alignItems: 'center', justifyContent: 'center', marginRight: spacing(2) }}>
-          <Text style={{ color: '#fff', fontSize: font.tiny, fontWeight: '800' }}>{badge > 99 ? '99+' : badge}</Text>
+        <View
+          style={{
+            minWidth: 18,
+            height: 18,
+            paddingHorizontal: 5,
+            borderRadius: 9,
+            backgroundColor: colors.danger,
+            alignItems: 'center',
+            justifyContent: 'center',
+            marginRight: spacing(2),
+          }}
+        >
+          <Text style={{ color: '#fff', fontSize: 11, fontWeight: '800' }}>{badge > 99 ? '99+' : badge}</Text>
         </View>
       ) : null}
       {locked && (
-        <Ionicons name="lock-closed" size={14} color={colors.textFaint} style={{ marginRight: spacing(1.5) }} />
+        <Ionicons name="lock-closed" size={13} color={colors.textFaint} style={{ marginRight: spacing(1.5) }} />
       )}
-      {!danger && <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />}
+      {!danger && <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />}
     </Pressable>
   );
 }
@@ -258,60 +287,67 @@ const makeStyles = (colors: Palette) =>
       flexDirection: 'row',
       alignItems: 'center',
       backgroundColor: colors.surface,
-      padding: spacing(4),
+      paddingHorizontal: spacing(3.5),
+      paddingVertical: spacing(3.5),
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.border,
     },
-    profileBody: { flex: 1, marginLeft: spacing(4) },
+    profileBody: { flex: 1, marginLeft: spacing(3.5), minWidth: 0 },
     nameRow: { flexDirection: 'row', alignItems: 'center' },
-    profileName: { color: colors.text, fontSize: font.title, fontWeight: '600', flexShrink: 1 },
+    profileName: {
+      color: colors.text,
+      fontSize: 18,
+      fontWeight: '600',
+      flexShrink: 1,
+      letterSpacing: -0.25,
+    },
     handle: { color: colors.textMuted, fontSize: font.small, marginTop: 1 },
-    profileAbout: { color: colors.textMuted, fontSize: font.small, marginTop: 2 },
+    profileAbout: { color: colors.textMuted, fontSize: font.small, marginTop: 2, lineHeight: 17 },
     plusBadge: {
       marginLeft: spacing(2),
       color: '#0b141a',
       backgroundColor: colors.accentPlus,
-      fontSize: font.tiny,
+      fontSize: 10.5,
       fontWeight: '800',
-      paddingHorizontal: 6,
+      paddingHorizontal: 5,
       paddingVertical: 1,
-      borderRadius: 5,
+      borderRadius: 4,
       overflow: 'hidden',
     },
     modBadge: {
       marginLeft: spacing(2),
       color: '#fff',
       backgroundColor: '#3b82f6',
-      fontSize: font.tiny,
+      fontSize: 10.5,
       fontWeight: '800',
-      letterSpacing: 0.3,
-      paddingHorizontal: 6,
+      letterSpacing: 0.2,
+      paddingHorizontal: 5,
       paddingVertical: 1,
-      borderRadius: 5,
+      borderRadius: 4,
       overflow: 'hidden',
     },
     devBadge: {
       marginLeft: spacing(2),
       color: '#0b141a',
       backgroundColor: '#f5b62a',
-      fontSize: font.tiny,
+      fontSize: 10.5,
       fontWeight: '800',
-      letterSpacing: 0.5,
-      paddingHorizontal: 6,
+      letterSpacing: 0.3,
+      paddingHorizontal: 5,
       paddingVertical: 1,
-      borderRadius: 5,
+      borderRadius: 4,
       overflow: 'hidden',
     },
     premiumTitleRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' },
     soonTag: {
       marginLeft: spacing(2),
-      // Theme-aware: light blue on dark, but a readable dark blue on light (the
-      // old light-blue text washed out on the near-white light-mode surface).
       color: colors.isLight ? '#2952CC' : '#cfe9ff',
       backgroundColor: colors.isLight ? 'rgba(91,110,245,0.10)' : 'rgba(91,110,245,0.18)',
       borderColor: colors.isLight ? 'rgba(41,82,204,0.35)' : 'rgba(120,150,255,0.4)',
-      borderWidth: 1,
-      fontSize: font.tiny,
+      borderWidth: StyleSheet.hairlineWidth,
+      fontSize: 10.5,
       fontWeight: '700',
-      paddingHorizontal: 8,
+      paddingHorizontal: 7,
       paddingVertical: 1,
       borderRadius: 999,
       overflow: 'hidden',
@@ -320,15 +356,28 @@ const makeStyles = (colors: Palette) =>
       flexDirection: 'row',
       alignItems: 'center',
       backgroundColor: colors.surface,
-      marginTop: spacing(3),
+      marginTop: spacing(2.5),
       marginHorizontal: spacing(3),
       borderRadius: radius.md,
-      padding: spacing(4),
-      borderWidth: 1,
-      borderColor: colors.accentPlus + '44',
+      paddingHorizontal: spacing(3.5),
+      paddingVertical: spacing(3),
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.accentPlus + '55',
     },
-    premiumTitle: { color: colors.text, fontSize: font.heading, fontWeight: '700' },
-    premiumSub: { color: colors.textMuted, fontSize: font.small, marginTop: 2 },
-    credit: { color: colors.textMuted, textAlign: 'center', marginTop: spacing(8), fontSize: font.small, fontWeight: '600' },
-    version: { color: colors.textFaint, textAlign: 'center', marginTop: 4, marginBottom: spacing(8), fontSize: font.tiny },
+    premiumTitle: { color: colors.text, fontSize: font.heading, fontWeight: '700', letterSpacing: -0.15 },
+    premiumSub: { color: colors.textMuted, fontSize: font.small, marginTop: 2, lineHeight: 17 },
+    credit: {
+      color: colors.textMuted,
+      textAlign: 'center',
+      marginTop: spacing(6),
+      fontSize: font.small,
+      fontWeight: '600',
+    },
+    version: {
+      color: colors.textFaint,
+      textAlign: 'center',
+      marginTop: 4,
+      marginBottom: spacing(8),
+      fontSize: font.tiny,
+    },
   });

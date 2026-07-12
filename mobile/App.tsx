@@ -1,7 +1,7 @@
 // Lumixo mobile — root component. Providers (safe-area, theme, app-lock),
 // auth gate, bottom tabs, and the full navigation stack.
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, AppState, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, Platform, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import * as Linking from 'expo-linking';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -82,13 +82,39 @@ function MainTabs() {
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
-        headerStyle: { backgroundColor: colors.header },
-        headerTitleStyle: { color: colors.isLight ? '#fff' : colors.text, fontWeight: '700' },
+        headerStyle: {
+          backgroundColor: colors.header,
+          elevation: 0,
+          shadowOpacity: 0,
+          borderBottomWidth: StyleSheet.hairlineWidth,
+          borderBottomColor: colors.isLight ? 'rgba(0,0,0,0.06)' : colors.border,
+        },
+        headerTitleStyle: {
+          color: colors.isLight ? '#fff' : colors.text,
+          fontWeight: '700',
+          fontSize: 17,
+          letterSpacing: -0.2,
+        },
         headerTintColor: colors.isLight ? '#fff' : colors.text,
-        tabBarStyle: { backgroundColor: colors.surface, borderTopColor: colors.border },
+        headerTitleAlign: 'left' as const,
+        tabBarStyle: {
+          backgroundColor: colors.surface,
+          borderTopColor: colors.isLight ? 'rgba(0,0,0,0.06)' : colors.border,
+          borderTopWidth: StyleSheet.hairlineWidth,
+          height: Platform.OS === 'ios' ? 84 : 58,
+          paddingTop: 4,
+          paddingBottom: Platform.OS === 'ios' ? 28 : 6,
+          elevation: 0,
+        },
+        tabBarLabelStyle: {
+          fontSize: 11,
+          fontWeight: '600',
+          letterSpacing: -0.05,
+          marginTop: -2,
+        },
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.textFaint,
-        tabBarIcon: ({ color, size, focused }) => {
+        tabBarIcon: ({ color, focused }) => {
           const map: Record<string, [keyof typeof Ionicons.glyphMap, keyof typeof Ionicons.glyphMap]> = {
             Chats: ['chatbubbles', 'chatbubbles-outline'],
             Communities: ['people', 'people-outline'],
@@ -96,7 +122,7 @@ function MainTabs() {
             Settings: ['settings', 'settings-outline'],
           };
           const [on, off] = map[route.name] ?? ['ellipse', 'ellipse-outline'];
-          return <Ionicons name={focused ? on : off} size={size} color={color} />;
+          return <Ionicons name={focused ? on : off} size={22} color={color} />;
         },
       })}
     >
@@ -275,9 +301,17 @@ function RootNavigator() {
   };
 
   const screenOptions = {
-    headerStyle: { backgroundColor: colors.header },
+    headerStyle: {
+      backgroundColor: colors.header,
+    },
     headerTintColor: colors.isLight ? '#fff' : colors.text,
-    headerTitleStyle: { color: colors.isLight ? '#fff' : colors.text, fontWeight: '600' as const },
+    headerTitleStyle: {
+      color: colors.isLight ? '#fff' : colors.text,
+      fontWeight: '600' as const,
+      fontSize: 17,
+      letterSpacing: -0.2,
+    },
+    headerShadowVisible: false,
     contentStyle: { backgroundColor: colors.bg },
   };
 

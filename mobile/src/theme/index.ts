@@ -1,5 +1,5 @@
 // Lumixo mobile — theme barrel.
-export { palettes, spacing, radius, font } from './palettes';
+export { palettes, spacing, radius, font, elevation } from './palettes';
 export type { Palette, ThemeMode } from './palettes';
 export {
   ThemeProvider,

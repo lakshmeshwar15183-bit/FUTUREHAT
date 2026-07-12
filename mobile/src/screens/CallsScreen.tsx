@@ -357,7 +357,7 @@ const makeStyles = (colors: Palette) =>
     emptyIllus: { width: 108, height: 108, borderRadius: 54, backgroundColor: colors.primary + '18', alignItems: 'center', justifyContent: 'center', marginBottom: spacing(4) },
     emptyText: { color: colors.text, fontSize: font.title, fontWeight: '700' },
     emptySub: { color: colors.textMuted, fontSize: font.small, marginTop: spacing(2), textAlign: 'center' },
-    fab: { position: 'absolute', right: spacing(5), bottom: spacing(6), width: 58, height: 58, borderRadius: 29, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', elevation: 5, shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 5, shadowOffset: { width: 0, height: 3 } },
+    fab: { position: 'absolute', right: spacing(4), bottom: spacing(5), width: 54, height: 54, borderRadius: 27, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', elevation: 5, shadowColor: '#000', shadowOpacity: 0.22, shadowRadius: 6, shadowOffset: { width: 0, height: 3 } },
     fabPlus: { position: 'absolute', right: 12, top: 12 },
     sheetBackdrop: {
       flex: 1,
@@ -366,8 +366,8 @@ const makeStyles = (colors: Palette) =>
     },
     sheet: {
       backgroundColor: colors.surface,
-      borderTopLeftRadius: 26,
-      borderTopRightRadius: 26,
+      borderTopLeftRadius: 20,
+      borderTopRightRadius: 20,
       padding: spacing(4),
       paddingTop: spacing(2),
       paddingBottom: spacing(8),
