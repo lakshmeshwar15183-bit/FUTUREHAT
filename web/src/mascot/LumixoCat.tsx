@@ -257,95 +257,96 @@ export function LumixoCat({
               <path className="lc-brow-r" d="M106 64 Q114 60 122 64" />
             </g>
 
-            {/* Eyes — warm amber irises on white sclera (never black voids) */}
+            {/* Eyes — warm amber irises on white sclera (never black voids).
+                Slightly compact + rounded for cute Pixar-like charm. */}
             <g className="lc-eyes">
               <g className="lc-eye lc-eye-l">
                 {/* Soft white sclera */}
-                <ellipse className="lc-eye-white" cx="84" cy="82" rx="11" ry="12.5" fill={P.sclera} />
+                <ellipse className="lc-eye-white" cx="84" cy="81" rx="10" ry="11" fill={P.sclera} />
                 {/* Gentle rim */}
                 <ellipse
                   cx="84"
-                  cy="82"
-                  rx="11"
-                  ry="12.5"
+                  cy="81"
+                  rx="10"
+                  ry="11"
                   fill="none"
-                  stroke="rgba(74,52,48,0.08)"
-                  strokeWidth="1"
+                  stroke="rgba(74,52,48,0.07)"
+                  strokeWidth="0.9"
                 />
-                {/* Warm iris */}
+                {/* Warm iris fills most of the eye (friendly, not staring) */}
                 <ellipse
                   className="lc-iris"
-                  cx={84 + pupilX * 0.55}
-                  cy="83"
-                  rx="7.2"
-                  ry="8"
+                  cx={84 + pupilX * 0.5}
+                  cy="81.8"
+                  rx="6.6"
+                  ry="7.2"
                   fill={`url(#${gIris})`}
                 />
                 {/* Soft pupil */}
                 <ellipse
                   className="lc-pupil"
                   cx={84 + pupilX}
-                  cy="83.5"
-                  rx="3.1"
-                  ry="3.6"
+                  cy="82.2"
+                  rx="2.8"
+                  ry="3.2"
                   fill={P.pupil}
                 />
-                {/* Catchlight */}
-                <circle className="lc-glint" cx={81.5 + pupilX * 0.7} cy="79.5" r="2.4" fill={P.glint} />
-                <circle className="lc-glint-sm" cx={86 + pupilX * 0.4} cy="85" r="1.1" fill={P.glint} opacity="0.7" />
+                {/* Catchlights — large + small for wet-eye life */}
+                <circle className="lc-glint" cx={81.8 + pupilX * 0.65} cy="78.6" r="2.2" fill={P.glint} />
+                <circle className="lc-glint-sm" cx={86 + pupilX * 0.35} cy="84" r="1" fill={P.glint} opacity="0.65" />
               </g>
               <g className="lc-eye lc-eye-r">
-                <ellipse className="lc-eye-white" cx="116" cy="82" rx="11" ry="12.5" fill={P.sclera} />
+                <ellipse className="lc-eye-white" cx="116" cy="81" rx="10" ry="11" fill={P.sclera} />
                 <ellipse
                   cx="116"
-                  cy="82"
-                  rx="11"
-                  ry="12.5"
+                  cy="81"
+                  rx="10"
+                  ry="11"
                   fill="none"
-                  stroke="rgba(74,52,48,0.08)"
-                  strokeWidth="1"
+                  stroke="rgba(74,52,48,0.07)"
+                  strokeWidth="0.9"
                 />
                 <ellipse
                   className="lc-iris"
-                  cx={116 + pupilX * 0.55}
-                  cy="83"
-                  rx="7.2"
-                  ry="8"
+                  cx={116 + pupilX * 0.5}
+                  cy="81.8"
+                  rx="6.6"
+                  ry="7.2"
                   fill={`url(#${gIris})`}
                 />
                 <ellipse
                   className="lc-pupil"
                   cx={116 + pupilX}
-                  cy="83.5"
-                  rx="3.1"
-                  ry="3.6"
+                  cy="82.2"
+                  rx="2.8"
+                  ry="3.2"
                   fill={P.pupil}
                 />
-                <circle className="lc-glint" cx={113.5 + pupilX * 0.7} cy="79.5" r="2.4" fill={P.glint} />
-                <circle className="lc-glint-sm" cx={118 + pupilX * 0.4} cy="85" r="1.1" fill={P.glint} opacity="0.7" />
+                <circle className="lc-glint" cx={113.8 + pupilX * 0.65} cy="78.6" r="2.2" fill={P.glint} />
+                <circle className="lc-glint-sm" cx={118 + pupilX * 0.35} cy="84" r="1" fill={P.glint} opacity="0.65" />
               </g>
 
               {/* Soft closed lids for blink / sleep */}
               <g className="lc-lids">
                 <path
                   className="lc-lid-l"
-                  d="M73 84 Q84 74 95 84"
+                  d="M74 83 Q84 74 94 83"
                   fill="none"
                   stroke={`url(#${gFur})`}
-                  strokeWidth="7"
+                  strokeWidth="6.5"
                   strokeLinecap="round"
                 />
                 <path
                   className="lc-lid-r"
-                  d="M105 84 Q116 74 127 84"
+                  d="M106 83 Q116 74 126 83"
                   fill="none"
                   stroke={`url(#${gFur})`}
-                  strokeWidth="7"
+                  strokeWidth="6.5"
                   strokeLinecap="round"
                 />
                 {/* Gentle lash curve when closed */}
-                <path d="M74 84 Q84 78 94 84" fill="none" stroke={P.mouth} strokeWidth="1.4" strokeLinecap="round" opacity="0.35" />
-                <path d="M106 84 Q116 78 126 84" fill="none" stroke={P.mouth} strokeWidth="1.4" strokeLinecap="round" opacity="0.35" />
+                <path d="M75 83 Q84 78 93 83" fill="none" stroke={P.mouth} strokeWidth="1.3" strokeLinecap="round" opacity="0.32" />
+                <path d="M107 83 Q116 78 125 83" fill="none" stroke={P.mouth} strokeWidth="1.3" strokeLinecap="round" opacity="0.32" />
               </g>
             </g>
 

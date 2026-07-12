@@ -15,6 +15,7 @@ import {
 } from '@shared/communitiesApi';
 import type { Community, Channel, CommunityEvent, CommunityMember } from '@shared/communitiesApi';
 import { modalBackdrop, modalPanel } from '../motion';
+import { LumixoCat } from '../mascot/LumixoCat';
 import './CommunitiesModal.css';
 
 type Tab = 'channels' | 'events' | 'members';
@@ -101,7 +102,12 @@ export function CommunitiesModal({ onClose, onOpenChannel }: {
             {loading ? (
               <div className="comm-empty">Loading…</div>
             ) : communities.length === 0 ? (
-              <div className="comm-empty">You haven’t joined any communities yet.</div>
+              <div className="comm-empty">
+                <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 6 }} aria-hidden>
+                  <LumixoCat mood="wave" size="sm" decorative />
+                </div>
+                You haven’t joined any communities yet.
+              </div>
             ) : (
               <div className="comm-list">
                 {communities.map((c) => (

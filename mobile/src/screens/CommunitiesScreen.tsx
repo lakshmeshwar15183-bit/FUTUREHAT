@@ -11,6 +11,7 @@ import type { Community } from '../lib/shared';
 import { getCache, setCache } from '../lib/localCache';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import Avatar from '../components/Avatar';
+import { LumixoCat } from '../components/LumixoCat';
 import type { RootStackParamList } from '../navigation/types';
 import { Alert } from '../ui/dialog';
 
@@ -112,7 +113,7 @@ export default function CommunitiesScreen() {
         ListEmptyComponent={
           !loading ? (
             <View style={styles.empty}>
-              <Ionicons name="people-outline" size={56} color={colors.textFaint} />
+              <LumixoCat mood="wave" size="md" decorative />
               <Text style={styles.emptyText}>No communities yet</Text>
               <Text style={styles.emptySub}>Create one to bring people together in channels.</Text>
             </View>

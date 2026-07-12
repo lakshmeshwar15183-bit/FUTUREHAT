@@ -14,6 +14,7 @@ import type { StreakSummary } from '../lib/shared';
 import { getCache, setCache } from '../lib/localCache';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import Avatar from '../components/Avatar';
+import { LumixoCat } from '../components/LumixoCat';
 import type { RootStackParamList } from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -96,13 +97,13 @@ export default function StreaksScreen() {
         <View style={styles.center}><ActivityIndicator color={colors.primary} /></View>
       ) : error && items.length === 0 ? (
         <View style={styles.center}>
-          <Ionicons name="cloud-offline-outline" size={40} color={colors.textFaint} />
+          <LumixoCat mood="sad" size="md" decorative />
           <Text style={styles.emptyTitle}>Couldn't load streaks</Text>
           <Text style={styles.emptySub}>Pull to refresh to try again.</Text>
         </View>
       ) : sorted.length === 0 ? (
         <View style={styles.center}>
-          <Text style={styles.bigEmoji}>🎏</Text>
+          <LumixoCat mood="sleeping" size="md" decorative />
           <Text style={styles.emptyTitle}>No streaks yet</Text>
           <Text style={styles.emptySub}>
             Message a friend every day — when you BOTH qualify, your streak starts climbing.
