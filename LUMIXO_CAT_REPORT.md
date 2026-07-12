@@ -66,10 +66,15 @@ No new native dependencies. No framer-motion on the cat. Auth screens only pass 
 |---------|-----|--------|
 | Login / Signup / Forgot password | ✅ Auth | ✅ AuthScreen |
 | Reset password | ✅ ResetPassword | ✅ ResetPasswordScreen |
+| Loading splash | ✅ appTree | — |
 | Empty conversation list | ✅ App | ✅ ConversationsScreen |
 | Empty chat welcome | ✅ App | — |
+| Empty calls | ✅ CallsView | ✅ CallsScreen |
+| Empty starred | ✅ StarredMessagesModal | ✅ StarredScreen |
+| Empty mailbox | ✅ Mailbox | ✅ MailboxScreen |
 | Error boundary | ✅ | ✅ |
-| Settings → About developer credit | ✅ kept | ✅ kept |
+| Settings → About (+ developer credit) | ✅ | ✅ |
+| Static vector asset | `web/public/lumi.svg` · `mobile/assets/lumi.svg` | |
 
 **Removed from login UI:** “Developed by LAKSHMESHWAR PANDEY” (web auth footer + mobile auth credit). Credit remains in **Settings → About** (and legal/help footers).
 

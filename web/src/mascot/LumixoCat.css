@@ -140,6 +140,17 @@
   transition: cx 0.14s ease-out;
 }
 
+/* Soft upper-lid shadow for depth (avoids flat clipart look) */
+.lc-eye-white {
+  filter: drop-shadow(0 -1px 0 rgba(74, 52, 48, 0.06));
+}
+
+/* Slight cheek glow on celebrate */
+.lc-mood-celebrating .lc-cheek {
+  opacity: 0.95;
+  transition: opacity 0.3s ease;
+}
+
 /* Soft brows — only for confused / sad */
 .lc-brows { opacity: 0; transition: opacity 0.25s ease; }
 .lc-mood-confused .lc-brows,

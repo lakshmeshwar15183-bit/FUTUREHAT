@@ -21,6 +21,7 @@ import type {
 import { useCall } from './CallContext';
 import { modalBackdrop, modalPanel } from '../motion';
 import { PhoneIcon, VideoIcon, TrashIcon, SearchIcon, PlusIcon } from '../Icons';
+import { LumixoCat } from '../mascot/LumixoCat';
 import './Calls.css';
 
 const PAGE = 60;
@@ -163,7 +164,9 @@ export function CallsView({ onClose }: { onClose: () => void }) {
               {loading && <div className="calls-empty">Loading…</div>}
               {!loading && groups.length === 0 && (
                 <div className="calls-empty">
-                  <div className="calls-empty-illus"><PhoneIcon size={40} /></div>
+                  <div className="calls-empty-illus" aria-hidden>
+                    <LumixoCat mood="wave" size="md" decorative />
+                  </div>
                   <div className="calls-empty-title">No recent calls</div>
                   <div className="calls-empty-sub">Start a voice or video call from any chat, or use the button below.</div>
                 </div>

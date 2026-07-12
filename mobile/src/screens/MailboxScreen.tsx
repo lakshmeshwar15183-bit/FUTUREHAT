@@ -13,6 +13,7 @@ import { getMyMailbox, markAllMailboxSeen, WARNING_REASONS } from '../lib/shared
 import type { MailboxItem } from '../lib/shared';
 import { formatListTimestamp } from '../lib/time';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
+import { LumixoCat } from '../components/LumixoCat';
 
 const REASON_LABEL: Record<string, string> =
   Object.fromEntries(WARNING_REASONS.map((r) => [r.value, r.label]));
@@ -107,7 +108,7 @@ export default function MailboxScreen() {
       ListEmptyComponent={
         <View style={styles.empty}>
           <View style={styles.emptyIconWrap}>
-            <Ionicons name="mail-outline" size={48} color={colors.primary} />
+            <LumixoCat mood="sleeping" size="md" decorative />
           </View>
           <Text style={styles.emptyTitle}>No new notifications</Text>
           <Text style={styles.emptySub}>
@@ -200,10 +201,9 @@ const makeStyles = (colors: Palette) =>
 
     empty: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing(8) },
     emptyIconWrap: {
-      width: 84, height: 84, borderRadius: 42,
-      backgroundColor: colors.primary + '18',
-      alignItems: 'center', justifyContent: 'center',
-      marginBottom: spacing(4),
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: spacing(2),
     },
     emptyTitle: { color: colors.text, fontSize: font.heading, fontWeight: '600' },
     emptySub: {
