@@ -37,6 +37,36 @@ export function ioniconFor(
       return 'person-outline';
     case 'settings':
       return 'settings-outline';
+    case 'search':
+      return 'search-outline';
+    case 'star':
+      return 'star-outline';
+    case 'mute':
+      return 'notifications-off-outline';
+    case 'unmute':
+      return 'notifications-outline';
+    case 'wallpaper':
+      return 'image-outline';
+    case 'export':
+      return 'share-outline';
+    case 'clear':
+      return 'brush-outline';
+    case 'forward':
+      return 'arrow-redo-outline';
+    case 'reply':
+      return 'arrow-undo-outline';
+    case 'copy':
+      return 'copy-outline';
+    case 'select':
+      return 'checkbox-outline';
+    case 'edit':
+      return 'create-outline';
+    case 'pin':
+      return 'pin-outline';
+    case 'first':
+      return 'arrow-up-outline';
+    case 'link':
+      return 'link-outline';
     case 'none':
     default:
       return null;

@@ -49,6 +49,54 @@ export async function hideMessageForMe(client: SupabaseClient, messageId: UUID):
   return { error };
 }
 
+/**
+ * WhatsApp "Clear chat" — hide messages for THIS user only, keep the conversation
+ * in the chat list. Optionally keep starred messages visible.
+ * Does NOT delete media already saved to the device gallery.
+ */
+export async function clearChatMessagesForMe(
+  client: SupabaseClient,
+  conversationId: UUID,
+  opts?: { keepStarred?: boolean },
+): Promise<{ error: Error | null; cleared: number }> {
+  const user = await getCurrentUser(client);
+  if (!user) return { error: new Error('not authenticated'), cleared: 0 };
+
+  const { data: msgs, error: listErr } = await client
+    .from('messages')
+    .select('id')
+    .eq('conversation_id', conversationId)
+    .eq('is_deleted', false);
+  if (listErr) return { error: new Error(listErr.message), cleared: 0 };
+
+  let ids = (msgs ?? []).map((m: { id: string }) => m.id);
+  if (!ids.length) return { error: null, cleared: 0 };
+
+  if (opts?.keepStarred) {
+    const { data: stars } = await client
+      .from('starred_messages')
+      .select('message_id')
+      .eq('user_id', user.id)
+      .in('message_id', ids);
+    const keep = new Set((stars ?? []).map((r: { message_id: string }) => r.message_id));
+    ids = ids.filter((id) => !keep.has(id));
+  }
+
+  if (!ids.length) return { error: null, cleared: 0 };
+
+  // Batch upsert (chunk to avoid payload limits on huge threads).
+  const chunk = 400;
+  for (let i = 0; i < ids.length; i += chunk) {
+    const slice = ids.slice(i, i + chunk);
+    const rows = slice.map((message_id) => ({ user_id: user.id, message_id }));
+    const { error } = await client
+      .from('hidden_messages')
+      .upsert(rows, { onConflict: 'user_id,message_id', ignoreDuplicates: true });
+    if (error) return { error: new Error(error.message), cleared: i };
+  }
+  return { error: null, cleared: ids.length };
+}
+
 /** Conversation ids this user has "deleted for me" (removed from their list).
  *  Free for everyone — backed by deleted_conversations (0016).
  *  Degrades to [] if the migration isn't applied. */

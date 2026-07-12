@@ -20,6 +20,21 @@ export type DialogIconName =
   | 'alert'
   | 'person'
   | 'settings'
+  | 'search'
+  | 'star'
+  | 'mute'
+  | 'unmute'
+  | 'wallpaper'
+  | 'export'
+  | 'clear'
+  | 'forward'
+  | 'reply'
+  | 'copy'
+  | 'select'
+  | 'edit'
+  | 'pin'
+  | 'first'
+  | 'link'
   | 'none';
 
 export type DialogButtonStyle = 'default' | 'cancel' | 'destructive' | 'primary';

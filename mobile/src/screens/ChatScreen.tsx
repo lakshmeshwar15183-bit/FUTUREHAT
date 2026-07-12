@@ -68,6 +68,8 @@ import {
   unstarMessage,
   getHiddenMessageIds,
   hideMessageForMe,
+  clearChatMessagesForMe,
+  deleteConversationForMe,
   reportMessage,
   REPORT_REASONS,
   getChatSettings,
@@ -93,6 +95,11 @@ import {
   canSendInGroup,
   permissionsFromConversation,
   getGroupConversation,
+  getMutedIds,
+  muteConversation,
+  unmuteConversation,
+  blockUser,
+  submitReport as submitSafetyReport,
   type ParticipantRole,
 } from '../lib/shared';
 import type { Message, MessageReaction, Profile, ConversationSummary, Poll, PollVote, SearchKind, ChatSettings, ReportReason } from '../lib/shared';
@@ -111,7 +118,7 @@ import { flushOutbox, onOutboxSent, queueAction } from '../lib/sync';
 import { guessMime } from '../lib/media';
 import { registerMediaHandler, type MediaSubmission } from '../media/mediaSendBridge';
 import { formatLastSeen, formatDaySeparator, formatTime } from '../lib/time';
-import { useColors, useTheme, spacing, radius, font, listPerf, type Palette } from '../theme';
+import { useColors, useTheme, spacing, radius, font, listPerf, motion, type Palette } from '../theme';
 import MessageBubble, { type TickStatus, replySummary } from '../components/MessageBubble';
 import SwipeToReply from '../components/SwipeToReply';
 import MediaViewer, { type ViewerItem } from '../components/MediaViewer';
@@ -127,7 +134,7 @@ import EmojiPicker from '../components/EmojiPicker';
 import { useCalls } from '../calls/CallContext';
 import { useChatLock } from '../security/ChatLock';
 import type { RootStackParamList } from '../navigation/types';
-import { Alert } from '../ui/dialog';
+import { Alert, showSheet } from '../ui/dialog';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'Chat'>;
 type Rt = RouteProp<RootStackParamList, 'Chat'>;
@@ -298,6 +305,8 @@ function ChatScreenInner() {
   const [activeMatch, setActiveMatch] = useState(0);
   const [forwardOpen, setForwardOpen] = useState(false);
   const [forwardList, setForwardList] = useState<ConversationSummary[]>([]);
+  /** Mute state for chat ⋮ menu. */
+  const [chatMuted, setChatMuted] = useState(false);
   // Messages queued to forward (from a message menu, multi-select, or the media
   // viewer) + an optional media preview shown on the ForwardSheet confirm step.
   const [forwardSources, setForwardSources] = useState<Message[]>([]);
@@ -354,6 +363,9 @@ function ChatScreenInner() {
   // follows the keyboard via useAnimatedKeyboard (padding), which shrinks the
   // inverted list from the bottom; if the user was at the newest message we nudge
   // it back to offset 0 so the last bubble stays visible above the composer.
+  /** Message held for reaction while the action sheet is fully dismissed. */
+  const pendingReactMsg = useRef<Message | null>(null);
+
   // Covers open/close, emoji keyboard, and height changes (each fires a fresh
   // show event); rotation re-runs via new metrics.
   useEffect(() => {
@@ -724,34 +736,41 @@ function ChatScreenInner() {
           </View>
         </Pressable>
       ),
-      // Group calling: open group info for voice/video entry; 1:1 keeps direct call buttons.
+      // Call buttons (1:1) + overflow ⋮ menu (WhatsApp-class chat options).
       headerRight: () => (
         <View style={styles.headerActions}>
-          <Pressable hitSlop={8} onPress={() => setSearchOpen((v) => !v)}>
-            <Ionicons name="search-outline" size={21} color={colors.text} />
-          </Pressable>
-          {isGroup ? (
-            <Pressable
-              hitSlop={8}
-              onPress={() => navigation.navigate('GroupInfo', { conversationId })}
-              style={{ marginLeft: 18 }}
-            >
-              <Ionicons name="information-circle-outline" size={24} color={colors.text} />
-            </Pressable>
-          ) : (
+          {!isGroup && (
             <>
-              <Pressable hitSlop={8} onPress={() => placeCall('audio')} style={{ marginLeft: 18 }}>
+              <Pressable
+                hitSlop={10}
+                onPress={() => placeCall('audio')}
+                accessibilityLabel="Voice call"
+                style={{ marginLeft: 12 }}
+              >
                 <Ionicons name="call-outline" size={22} color={colors.text} />
               </Pressable>
-              <Pressable hitSlop={8} onPress={() => placeCall('video')} style={{ marginLeft: 18 }}>
-                <Ionicons name="videocam-outline" size={24} color={colors.text} />
+              <Pressable
+                hitSlop={10}
+                onPress={() => placeCall('video')}
+                accessibilityLabel="Video call"
+                style={{ marginLeft: 14 }}
+              >
+                <Ionicons name="videocam-outline" size={23} color={colors.text} />
               </Pressable>
             </>
           )}
+          <Pressable
+            hitSlop={10}
+            onPress={openChatMenu}
+            accessibilityLabel="More options"
+            style={{ marginLeft: 12, padding: 2 }}
+          >
+            <Ionicons name="ellipsis-vertical" size={20} color={colors.text} />
+          </Pressable>
         </View>
       ),
     });
-  }, [navigation, params.title, subtitle, peers, colors, styles, selectionMode, selectedIds, isGroup, ghost, disappearSecs, conversationId, headerAvatarUri, headerAvatarName, typingName]);
+  }, [navigation, params.title, subtitle, peers, colors, styles, selectionMode, selectedIds, isGroup, ghost, disappearSecs, conversationId, headerAvatarUri, headerAvatarName, typingName, chatMuted, chatLock, starredIds]);
 
   function placeCall(kind: 'audio' | 'video') {
     // Only reachable from direct chats (call buttons are hidden in groups).
@@ -1346,32 +1365,326 @@ function ChatScreenInner() {
     queueAction(isStarred ? 'unstar' : 'star', { messageId: target.id });
   }
 
+  // ── Chat overflow (⋮) — WhatsApp-class chat options ──────────────────────
+  useEffect(() => {
+    let alive = true;
+    getMutedIds(supabase)
+      .then((ids) => { if (alive) setChatMuted(ids.includes(conversationId)); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [conversationId]);
+
+  async function goToFirstMessage() {
+    try {
+      // Load a deep history slice so "first" is meaningful for long threads.
+      const deep = await getMessages(supabase, conversationId, 1000);
+      if (deep.length) {
+        setMsgs((prev) => mergeById(deep, prev));
+        cacheMessages(conversationId, deep).catch(() => {});
+      }
+      // Inverted list: end of data = oldest (visual top).
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          try {
+            listRef.current?.scrollToEnd({ animated: true });
+          } catch { /* ignore */ }
+        }, 80);
+      });
+    } catch {
+      Alert.alert('Could not jump', 'Try again in a moment.');
+    }
+  }
+
+  async function clearThisChat(keepStarred: boolean) {
+    const { error, cleared } = await clearChatMessagesForMe(supabase, conversationId, { keepStarred });
+    if (error) {
+      Alert.alert('Could not clear chat', error.message);
+      return;
+    }
+    // Update local UI: hide cleared messages (respect keepStarred).
+    setHiddenIds((prev) => {
+      const next = new Set(prev);
+      for (const m of messagesRef.current) {
+        if (keepStarred && starredIds.has(m.id)) continue;
+        next.add(m.id);
+      }
+      return next;
+    });
+    Alert.alert(
+      'Chat cleared',
+      cleared
+        ? keepStarred
+          ? 'Messages cleared except starred. Media saved outside Lumixo is untouched.'
+          : 'Messages cleared for you. Media saved outside Lumixo is untouched.'
+        : 'Nothing to clear.',
+    );
+  }
+
+  function confirmClearChat() {
+    Alert.alert(
+      'Clear this chat?',
+      'Messages are removed from this device only. The conversation stays in your list. Media already saved to your gallery is not deleted.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Clear except starred',
+          onPress: () => { void clearThisChat(true); },
+        },
+        {
+          text: 'Clear all messages',
+          style: 'destructive',
+          onPress: () => { void clearThisChat(false); },
+        },
+      ],
+    );
+  }
+
+  function confirmDeleteChat() {
+    Alert.alert(
+      'Delete this chat?',
+      'The conversation will be removed from your list. Media already saved on your device is not deleted. The other person keeps their copy.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete chat',
+          style: 'destructive',
+          onPress: async () => {
+            const { error } = await deleteConversationForMe(supabase, conversationId);
+            if (error) Alert.alert('Could not delete', error.message);
+            else navigation.goBack();
+          },
+        },
+      ],
+    );
+  }
+
+  function openChatMenu() {
+    // Prebuilt actions — showSheet presents same-frame on DialogHost (no Modal cold start).
+    const peer = peers[0];
+    showSheet({
+      title: isGroup ? 'Group options' : 'Chat options',
+      actions: [
+        {
+          text: isGroup ? 'Group info' : 'View contact',
+          icon: isGroup ? 'group' : 'person',
+          onPress: openHeaderProfile,
+        },
+        {
+          text: 'Search',
+          icon: 'search',
+          onPress: () => setSearchOpen(true),
+        },
+        {
+          text: 'Media, links & docs',
+          icon: 'photo',
+          onPress: () => {
+            if (isGroup) navigation.navigate('GroupInfo', { conversationId });
+            else if (peer) navigation.navigate('Profile', { userId: peer.id, conversationId });
+          },
+        },
+        {
+          text: 'Starred messages',
+          icon: 'star',
+          onPress: () => navigation.navigate('Starred' as any),
+        },
+        {
+          text: chatMuted ? 'Unmute notifications' : 'Mute notifications',
+          icon: chatMuted ? 'unmute' : 'mute',
+          onPress: async () => {
+            if (chatMuted) {
+              await unmuteConversation(supabase, conversationId).catch(() => {});
+              setChatMuted(false);
+            } else {
+              await muteConversation(supabase, conversationId).catch(() => {});
+              setChatMuted(true);
+            }
+          },
+        },
+        {
+          text: 'Wallpaper',
+          icon: 'wallpaper',
+          onPress: () => navigation.navigate('Appearance' as any),
+        },
+        {
+          text: 'Go to first message',
+          icon: 'first',
+          subtitle: 'Jump to the oldest message',
+          onPress: () => { void goToFirstMessage(); },
+        },
+        {
+          text: 'Export chat',
+          icon: 'export',
+          onPress: () => { void exportChatTranscript(); },
+        },
+        {
+          text: 'Clear chat',
+          icon: 'clear',
+          onPress: confirmClearChat,
+        },
+        {
+          text: 'Delete chat',
+          icon: 'trash',
+          style: 'destructive',
+          onPress: confirmDeleteChat,
+        },
+        ...(!isGroup && peer
+          ? [
+              {
+                text: 'Block',
+                icon: 'block' as const,
+                style: 'destructive' as const,
+                onPress: () => {
+                  Alert.alert(
+                    'Block contact?',
+                    `${peer.display_name || 'This user'} won’t be able to message or call you.`,
+                    [
+                      { text: 'Cancel', style: 'cancel' },
+                      {
+                        text: 'Block',
+                        style: 'destructive',
+                        onPress: async () => {
+                          const { error } = await blockUser(supabase, peer.id);
+                          if (error) Alert.alert('Could not block', error.message);
+                          else Alert.alert('Blocked', `${peer.display_name || 'User'} is blocked.`);
+                        },
+                      },
+                    ],
+                  );
+                },
+              },
+              {
+                text: 'Report',
+                icon: 'report' as const,
+                style: 'destructive' as const,
+                onPress: () => {
+                  Alert.alert('Report contact?', 'Our safety team will review this report.', [
+                    { text: 'Cancel', style: 'cancel' },
+                    {
+                      text: 'Report',
+                      style: 'destructive',
+                      onPress: async () => {
+                        const { error } = await submitSafetyReport(
+                          supabase,
+                          'user',
+                          peer.id,
+                          'other',
+                          'Reported from chat menu',
+                        );
+                        if (error) Alert.alert('Could not report', error.message);
+                        else Alert.alert('Thanks', 'Report submitted.');
+                      },
+                    },
+                  ]);
+                },
+              },
+            ]
+          : [
+              {
+                text: 'Report group',
+                icon: 'report' as const,
+                style: 'destructive' as const,
+                onPress: () => {
+                  Alert.alert('Report group?', 'Our safety team will review this group.', [
+                    { text: 'Cancel', style: 'cancel' },
+                    {
+                      text: 'Report',
+                      style: 'destructive',
+                      onPress: async () => {
+                        const { error } = await submitSafetyReport(
+                          supabase,
+                          'conversation',
+                          conversationId,
+                          'other',
+                          'Reported from chat menu',
+                        );
+                        if (error) Alert.alert('Could not report', error.message);
+                        else Alert.alert('Thanks', 'Report submitted.');
+                      },
+                    },
+                  ]);
+                },
+              },
+            ]),
+        ...(chatLock.isLocked(conversationId)
+          ? [{
+              text: 'Chat lock is on',
+              icon: 'lock' as const,
+              subtitle: 'Managed in contact / group settings',
+              onPress: () => {
+                if (isGroup) navigation.navigate('GroupInfo', { conversationId });
+                else if (peer) navigation.navigate('Profile', { userId: peer.id, conversationId });
+              },
+            }]
+          : [{
+              text: 'Chat lock',
+              icon: 'lock' as const,
+              subtitle: 'Lock this chat with device biometrics',
+              onPress: () => {
+                if (isGroup) navigation.navigate('GroupInfo', { conversationId });
+                else if (peer) navigation.navigate('Profile', { userId: peer.id, conversationId });
+              },
+            }]),
+      ],
+    });
+  }
+
+  async function exportChatTranscript() {
+    try {
+      const { data } = await supabase
+        .from('messages')
+        .select('content, type, created_at, sender_id, is_deleted')
+        .eq('conversation_id', conversationId)
+        .eq('is_deleted', false)
+        .order('created_at', { ascending: true })
+        .limit(500);
+      const nameById = new Map(peers.map((p) => [p.id, p.display_name || 'User']));
+      if (uid) nameById.set(uid, 'You');
+      const lines = (data || []).map((m: any) => {
+        const who = nameById.get(m.sender_id) || 'User';
+        const body =
+          m.type === 'system'
+            ? m.content
+            : m.type === 'text'
+              ? m.content
+              : `[${m.type}] ${m.content || ''}`.trim();
+        return `[${new Date(m.created_at).toLocaleString()}] ${who}: ${body || ''}`;
+      });
+      const title = params.title || (isGroup ? 'Group' : 'Chat');
+      await Share.share({ message: `Lumixo — ${title}\n\n${lines.join('\n')}` });
+    } catch (e: any) {
+      Alert.alert('Export failed', e?.message || 'Could not export chat');
+    }
+  }
+
+  /** Close the RN message Modal fully before opening DialogHost (no stacked UI). */
+  function afterMessageSheetClosed(fn: () => void) {
+    setSelected(null);
+    setTimeout(fn, motion.sheetCloseMs + 30);
+  }
+
   // Delete-for-me: hide a single message locally for this user only (unlike
   // delete-for-everyone). Backed by hidden_messages.
-  async function deleteForMe() {
-    if (!selected) return;
-    const target = selected;
-    setSelected(null);
-    setHiddenIds((prev) => new Set(prev).add(target.id));
-    // Instant + durable: hide locally now, queue the server write (auto-retries).
-    queueAction('hideMessage', { messageId: target.id });
+  function hideOneMessage(messageId: string) {
+    setHiddenIds((prev) => new Set(prev).add(messageId));
+    queueAction('hideMessage', { messageId });
   }
 
   // Message info — delivery/read status + timestamps, mirroring web's info view.
   function showInfo() {
     if (!selected) return;
     const target = selected;
-    setSelected(null);
-    const mine = target.sender_id === uid;
-    const rc = receipts.get(target.id);
-    const status = target.pending ? 'Sending…' : rc === 'read' ? 'Read' : rc === 'delivered' ? 'Delivered' : 'Sent';
-    const lines = [
-      `Sent: ${new Date(target.created_at).toLocaleString()}`,
-      target.edited_at ? `Edited: ${new Date(target.edited_at).toLocaleString()}` : null,
-      mine ? `Status: ${status}` : null,
-      starredIds.has(target.id) ? 'Starred: yes' : null,
-    ].filter(Boolean).join('\n');
-    Alert.alert('Message info', lines || 'No details available.');
+    afterMessageSheetClosed(() => {
+      const mine = target.sender_id === uid;
+      const rc = receipts.get(target.id);
+      const status = target.pending ? 'Sending…' : rc === 'read' ? 'Read' : rc === 'delivered' ? 'Delivered' : 'Sent';
+      const lines = [
+        `Sent: ${new Date(target.created_at).toLocaleString()}`,
+        target.edited_at ? `Edited: ${new Date(target.edited_at).toLocaleString()}` : null,
+        mine ? `Status: ${status}` : null,
+        starredIds.has(target.id) ? 'Starred: yes' : null,
+      ].filter(Boolean).join('\n');
+      Alert.alert('Message info', lines || 'No details available.');
+    });
   }
 
   // Report a message (WhatsApp/Telegram style): confirm → pick a reason → submit.
@@ -1379,19 +1692,20 @@ function ChatScreenInner() {
   function startReport() {
     if (!selected) return;
     const target = selected;
-    setSelected(null);
-    Alert.alert(
-      'Report message',
-      'Report this message to the Lumixo moderators?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Report',
-          style: 'destructive',
-          onPress: () => { setReportDetails(''); setReportTarget(target); },
-        },
-      ],
-    );
+    afterMessageSheetClosed(() => {
+      Alert.alert(
+        'Report message',
+        'Report this message to the Lumixo moderators?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Report',
+            style: 'destructive',
+            onPress: () => { setReportDetails(''); setReportTarget(target); },
+          },
+        ],
+      );
+    });
   }
 
   // Step 2: a reason was chosen — submit and give clear success/failure feedback.
@@ -1410,41 +1724,82 @@ function ChatScreenInner() {
     }
   }
 
-  async function doDelete() {
+  /** WhatsApp delete flow: close action sheet first, then a single confirm dialog. */
+  function doDelete() {
     if (!selected) return;
     const target = selected;
-    const mine = target.sender_id === uid;
-    const buttons: any[] = [{ text: 'Cancel', style: 'cancel' }];
-    // Delete-for-me is available on any message; delete-for-everyone only on own.
-    buttons.push({ text: 'Delete for me', onPress: deleteForMe });
-    if (mine) {
+    const mine = target.sender_id === uid && !target.is_deleted;
+    afterMessageSheetClosed(() => {
+      const buttons: Array<{
+        text: string;
+        style?: 'cancel' | 'destructive' | 'default';
+        onPress?: () => void | Promise<void>;
+      }> = [{ text: 'Cancel', style: 'cancel' }];
+      // Always available: delete for me only.
       buttons.push({
-        text: 'Unsend',
-        style: 'destructive',
-        onPress: async () => {
-          setSelected(null);
-          await deleteMessage(supabase, target.id);
-          setMsgs((prev) => prev.map((m) => (m.id === target.id ? { ...m, is_deleted: true } : m)));
-        },
+        text: 'Delete for me',
+        onPress: () => hideOneMessage(target.id),
       });
-    }
-    Alert.alert('Delete message', 'Choose how to delete this message.', buttons);
+      // Own messages only: delete for everyone (unsend).
+      if (mine) {
+        buttons.push({
+          text: 'Delete for everyone',
+          style: 'destructive',
+          onPress: async () => {
+            await deleteMessage(supabase, target.id);
+            setMsgs((prev) =>
+              prev.map((m) => (m.id === target.id ? { ...m, is_deleted: true, content: null, media_url: null } : m)),
+            );
+          },
+        });
+      }
+      Alert.alert(
+        'Delete message?',
+        mine
+          ? 'Delete for me removes it from your chat only. Delete for everyone removes it for all participants.'
+          : 'This message will be removed from your chat only. Media already saved on your device is not deleted.',
+        buttons,
+      );
+    });
   }
 
-  // Bulk delete for multi-select (delete-for-everyone).
+  // Bulk delete for multi-select.
   async function deleteMany(ids: string[]) {
-    Alert.alert('Unsend messages', `Unsend ${ids.length} message${ids.length === 1 ? '' : 's'}? This removes ${ids.length === 1 ? 'it' : 'them'} for everyone.`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Unsend',
-        style: 'destructive',
-        onPress: async () => {
-          exitSelection();
-          await Promise.all(ids.map((id) => deleteMessage(supabase, id).catch(() => {})));
-          setMsgs((prev) => prev.map((m) => (ids.includes(m.id) ? { ...m, is_deleted: true } : m)));
+    const mineIds = messagesRef.current
+      .filter((m) => ids.includes(m.id) && m.sender_id === uid && !m.is_deleted)
+      .map((m) => m.id);
+    const onlyMine = mineIds.length === ids.length && ids.length > 0;
+    Alert.alert(
+      onlyMine ? 'Delete messages?' : 'Delete for me?',
+      onlyMine
+        ? `Delete ${ids.length} message${ids.length === 1 ? '' : 's'} for everyone, or for you only?`
+        : `Remove ${ids.length} message${ids.length === 1 ? '' : 's'} from your chat only.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete for me',
+          onPress: () => {
+            exitSelection();
+            ids.forEach((id) => hideOneMessage(id));
+          },
         },
-      },
-    ]);
+        ...(onlyMine
+          ? [{
+              text: 'Delete for everyone',
+              style: 'destructive' as const,
+              onPress: async () => {
+                exitSelection();
+                await Promise.all(ids.map((id) => deleteMessage(supabase, id).catch(() => {})));
+                setMsgs((prev) =>
+                  prev.map((m) =>
+                    ids.includes(m.id) ? { ...m, is_deleted: true, content: null, media_url: null } : m,
+                  ),
+                );
+              },
+            }]
+          : []),
+      ],
+    );
   }
 
   async function openForward() {
@@ -1464,28 +1819,32 @@ function ChatScreenInner() {
   function deleteFromViewer(item: ViewerItem) {
     const msg = messageById.get(item.id);
     if (!msg) return;
-    const mine = msg.sender_id === uid;
-    const buttons: any[] = [{ text: 'Cancel', style: 'cancel' }];
-    buttons.push({
-      text: 'Delete for me',
-      onPress: () => {
-        setViewerUrl(null);
-        setHiddenIds((prev) => new Set(prev).add(msg.id));
-        queueAction('hideMessage', { messageId: msg.id });
-      },
-    });
-    if (mine) {
+    const mine = msg.sender_id === uid && !msg.is_deleted;
+    setViewerUrl(null);
+    setTimeout(() => {
+      const buttons: Array<{
+        text: string;
+        style?: 'cancel' | 'destructive' | 'default';
+        onPress?: () => void | Promise<void>;
+      }> = [{ text: 'Cancel', style: 'cancel' }];
       buttons.push({
-        text: 'Unsend',
-        style: 'destructive',
-        onPress: async () => {
-          setViewerUrl(null);
-          await deleteMessage(supabase, msg.id);
-          setMsgs((prev) => prev.map((m) => (m.id === msg.id ? { ...m, is_deleted: true } : m)));
-        },
+        text: 'Delete for me',
+        onPress: () => hideOneMessage(msg.id),
       });
-    }
-    Alert.alert('Delete media', 'Choose how to delete this message.', buttons);
+      if (mine) {
+        buttons.push({
+          text: 'Delete for everyone',
+          style: 'destructive',
+          onPress: async () => {
+            await deleteMessage(supabase, msg.id);
+            setMsgs((prev) =>
+              prev.map((m) => (m.id === msg.id ? { ...m, is_deleted: true, content: null, media_url: null } : m)),
+            );
+          },
+        });
+      }
+      Alert.alert('Delete message?', undefined, buttons);
+    }, motion.sheetCloseMs + 30);
   }
 
   // Forward the queued source messages to every chosen target (multi-recipient).
@@ -2107,8 +2466,16 @@ function ChatScreenInner() {
                   <Text style={styles.reactionEmoji}>{e}</Text>
                 </Pressable>
               ))}
-              {/* Open the full emoji palette — reaction parity with web. */}
-              <Pressable onPress={() => setEmojiPickerOpen(true)} hitSlop={6} style={styles.reactionAdd}>
+              {/* Full emoji palette — close action sheet first (no stacked modals). */}
+              <Pressable
+                onPress={() => {
+                  pendingReactMsg.current = selected;
+                  afterMessageSheetClosed(() => setEmojiPickerOpen(true));
+                }}
+                hitSlop={6}
+                style={styles.reactionAdd}
+                accessibilityLabel="More reactions"
+              >
                 <Ionicons name="add" size={22} color={colors.textMuted} />
               </Pressable>
             </View>
@@ -2122,10 +2489,15 @@ function ChatScreenInner() {
                   label={selected && starredIds.has(selected.id) ? 'Unstar' : 'Star'}
                   onPress={toggleStar}
                 />
-                <ActionRow icon="checkmark-circle-outline" label="Select" onPress={() => { if (selected) enterSelection(selected); setSelected(null); }} />
+                <ActionRow
+                  icon="checkbox-outline"
+                  label="Select messages"
+                  subtitle="Choose multiple to forward or delete"
+                  onPress={() => { if (selected) enterSelection(selected); setSelected(null); }}
+                />
                 {selected?.type === 'text' && (
                   <ActionRow
-                    icon="copy"
+                    icon="copy-outline"
                     label="Copy"
                     onPress={async () => {
                       if (selected?.content) await Clipboard.setStringAsync(selected.content);
@@ -2133,10 +2505,10 @@ function ChatScreenInner() {
                     }}
                   />
                 )}
-                <ActionRow icon="arrow-redo" label="Forward" onPress={openForward} />
+                <ActionRow icon="arrow-redo-outline" label="Forward" onPress={openForward} />
                 {isGroup && canPinMessages(myGroupRole, groupPerms) && (
                   <ActionRow
-                    icon="pin"
+                    icon="pin-outline"
                     label={selected && pinnedIds.has(selected.id) ? 'Unpin' : 'Pin'}
                     onPress={togglePin}
                   />
@@ -2144,7 +2516,7 @@ function ChatScreenInner() {
                 <ActionRow icon="information-circle-outline" label="Info" onPress={showInfo} />
                 {selected?.sender_id === uid && selected?.type === 'text' && (
                   <ActionRow
-                    icon="create"
+                    icon="create-outline"
                     label="Edit"
                     onPress={() => { setEditing(selected); setText(selected?.content ?? ''); setSelected(null); }}
                   />
@@ -2152,7 +2524,7 @@ function ChatScreenInner() {
                 {!!uid && selected?.sender_id !== uid && (
                   <ActionRow icon="flag-outline" label="Report" danger onPress={startReport} />
                 )}
-                <ActionRow icon="trash" label="Delete" danger onPress={doDelete} />
+                <ActionRow icon="trash-outline" label="Delete" danger onPress={doDelete} />
               </View>
             </ScrollView>
           </Pressable>
@@ -2194,10 +2566,15 @@ function ChatScreenInner() {
         visible={emojiPickerOpen}
         mode="reaction"
         title="React"
-        onClose={() => setEmojiPickerOpen(false)}
-        onSelect={(e) => {
+        onClose={() => {
           setEmojiPickerOpen(false);
-          void react(e);
+          pendingReactMsg.current = null;
+        }}
+        onSelect={(e) => {
+          const target = pendingReactMsg.current;
+          pendingReactMsg.current = null;
+          setEmojiPickerOpen(false);
+          void react(e, target ?? undefined);
         }}
       />
 
@@ -2287,11 +2664,13 @@ function AttachTile({
 function ActionRow({
   icon,
   label,
+  subtitle,
   onPress,
   danger,
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
+  subtitle?: string;
   onPress: () => void;
   danger?: boolean;
 }) {
@@ -2301,17 +2680,44 @@ function ActionRow({
     <Pressable
       style={({ pressed }) => [msgMenuStyles.row, pressed && { backgroundColor: colors.surfaceAlt }]}
       onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
     >
-      <Ionicons name={icon} size={21} color={tint} />
-      <Text style={[msgMenuStyles.label, { color: tint }]}>{label}</Text>
+      <View style={[msgMenuStyles.iconWrap, danger && { backgroundColor: colors.danger + '14' }]}>
+        <Ionicons name={icon} size={20} color={tint} />
+      </View>
+      <View style={msgMenuStyles.textCol}>
+        <Text style={[msgMenuStyles.label, { color: tint }]} numberOfLines={1}>{label}</Text>
+        {!!subtitle && (
+          <Text style={[msgMenuStyles.sub, { color: colors.textMuted }]} numberOfLines={1}>{subtitle}</Text>
+        )}
+      </View>
     </Pressable>
   );
 }
 
-// Compact, Material-style rows for the message context menu.
+// WhatsApp-class density: 48pt rows, aligned icons, tight type.
 const msgMenuStyles = StyleSheet.create({
-  row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 10, borderRadius: 10 },
-  label: { fontSize: 15, marginLeft: 14, fontWeight: '500', letterSpacing: -0.1 },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: 48,
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+    borderRadius: 12,
+    gap: 12,
+  },
+  iconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(128,128,128,0.08)',
+  },
+  textCol: { flex: 1, minWidth: 0 },
+  label: { fontSize: 15.5, fontWeight: '600', letterSpacing: -0.15 },
+  sub: { fontSize: 12, marginTop: 1, lineHeight: 15 },
 });
 
 const attachStyles = StyleSheet.create({
@@ -2453,7 +2859,7 @@ const makeStyles = (colors: Palette) =>
     },
     backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
     // ── Message context menu (compact WhatsApp-class sheet) ─────────────────
-    msgBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+    msgBackdrop: { flex: 1, backgroundColor: colors.isLight ? 'rgba(12,18,22,0.4)' : 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
     msgSheet: {
       backgroundColor: colors.surface,
       borderTopLeftRadius: 20,
@@ -2461,26 +2867,28 @@ const makeStyles = (colors: Palette) =>
       paddingHorizontal: 10,
       paddingTop: 6,
       shadowColor: '#000', shadowOffset: { width: 0, height: -3 }, shadowOpacity: 0.14, shadowRadius: 12, elevation: 14,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.isLight ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.08)',
     },
-    grabber: { alignSelf: 'center', width: 34, height: 4, borderRadius: 2, backgroundColor: colors.textFaint, opacity: 0.45, marginBottom: 8 },
+    grabber: { alignSelf: 'center', width: 36, height: 4, borderRadius: 2, backgroundColor: colors.textFaint, opacity: 0.4, marginBottom: 10 },
     reactionBar: {
-      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+      flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
       alignSelf: 'center',
       backgroundColor: colors.surfaceAlt,
       borderRadius: radius.pill,
-      paddingHorizontal: 6, paddingVertical: 4,
+      paddingHorizontal: 8, paddingVertical: 5,
       marginBottom: 8,
-      gap: 1,
+      gap: 2,
     },
-    reactionBtn: { paddingHorizontal: 5, paddingVertical: 2, borderRadius: radius.pill },
-    reactionBtnPressed: { transform: [{ scale: 1.18 }], backgroundColor: colors.surface },
+    reactionBtn: { paddingHorizontal: 6, paddingVertical: 4, borderRadius: radius.pill, minWidth: 40, minHeight: 40, alignItems: 'center', justifyContent: 'center' },
+    reactionBtnPressed: { transform: [{ scale: 1.15 }], backgroundColor: colors.surface },
     reactionEmoji: { fontSize: 24 },
     reactionAdd: {
-      width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center',
+      width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center',
       backgroundColor: colors.surface, marginLeft: 2,
     },
-    menuScroll: { maxHeight: Math.round(Dimensions.get('window').height * 0.4) },
-    menuCard: { paddingBottom: 2 },
+    menuScroll: { maxHeight: Math.round(Dimensions.get('window').height * 0.42) },
+    menuCard: { paddingBottom: 4, gap: 1 },
     sheet: {
       backgroundColor: colors.surface,
       borderTopLeftRadius: 20,
