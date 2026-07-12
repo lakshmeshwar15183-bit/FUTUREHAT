@@ -122,6 +122,8 @@ import ScheduleMessageModal from '../components/ScheduleMessageModal';
 import ErrorBoundary from '../components/ErrorBoundary';
 import Avatar from '../components/Avatar';
 import { STICKERS } from '../lib/stickers';
+import { QUICK_REACTIONS } from '../lib/emojiData';
+import EmojiPicker from '../components/EmojiPicker';
 import { useCalls } from '../calls/CallContext';
 import { useChatLock } from '../security/ChatLock';
 import type { RootStackParamList } from '../navigation/types';
@@ -130,14 +132,8 @@ import { Alert } from '../ui/dialog';
 type Nav = NativeStackNavigationProp<RootStackParamList, 'Chat'>;
 type Rt = RouteProp<RootStackParamList, 'Chat'>;
 
-const QUICK_EMOJI = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
-// Full reaction palette shown when the user taps "＋" on the quick-emoji row —
-// mirrors the web emoji picker so reactions reach parity across platforms.
-const MORE_EMOJI = [
-  '👍', '❤️', '😂', '😮', '😢', '🙏', '🔥', '🎉', '👏', '💯',
-  '😍', '🤔', '😭', '😅', '🙌', '💪', '✅', '❌', '👀', '🤝',
-  '😎', '🥳', '😴', '🤯', '😇', '🤗', '😡', '💔', '⭐', '🚀',
-];
+// WhatsApp quick reaction strip (long-press message).
+const QUICK_EMOJI = [...QUICK_REACTIONS];
 
 // WhatsApp-style one-line summary for the reply/edit preview bar — delegates to
 // the shared helper so the composer bar and in-bubble quote read identically.
@@ -252,6 +248,9 @@ function ChatScreenInner() {
   const [typingName, setTypingName] = useState<string | null>(null);
 
   const [text, setText] = useState('');
+  // Keep latest draft for multi-emoji inserts (picker stays open like WhatsApp).
+  const textRef = useRef(text);
+  textRef.current = text;
   const [reply, setReply] = useState<Message | null>(null);
   const [editing, setEditing] = useState<Message | null>(null);
   const [selected, setSelected] = useState<Message | null>(null);
@@ -2148,65 +2147,26 @@ function ChatScreenInner() {
         </Pressable>
       </Modal>
 
-      {/* Full emoji reaction picker */}
-      <Modal visible={emojiPickerOpen} transparent animationType="fade" onRequestClose={() => setEmojiPickerOpen(false)}>
-        <Pressable style={styles.backdrop} onPress={() => setEmojiPickerOpen(false)}>
-          <Pressable style={[styles.sheet, styles.emojiPickerSheet, { paddingBottom: insets.bottom + 16 }]} onPress={(e) => e.stopPropagation()}>
-            <Text style={styles.sheetTitle}>React{!isPremium ? '  ·  extras are Lumixo+' : ''}</Text>
-            <View style={styles.emojiGrid}>
-              {MORE_EMOJI.map((e) => {
-                // Free tier reacts with the 6 quick emojis; the rest are premium
-                // (mirrors web QUICK_EMOJIS vs PREMIUM_EMOJIS gating).
-                const locked = !isPremium && !QUICK_EMOJI.includes(e);
-                return (
-                  <Pressable
-                    key={e}
-                    hitSlop={4}
-                    style={styles.emojiGridCell}
-                    onPress={() => {
-                      if (locked) {
-                        setEmojiPickerOpen(false);
-                        Alert.alert(
-                          'Premium reaction',
-                          'Upgrade to Lumixo+ to react with the full emoji set.',
-                          [{ text: 'Not now', style: 'cancel' }, { text: 'Upgrade', onPress: () => navigation.navigate('Premium') }],
-                        );
-                        return;
-                      }
-                      setEmojiPickerOpen(false);
-                      react(e);
-                    }}
-                  >
-                    <Text style={[styles.emojiGridText, locked && { opacity: 0.35 }]}>{e}</Text>
-                    {locked && <Text style={styles.emojiLock}>🔒</Text>}
-                  </Pressable>
-                );
-              })}
-            </View>
-          </Pressable>
-        </Pressable>
-      </Modal>
+      {/* Full emoji reaction picker — WhatsApp-class categories + search + recent */}
+      <EmojiPicker
+        visible={emojiPickerOpen}
+        mode="reaction"
+        title="React"
+        onClose={() => setEmojiPickerOpen(false)}
+        onSelect={(e) => {
+          setEmojiPickerOpen(false);
+          void react(e);
+        }}
+      />
 
-      {/* Composer emoji picker — inserts into the message draft */}
-      <Modal visible={emojiComposerOpen} transparent animationType="fade" onRequestClose={() => setEmojiComposerOpen(false)}>
-        <Pressable style={styles.backdrop} onPress={() => setEmojiComposerOpen(false)}>
-          <Pressable style={[styles.sheet, styles.emojiPickerSheet, { paddingBottom: insets.bottom + 16 }]} onPress={(e) => e.stopPropagation()}>
-            <Text style={styles.sheetTitle}>Emoji</Text>
-            <View style={styles.emojiGrid}>
-              {MORE_EMOJI.map((e) => (
-                <Pressable
-                  key={e}
-                  hitSlop={4}
-                  style={styles.emojiGridCell}
-                  onPress={() => onChangeText(text + e)}
-                >
-                  <Text style={styles.emojiGridText}>{e}</Text>
-                </Pressable>
-              ))}
-            </View>
-          </Pressable>
-        </Pressable>
-      </Modal>
+      {/* Composer emoji picker — stays open while inserting (WhatsApp parity) */}
+      <EmojiPicker
+        visible={emojiComposerOpen}
+        mode="composer"
+        title="Emoji"
+        onClose={() => setEmojiComposerOpen(false)}
+        onSelect={(e) => onChangeText(textRef.current + e)}
+      />
 
       {/* Forward picker — multi-recipient with search, recents, groups & preview */}
       <ForwardSheet

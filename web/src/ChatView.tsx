@@ -52,8 +52,9 @@ interface Props {
   onConversationGone?: () => void;
 }
 
+// WhatsApp-style reactions: free full quick set (no premium gate on emoji).
 const QUICK_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
-const PREMIUM_EMOJIS = ['🔥', '🎉', '🥳', '💯', '👀', '🤝', '✨', '🫶'];
+const MORE_EMOJIS = ['🔥', '🎉', '🥳', '💯', '👀', '🤝', '✨', '🫶', '👏', '🙌', '😍', '🤔', '😭', '😡', '🤩', '💪', '✅', '⭐', '🚀', '💔'];
 const LANGUAGES = ['English', 'Hindi', 'Spanish', 'French', 'Japanese', 'German'];
 const TYPING_TIMEOUT = 2500;
 // AI assistant tools are hidden until the feature is finalized. Flip to true to restore.
@@ -592,7 +593,8 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
     subtitle = 'offline';
   }
 
-  const emojiSet = isPremium ? [...QUICK_EMOJIS, ...PREMIUM_EMOJIS] : QUICK_EMOJIS;
+  // Full reaction palette for everyone (WhatsApp parity — emoji isn't paywalled).
+  const emojiSet = [...QUICK_EMOJIS, ...MORE_EMOJIS];
   const repliedOf = (m: Message) => (m.reply_to ? messages.find((x) => x.id === m.reply_to) : null);
 
   // In-conversation search: when active, only matching messages are shown.

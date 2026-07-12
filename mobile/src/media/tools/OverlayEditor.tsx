@@ -20,6 +20,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { useColors, spacing, radius, font, type Palette } from '../../theme';
 import { STICKERS } from '../../lib/stickers';
+import { EMOJI_CATEGORIES } from '../../lib/emojiData';
 import {
   type Overlay, type TextOverlay, type StickerOverlay, overlayId,
 } from './overlays';
@@ -32,7 +33,8 @@ const FONTS = [
   { id: 'mono', label: 'Mono', family: 'monospace' },
 ];
 const TEXT_COLORS = ['#FFFFFF', '#000000', '#FF3B30', '#FFCC00', '#34C759', '#00A884', '#007AFF', '#AF52DE'];
-const EMOJIS = ['😀', '😂', '😍', '🥳', '😎', '🔥', '❤️', '👍', '🙏', '🎉', '💯', '✨', '😭', '🤔', '👀', '💀', '🥺', '😅', '🤩', '🫶'];
+// WhatsApp-class smiley pack (shared catalog) for media stickers.
+const EMOJIS = (EMOJI_CATEGORIES.find((c) => c.id === 'smileys')?.emojis ?? []).slice(0, 64);
 const RECENT_KEY = 'fh:sticker:recent:v1';
 const FAV_KEY = 'fh:sticker:fav:v1';
 
