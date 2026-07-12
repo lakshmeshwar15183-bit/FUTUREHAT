@@ -149,7 +149,8 @@
       "./plugins/withReleaseSigning",
       "expo-asset",
       "expo-font",
-      "./plugins/withAppIcons"
+      "./plugins/withAppIcons",
+      "./plugins/withIncomingCallNotifications"
     ]
   }
 }

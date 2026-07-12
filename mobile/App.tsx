@@ -192,6 +192,24 @@ function RootNavigator() {
   // the very first render, so we drain this once the container has mounted.
   const pendingRecoveryError = useRef<string | null>(null);
 
+  // Native full-screen call intents land on MainActivity with extras; also
+  // futurehat://call/<id> deep links. Accept/Decline are handled when CallProvider mounts.
+  useEffect(() => {
+    function handleCallDeepLink(url: string | null | undefined) {
+      if (!url || !url.includes('call')) return;
+      // Navigation into Main is enough — CallProvider realtime shows IncomingCallView
+      // when status is still ringing. Accept action extras are read by CallContext.
+      try {
+        if (navRef.isReady() && signedIn) {
+          navRef.navigate('Main' as any);
+        }
+      } catch { /* ignore */ }
+    }
+    Linking.getInitialURL().then(handleCallDeepLink).catch(() => {});
+    const sub = Linking.addEventListener('url', ({ url }) => handleCallDeepLink(url));
+    return () => sub.remove();
+  }, [signedIn, navRef]);
+
   // ── Deep-link → recovery session installer ────────────────────────────────
   // Runs for cold start (getInitialURL) AND warm (addEventListener). The
   // sequence is: parse the URL fragment → setSession(access, refresh) so the

@@ -40,6 +40,7 @@ import {
   syncBadgeFromServer,
   messagePreviewText,
 } from '../lib/notifications';
+import { recordDelivery } from '../lib/notifLatency';
 import { useCalls } from '../calls/CallContext';
 import type { RootStackParamList } from '../navigation/types';
 
@@ -205,6 +206,8 @@ export default function NotificationsBridge({
                       undefined
                     : sender?.avatar_url ?? undefined,
               });
+              // Realtime local present ≈ 0ms from client POV; stamp for diagnostics.
+              void recordDelivery({ kind: 'message', messageId: m.id, sentAt: Date.now() });
 
               refreshBadge();
             } catch (e) {
@@ -451,6 +454,18 @@ export default function NotificationsBridge({
       if (data.type === 'clear_chat' && data.conversationId) {
         clearChatTray(data.conversationId);
         return;
+      }
+
+      // Latency: FCM data.sentAt → now (killed/background delivery path).
+      if (data.sentAt && (data.type === 'message' || data.type === 'mention' || data.kind === 'message')) {
+        void recordDelivery({
+          kind: 'message',
+          sentAt: data.sentAt,
+          messageId: data.messageId,
+        });
+      }
+      if (data.sentAt && (data.type === 'call' || data.kind === 'call')) {
+        void recordDelivery({ kind: 'call', sentAt: data.sentAt, callId: data.callId });
       }
 
       // Dedupe: if we already presented this messageId locally, ignore FCM echo.

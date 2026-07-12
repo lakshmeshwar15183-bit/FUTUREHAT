@@ -20,6 +20,8 @@ import { useColors, spacing, radius, font, type Palette } from '../theme';
 import { APP_NAME, APP_VERSION, CREDIT } from '../branding';
 import { getLastCrash } from '../lib/prodLog';
 import { runProdHealthChecks } from '../lib/prodHealth';
+import { getLatencySummary } from '../lib/notifLatency';
+import { isNativeIncomingCallAvailable } from '../lib/incomingCallNative';
 
 // Device locale from RN's built-in native settings (no extra dependency).
 // iOS exposes an array under AppleLanguages; Android exposes a `localeIdentifier`.
@@ -42,6 +44,7 @@ export default function DiagnosticsScreen() {
   const [connection, setConnection] = useState('unknown');
   const [lastCrash, setLastCrash] = useState<string>('none');
   const [healthLines, setHealthLines] = useState<string[]>([]);
+  const [latencyLine, setLatencyLine] = useState('no samples yet');
 
   const { width, height } = Dimensions.get('window');
   const scale = PixelRatio.get();
@@ -57,6 +60,8 @@ export default function DiagnosticsScreen() {
     Connection: connection,
     Screen: `${Math.round(width)}×${Math.round(height)} @${scale}x`,
     'Last crash': lastCrash,
+    'Native call notif': isNativeIncomingCallAvailable() ? 'yes (CallStyle/full-screen)' : 'fallback (expo)',
+    'Notif latency': latencyLine,
   };
 
   useFocusEffect(
@@ -70,6 +75,16 @@ export default function DiagnosticsScreen() {
       getLastCrash().then((c) => {
         if (!active) return;
         setLastCrash(c ? `${c.at} · ${c.label}: ${c.message}` : 'none');
+      });
+      getLatencySummary().then((s) => {
+        if (!active) return;
+        if (!s.count) {
+          setLatencyLine('no samples yet');
+          return;
+        }
+        setLatencyLine(
+          `n=${s.count} avg=${s.avgDeliveryMs}ms p95=${s.p95DeliveryMs}ms`,
+        );
       });
       // Refresh production health (TURN, auth redirect, Supabase).
       void runProdHealthChecks().then((r) => {

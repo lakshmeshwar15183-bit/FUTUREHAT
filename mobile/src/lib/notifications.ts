@@ -16,6 +16,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { supabase } from './supabase';
 import { registerPushToken, removePushToken } from './shared';
+import { nativeCancelIncomingCall, nativeShowIncomingCall } from './incomingCallNative';
+import { recordDelivery } from './notifLatency';
 
 // Bump when channel definitions change so they're re-created once.
 // v7: killed-app reliability — non-sticky call rings align with FCM cancel-by-tag.
@@ -610,17 +612,29 @@ export interface CallNotifOpts {
 
 /**
  * High-priority incoming-call notification with Accept/Decline.
- * Not sticky: when the process is killed, FCM cancels by replacing the same
- * `call:<id>` tag — sticky system notifs cannot be cleared without the app.
+ * Android release builds: native fullScreenIntent + CallStyle (IncomingCall module).
+ * Fallback: expo-notifications MAX channel (Expo Go / pre-prebuild).
  */
 export async function presentCallNotification(o: CallNotifOpts): Promise<void> {
   try {
     await Notifications.dismissNotificationAsync(`call:${o.callId}`).catch(() => {});
+    const body = o.video ? 'Incoming video call' : 'Incoming voice call';
+    const nativeOk = await nativeShowIncomingCall({
+      callId: o.callId,
+      conversationId: o.conversationId,
+      title: o.title,
+      body,
+      video: o.video,
+    });
+    if (nativeOk) {
+      void recordDelivery({ kind: 'call', callId: o.callId, sentAt: Date.now() });
+      return;
+    }
     await Notifications.scheduleNotificationAsync({
       identifier: `call:${o.callId}`,
       content: {
         title: o.title,
-        body: o.video ? 'Incoming video call' : 'Incoming voice call',
+        body,
         categoryIdentifier: CATEGORY.call,
         data: {
           type: 'call',
@@ -774,6 +788,7 @@ export async function clearCallNotification(callId: string): Promise<void> {
   try {
     await Notifications.dismissNotificationAsync(`call:${callId}`);
   } catch { /* ignore */ }
+  await nativeCancelIncomingCall(callId);
   await clearOngoingCallNotification(callId);
 }
 

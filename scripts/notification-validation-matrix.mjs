@@ -58,6 +58,11 @@ if (existsSync(oemGuides)) {
   }
 }
 ok('Setup gate mounted in App', /NotificationSetupGate/.test(readFileSync(join(root, 'mobile/App.tsx'), 'utf8')));
+ok('Incoming call plugin present', existsSync(join(root, 'mobile/plugins/withIncomingCallNotifications.js')));
+ok('Call FCM data-only path', /callDataOnly|DATA-ONLY/.test(pushFn));
+ok('Latency probe sentAt', /sentAt/.test(pushFn));
+ok('Native call bridge', existsSync(join(root, 'mobile/src/lib/incomingCallNative.ts')));
+ok('Latency module', existsSync(join(root, 'mobile/src/lib/notifLatency.ts')));
 
 // ── Manual device matrix (print for QA) ─────────────────────────────────────
 console.log('\n2) Device QA matrix (run on hardware)');

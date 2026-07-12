@@ -450,14 +450,16 @@ async function fanOut(
       // collapse_key groups concurrent FCM deliveries for the same chat on Android.
       const collapseKey = isCall || isCallCancel ? tag : `chat:${job.conversationId}`;
 
-      // clear_chat: data-only (multi-device read) — no tray flash.
-      // call_status: REPLACE ring with same tag (works when app is killed).
-      // everything else: high-priority notification so Android delivers in Doze/killed.
+      // clear_chat: data-only (multi-device read).
+      // call / call_status: DATA-ONLY high priority so Android always delivers to
+      // LumixoFirebaseMessagingService when killed → native full-screen CallStyle.
+      // messages: notification+data for system tray when process is dead.
+      const callDataOnly = isCall || isCallCancel;
       const message = isClearChat
         ? {
             message: {
               token: t.token,
-              data: { ...data, silent: '1' },
+              data: { ...data, silent: '1', title: title || '', body: bodyText || '' },
               android: {
                 priority: 'high',
                 ttl: '60s',
@@ -473,65 +475,91 @@ async function fanOut(
               },
             },
           }
-        : {
-            message: {
-              token: t.token,
-              notification: {
-                title: title || 'Lumixo',
-                body: bodyText || (isCallCancel ? ' ' : 'New notification'),
-              },
-              data: isCallCancel ? { ...data, silent: '0', type: 'call_status' } : data,
-              android: {
-                // HIGH is required for Doze / App Standby / killed-process delivery.
-                priority: 'high',
-                ttl: isCall ? '60s' : isCallCancel ? '30s' : '86400s',
-                collapse_key: collapseKey,
-                direct_boot_ok: true,
-                notification: {
-                  channel_id: isCallCancel
-                    ? (job.data?.status === 'missed' ? 'missed_calls' : 'admin_system')
-                    : channelId,
-                  sound: isCallCancel && job.data?.status !== 'missed' ? undefined : 'default',
-                  tag,
-                  notification_priority: isCall
-                    ? 'PRIORITY_MAX'
-                    : isCallCancel
-                      ? 'PRIORITY_DEFAULT'
-                      : 'PRIORITY_HIGH',
-                  default_vibrate_timings: !isCallCancel,
-                  visibility: 'PUBLIC',
-                  // Large image (avatar) when URL is public HTTPS.
-                  ...(!isCallCancel && imageUrl && /^https:\/\//i.test(imageUrl)
-                    ? { image: imageUrl }
-                    : {}),
-                  // Do NOT sticky FCM call rings when killed — sticky ghost rings cannot
-                  // be cleared by data-only cancels. Local sticky is fine while JS is alive.
-                  ...(isCall ? { sticky: false } : {}),
-                  ...(isCallCancel ? { sticky: false, local_only: false } : {}),
+        : callDataOnly
+          ? {
+              message: {
+                token: t.token,
+                // No `notification` block — ensures onMessageReceived when killed.
+                data: {
+                  ...data,
+                  title: title || 'Incoming call',
+                  body: bodyText || (isCallCancel ? 'Call ended' : 'Incoming call'),
+                  silent: isCallCancel ? '1' : '0',
+                  sentAt: String(Date.now()),
                 },
-              },
-              apns: {
-                headers: {
-                  'apns-priority': '10',
-                  'apns-collapse-id': collapseKey,
-                  'apns-push-type': 'alert',
-                  ...(isCall ? { 'apns-expiration': String(Math.floor(Date.now() / 1000) + 60) } : {}),
+                android: {
+                  priority: 'high',
+                  ttl: isCallCancel ? '30s' : '60s',
+                  collapse_key: collapseKey,
+                  direct_boot_ok: true,
                 },
-                payload: {
-                  aps: {
-                    sound: isCallCancel && job.data?.status !== 'missed' ? undefined : 'default',
-                    'thread-id': job.conversationId,
-                    'mutable-content': 1,
-                    ...(isCall
-                      ? { 'interruption-level': 'time-sensitive' }
-                      : isCallCancel
-                        ? { 'interruption-level': 'passive' }
-                        : { 'interruption-level': 'active' }),
+                apns: {
+                  headers: {
+                    'apns-priority': '10',
+                    'apns-collapse-id': collapseKey,
+                    'apns-push-type': isCallCancel ? 'background' : 'alert',
+                    'apns-expiration': String(Math.floor(Date.now() / 1000) + 60),
+                  },
+                  payload: {
+                    aps: isCallCancel
+                      ? { 'content-available': 1 }
+                      : {
+                          alert: {
+                            title: title || 'Incoming call',
+                            body: bodyText || 'Incoming call',
+                          },
+                          sound: 'default',
+                          'interruption-level': 'time-sensitive',
+                          'thread-id': job.conversationId,
+                        },
                   },
                 },
               },
-            },
-          };
+            }
+          : {
+              message: {
+                token: t.token,
+                notification: {
+                  title: title || 'Lumixo',
+                  body: bodyText || 'New notification',
+                },
+                data: {
+                  ...data,
+                  // Latency probe: server enqueue/send time (ms since epoch).
+                  sentAt: String(Date.now()),
+                },
+                android: {
+                  priority: 'high',
+                  ttl: '86400s',
+                  collapse_key: collapseKey,
+                  direct_boot_ok: true,
+                  notification: {
+                    channel_id: channelId,
+                    sound: 'default',
+                    tag,
+                    notification_priority: 'PRIORITY_HIGH',
+                    default_vibrate_timings: true,
+                    visibility: 'PUBLIC',
+                    ...(imageUrl && /^https:\/\//i.test(imageUrl) ? { image: imageUrl } : {}),
+                  },
+                },
+                apns: {
+                  headers: {
+                    'apns-priority': '10',
+                    'apns-collapse-id': collapseKey,
+                    'apns-push-type': 'alert',
+                  },
+                  payload: {
+                    aps: {
+                      sound: 'default',
+                      'thread-id': job.conversationId,
+                      'mutable-content': 1,
+                      'interruption-level': 'active',
+                    },
+                  },
+                },
+              },
+            };
 
       const resp = await fetch(fcmUrl, {
         method: 'POST',
