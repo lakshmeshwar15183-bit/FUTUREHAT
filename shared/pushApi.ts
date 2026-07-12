@@ -60,13 +60,22 @@ export async function sendPush(client: SupabaseClient, args: SendPushArgs): Prom
 }
 
 /**
- * Kick the server push outbox without sending a new notification.
- * Prefer service-role / scheduled cron. Client calls are best-effort and may be
- * rate-limited server-side; do not rely on every client for global drain.
+ * Kick the server push outbox. Requires CRON_SECRET / PUSH_DRAIN_SECRET on the
+ * Edge Function — plain user JWTs are ignored (0051 push seal). Clients should
+ * not call this; use scheduled ops with the secret header.
  */
-export async function drainPushOutbox(client: SupabaseClient, limit = 40): Promise<void> {
+export async function drainPushOutbox(
+  client: SupabaseClient,
+  limit = 40,
+  drainSecret?: string,
+): Promise<void> {
   try {
-    await client.functions.invoke('push', { body: { drainOutbox: true, limit } });
+    await client.functions.invoke('push', {
+      body: { drainOutbox: true, limit },
+      headers: drainSecret
+        ? { 'x-cron-secret': drainSecret, 'x-push-drain-secret': drainSecret }
+        : undefined,
+    });
   } catch { /* ignore */ }
 }
 

@@ -166,7 +166,31 @@ Deno.serve(async (req) => {
     }
 
     // ── Outbox drain ────────────────────────────────────────────────────────
-    const shouldDrain = !!body.drainOutbox || !body.kind;
+    // SECURITY: global claim_push_outbox uses service_role. Never let an
+    // end-user JWT drain everyone's outbox (resource abuse / interference).
+    // Drain only for:
+    //   • Cron / ops with CRON_SECRET (or PUSH_DRAIN_SECRET) header match
+    //   • Or the caller is service_role (no end-user sub)
+    // Clients fan out their own event only (drainOutbox:false).
+    const drainSecret =
+      Deno.env.get('CRON_SECRET') ?? Deno.env.get('PUSH_DRAIN_SECRET') ?? '';
+    const providedSecret =
+      req.headers.get('x-cron-secret') ?? req.headers.get('x-push-drain-secret') ?? '';
+    const isServiceCaller =
+      // service_role JWT has role claim service_role and typically no useful sub abuse
+      (user as { role?: string } | null)?.role === 'service_role' ||
+      // When Authorization is service key, getUser() may be null — allow drain only
+      // if no user AND apikey is service (checked via missing user + drainSecret).
+      false;
+    const secretOk =
+      !!drainSecret &&
+      providedSecret.length > 0 &&
+      providedSecret === drainSecret;
+    // Default: authenticated users NEVER drain global outbox.
+    // Auto-drain when kind omitted was an abuse vector — removed.
+    const shouldDrain = secretOk || isServiceCaller
+      ? !!body.drainOutbox || (!body.kind && secretOk)
+      : false;
     if (shouldDrain) {
       const { data: jobs, error: claimErr } = await admin.rpc('claim_push_outbox', {
         p_limit: body.limit ?? 40,

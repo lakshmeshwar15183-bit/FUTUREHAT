@@ -15,6 +15,7 @@ import {
 } from '@shared/api';
 import type { StatusViewer as ViewerRow } from '@shared/types';
 import { type StatusGroup, isVideo, isAudio, timeAgo } from './statusData';
+import { safeMediaSrc } from '../util/safeUrl';
 import './status.css';
 
 const IMAGE_DURATION = 5000;
@@ -75,8 +76,10 @@ export function StatusViewer({
   useEffect(() => {
     const nxt = group.statuses[idx + 1];
     if (nxt && nxt.type === 'image' && nxt.media_url) {
+      const src = safeMediaSrc(nxt.media_url);
+      if (!src) return;
       const img = new Image();
-      img.src = nxt.media_url;
+      img.src = src;
     }
   }, [idx, group.statuses]);
 
@@ -190,8 +193,8 @@ export function StatusViewer({
 
       <div className="story-header">
         <div className="story-author">
-          {group.avatar ? (
-            <img src={group.avatar} alt="" className="story-author-avatar" />
+          {safeMediaSrc(group.avatar) ? (
+            <img src={safeMediaSrc(group.avatar)!} alt="" className="story-author-avatar" />
           ) : (
             <div className="story-author-avatar fallback">{group.name[0]}</div>
           )}
@@ -222,11 +225,11 @@ export function StatusViewer({
         <div className="story-tap left" onClick={goPrev} />
         <div className="story-tap right" onClick={goNext} />
 
-        {video && current.media_url ? (
+        {video && safeMediaSrc(current.media_url) ? (
           <video
             ref={videoRef}
             className="story-media"
-            src={current.media_url}
+            src={safeMediaSrc(current.media_url)!}
             autoPlay
             playsInline
             onTimeUpdate={(e) => {
@@ -235,13 +238,13 @@ export function StatusViewer({
             }}
             onEnded={goNext}
           />
-        ) : audio && current.media_url ? (
+        ) : audio && safeMediaSrc(current.media_url) ? (
           <div className="story-audio" style={{ background: current.background || '#5B6EF5' }}>
             <div className="story-audio-bubble">🎵</div>
             <div className="story-audio-label">Audio status</div>
             <audio
               ref={audioRef}
-              src={current.media_url}
+              src={safeMediaSrc(current.media_url)!}
               autoPlay
               onTimeUpdate={(e) => {
                 const a = e.currentTarget;
@@ -251,8 +254,8 @@ export function StatusViewer({
               onEnded={goNext}
             />
           </div>
-        ) : current.type === 'image' && current.media_url ? (
-          <img src={current.media_url} alt="Status" className="story-media" />
+        ) : current.type === 'image' && safeMediaSrc(current.media_url) ? (
+          <img src={safeMediaSrc(current.media_url)!} alt="Status" className="story-media" />
         ) : (
           <div className="story-text" style={{ background: current.background || '#667eea', color: current.text_color || '#fff' }}>
             {current.content}
@@ -272,8 +275,8 @@ export function StatusViewer({
               {viewers.length === 0 && <div className="story-viewer-empty">No views yet</div>}
               {viewers.map((v) => (
                 <div key={v.viewer_id} className="story-viewer">
-                  {v.profile?.avatar_url ? (
-                    <img src={v.profile.avatar_url} alt="" className="story-viewer-avatar" />
+                  {safeMediaSrc(v.profile?.avatar_url) ? (
+                    <img src={safeMediaSrc(v.profile?.avatar_url)!} alt="" className="story-viewer-avatar" />
                   ) : (
                     <div className="story-viewer-avatar fallback">{(v.profile?.display_name || '?')[0]}</div>
                   )}

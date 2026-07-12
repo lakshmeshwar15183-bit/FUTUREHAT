@@ -108,8 +108,20 @@ export async function getCommunityMembers(
   const members = (data ?? []) as CommunityMember[];
   const ids = members.map((m) => m.user_id);
   if (!ids.length) return [];
-  const { data: profiles } = await client.from('profiles').select('*').in('id', ids);
-  const byId = new Map((profiles ?? []).map((p: any) => [p.id, p as Profile]));
+  // Peer profiles without phone (public_profiles). Never select *.
+  const { data: profiles, error: profErr } = await client
+    .from('public_profiles')
+    .select('id, username, display_name, about, avatar_url, last_seen, created_at')
+    .in('id', ids);
+  let rows = (profiles ?? []) as Profile[];
+  if (profErr) {
+    const { data: fallback } = await client
+      .from('profiles')
+      .select('id, username, display_name, about, avatar_url, last_seen, created_at')
+      .in('id', ids);
+    rows = (fallback ?? []) as Profile[];
+  }
+  const byId = new Map(rows.map((p) => [p.id, { ...p, phone: null } as Profile]));
   return members.map((m) => ({ ...m, profile: byId.get(m.user_id) }));
 }
 

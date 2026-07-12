@@ -10,7 +10,7 @@
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { supabase } from '../supabase';
-import { safeHref } from '../util/safeUrl';
+import { safeHref, safeCssUrl, safeMediaSrc } from '../util/safeUrl';
 import {
   blockUser, unblockUser, getBlockedIds, submitReport,
   muteConversation, unmuteConversation, getMutedIds,
@@ -175,8 +175,8 @@ export function ContactProfileModal({ profile, online, isPremium, conversationId
         </div>
 
         <div className="contact-hero">
-          <div className="contact-avatar" style={profile.avatar_url ? { backgroundImage: `url(${profile.avatar_url})` } : undefined}>
-            {!profile.avatar_url && (profile.display_name?.[0]?.toUpperCase() || '?')}
+          <div className="contact-avatar" style={safeCssUrl(profile.avatar_url) ? { backgroundImage: safeCssUrl(profile.avatar_url) } : undefined}>
+            {!safeMediaSrc(profile.avatar_url) && (profile.display_name?.[0]?.toUpperCase() || '?')}
             {online && <span className="contact-online-dot" />}
             {disappearSecs > 0 && <span className="contact-disappear-badge" title="Disappearing messages on">⏳</span>}
           </div>
@@ -271,7 +271,7 @@ export function ContactProfileModal({ profile, online, isPremium, conversationId
                     <button
                       key={m.id}
                       className="contact-media-thumb"
-                      style={{ backgroundImage: `url(${JSON.stringify(href).slice(1, -1)})` }}
+                      style={{ backgroundImage: safeCssUrl(href) }}
                       onClick={() => setLightbox(href)}
                       aria-label="View photo"
                     />

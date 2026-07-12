@@ -46,12 +46,21 @@ export async function getGroupMembers(
   if (error || !parts?.length) return [];
 
   const ids = parts.map((p) => p.user_id as UUID);
-  const { data: profiles } = await client
-    .from('profiles')
-    .select('id, display_name, avatar_url, username, about, phone, last_seen, created_at')
+  // Never select phone — use public_profiles (0050/0051).
+  const { data: profiles, error: profErr } = await client
+    .from('public_profiles')
+    .select('id, display_name, avatar_url, username, about, last_seen, created_at')
     .in('id', ids);
+  let rows = (profiles ?? []) as Profile[];
+  if (profErr) {
+    const { data: fallback } = await client
+      .from('profiles')
+      .select('id, display_name, avatar_url, username, about, last_seen, created_at')
+      .in('id', ids);
+    rows = (fallback ?? []) as Profile[];
+  }
   const byId = new Map<UUID, Profile>(
-    (profiles ?? []).map((p) => [p.id as UUID, p as Profile]),
+    rows.map((p) => [p.id as UUID, { ...p, phone: null } as Profile]),
   );
 
   // Super admins first, then admins, then members (WhatsApp order).

@@ -15,6 +15,7 @@ import { modalBackdrop, modalPanel } from '../motion';
 import { APP_VERSION, OWNER } from '../branding';
 import { LumixoCat } from '../mascot/LumixoCat';
 import { useEscapeToClose } from '../useEscapeToClose';
+import { safeCssUrl } from '../util/safeUrl';
 import './SettingsModal.css';
 
 // Settings sub-panels are lazy-loaded and rendered from within Settings itself.
@@ -79,7 +80,7 @@ export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin, onModer
           <div className="settings-profile">
             <div
               className="avatar avatar-wrap settings-avatar"
-              style={profile?.avatar_url ? { backgroundImage: `url(${profile.avatar_url})`, backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
+              style={safeCssUrl(profile?.avatar_url) ? { backgroundImage: safeCssUrl(profile?.avatar_url), backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
             >
               {!profile?.avatar_url && (profile?.display_name?.[0]?.toUpperCase() || '?')}
             </div>

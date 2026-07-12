@@ -8,6 +8,7 @@ import { supabase } from '../supabase';
 import { getMyConversations } from '@shared/api';
 import type { StatusAudience, Profile } from '@shared/types';
 import { useEscapeToClose } from '../useEscapeToClose';
+import { safeMediaSrc } from '../util/safeUrl';
 import './status.css';
 
 interface Props {
@@ -127,8 +128,8 @@ export function AudiencePicker({ audience, memberIds, myId, onClose, onSave }: P
                 const on = members.has(c.id);
                 return (
                   <button key={c.id} className="audience-contact" onClick={() => toggle(c.id)}>
-                    {c.avatar_url ? (
-                      <img src={c.avatar_url} alt="" className="audience-contact-avatar" />
+                    {safeMediaSrc(c.avatar_url) ? (
+                      <img src={safeMediaSrc(c.avatar_url)!} alt="" className="audience-contact-avatar" />
                     ) : (
                       <div className="audience-contact-avatar fallback">{(c.display_name || '?')[0]}</div>
                     )}

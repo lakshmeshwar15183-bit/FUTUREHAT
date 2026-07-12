@@ -78,36 +78,72 @@ export async function getCurrentUser(client: SupabaseClient): Promise<User | nul
 
 // ── Profiles ────────────────────────────────────────────────────────────────
 
+/** Safe peer-facing columns — never phone, account_status, ban fields, role. */
+export const PROFILE_PUBLIC_COLS =
+  'id, username, display_name, about, avatar_url, last_seen, created_at';
+
+/** Own account columns (phone OK — RLS: own row only). */
+const PROFILE_SELF_COLS =
+  'id, phone, username, display_name, about, avatar_url, last_seen, created_at';
+
+/**
+ * Batch-load peer profiles without phone. Uses public_profiles (0050/0051);
+ * falls back to column-limited profiles select if the view is missing.
+ */
+export async function getProfilesPublic(
+  client: SupabaseClient,
+  userIds: UUID[],
+): Promise<Map<UUID, Profile>> {
+  const map = new Map<UUID, Profile>();
+  const ids = [...new Set(userIds.filter(Boolean))];
+  if (!ids.length) return map;
+  const { data, error } = await client
+    .from('public_profiles')
+    .select(PROFILE_PUBLIC_COLS)
+    .in('id', ids);
+  if (!error && data) {
+    for (const p of data as Profile[]) map.set(p.id, { ...p, phone: null });
+    return map;
+  }
+  // Fallback: never select * or phone.
+  const { data: rows } = await client
+    .from('profiles')
+    .select(PROFILE_PUBLIC_COLS)
+    .in('id', ids);
+  for (const p of (rows as Profile[]) ?? []) map.set(p.id, { ...p, phone: null });
+  return map;
+}
+
 export async function getMyProfile(client: SupabaseClient): Promise<Profile | null> {
   const user = await getCurrentUser(client);
   if (!user) return null;
-  const { data } = await client.from('profiles').select('*').eq('id', user.id).single();
-  return data;
+  // Own row only — phone allowed for account UI. Never used for peer display.
+  const { data } = await client
+    .from('profiles')
+    .select(PROFILE_SELF_COLS)
+    .eq('id', user.id)
+    .single();
+  return data as Profile | null;
 }
-
-/** Safe profile columns for peer display (no phone / moderation). Prefer
- *  public_profiles so discovery works under 0050 RLS; fall back to profiles. */
-const PROFILE_PUBLIC_COLS =
-  'id, username, display_name, about, avatar_url, last_seen, created_at';
 
 export async function getProfile(
   client: SupabaseClient,
   userId: UUID,
 ): Promise<Profile | null> {
-  // public_profiles omits phone / ban fields (0050).
+  // public_profiles omits phone / ban fields (0050/0051).
   const { data, error } = await client
     .from('public_profiles')
     .select(PROFILE_PUBLIC_COLS)
     .eq('id', userId)
     .maybeSingle();
-  if (!error && data) return data as Profile;
+  if (!error && data) return { ...(data as Profile), phone: null };
   // Self or admin path / pre-0050: limited columns on base table (never select *).
   const { data: row } = await client
     .from('profiles')
     .select(PROFILE_PUBLIC_COLS)
     .eq('id', userId)
     .maybeSingle();
-  return (row as Profile | null) ?? null;
+  return row ? { ...(row as Profile), phone: null } : null;
 }
 
 /** Full own profile including phone (account settings). RLS: own row only. */
@@ -228,10 +264,9 @@ export async function getMyConversations(
   if (!convs.length) return [];
   const allParts = (partsRes.data ?? []) as { conversation_id: UUID; user_id: UUID }[];
 
-  // One query for every participant profile across all conversations (was N).
+  // One query for every participant profile — public_profiles only (no phone).
   const userIds = [...new Set(allParts.map((p) => p.user_id))];
-  const { data: profs } = await client.from('profiles').select('*').in('id', userIds);
-  const profById = new Map<UUID, Profile>((profs ?? []).map((p): [UUID, Profile] => [p.id, p as Profile]));
+  const profById = await getProfilesPublic(client, userIds);
   const partIdsByConv = new Map<UUID, UUID[]>();
   for (const p of allParts) {
     const arr = partIdsByConv.get(p.conversation_id) ?? [];
@@ -478,8 +513,9 @@ export function messageMatchesKind(m: Message, kind: SearchKind): boolean {
 }
 
 const MAX_MESSAGE_CHARS = 16000;
+// Never include 'system' — clients cannot forge system messages (DB + client).
 const ALLOWED_MESSAGE_TYPES = new Set<MessageType>([
-  'text', 'image', 'video', 'file', 'audio', 'system',
+  'text', 'image', 'video', 'file', 'audio',
 ]);
 
 export async function sendMessage(
@@ -549,21 +585,33 @@ export async function getViewOnceState(
 }
 
 // Edit a message's text (sets edited_at). RLS allows only the sender.
+// Never edit system messages (DB also freezes them; this is defense-in-depth).
 export async function editMessage(
   client: SupabaseClient,
   messageId: UUID,
   content: string,
 ): Promise<{ message: Message | null; error: Error | null }> {
+  const { data: existing } = await client
+    .from('messages')
+    .select('id, type, sender_id')
+    .eq('id', messageId)
+    .maybeSingle();
+  if (!existing) return { message: null, error: new Error('message not found') };
+  if ((existing as { type?: string }).type === 'system') {
+    return { message: null, error: new Error('system messages cannot be edited') };
+  }
   const { data, error } = await client
     .from('messages')
     .update({ content, edited_at: new Date().toISOString() })
     .eq('id', messageId)
+    .neq('type', 'system')
     .select()
     .single();
   return { message: data, error };
 }
 
 // Soft-delete a message (keeps the row so threads/realtime stay consistent).
+// System messages are immutable in DB; filter client-side too.
 export async function deleteMessage(
   client: SupabaseClient,
   messageId: UUID,
@@ -571,7 +619,8 @@ export async function deleteMessage(
   const { error } = await client
     .from('messages')
     .update({ is_deleted: true, content: null, media_url: null })
-    .eq('id', messageId);
+    .eq('id', messageId)
+    .neq('type', 'system');
   return { error };
 }
 

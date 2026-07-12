@@ -1,12 +1,13 @@
-// Lumixo web — device authentication for Chat Lock. This is the web analogue of
-// the mobile biometric gate: it uses the platform authenticator (Touch ID / Windows
-// Hello / Android fingerprint/face — falling back to the device PIN) via WebAuthn.
+// Lumixo web — device authentication for App Lock + Chat Lock.
 //
-// Lumixo never stores a PIN, password, or biometric. On first use we register a
-// platform credential (the OS prompts for fingerprint/face/PIN) and remember ONLY
-// its credential id in localStorage, per user. Unlocking re-runs user-verification
-// against that credential — the same "prove it's you on this device" gesture
-// WhatsApp uses. All secrets stay inside the device's secure hardware.
+// Uses the platform authenticator (Touch ID / Windows Hello / Android biometrics
+// / device PIN) via WebAuthn. CRITICAL SECURITY RULES:
+//
+//  1) NEVER call credentials.get without allowCredentials bound to OUR stored
+//     credential id. An unbound get accepts ANY user-verifying credential on the
+//     device (password-manager passkeys, other sites' keys) and is a bypass.
+//  2) Registration (create) is first-use only; unlock always asserts the stored id.
+//  3) No secrets leave the device — only the credential id is in localStorage.
 
 import { supabase } from '../supabase';
 
@@ -14,6 +15,11 @@ const supported = () =>
   typeof window !== 'undefined' && !!window.PublicKeyCredential && !!navigator.credentials;
 
 function credKey(userId: string) {
+  return `fh_device_cred_${userId}`;
+}
+
+// Legacy key used by older Chat Lock builds — migrate on first successful assert.
+function legacyCredKey(userId: string) {
   return `fh_chatlock_cred_${userId}`;
 }
 
@@ -41,9 +47,18 @@ async function currentUserId(): Promise<string | null> {
   }
 }
 
+function loadStoredCredId(uid: string): string | null {
+  return localStorage.getItem(credKey(uid)) || localStorage.getItem(legacyCredKey(uid));
+}
+
+function saveCredId(uid: string, idB64: string) {
+  localStorage.setItem(credKey(uid), idB64);
+  // Keep legacy key in sync so older code paths still find it.
+  localStorage.setItem(legacyCredKey(uid), idB64);
+}
+
 export const deviceAuth = {
-  /** True when this browser/device exposes a user-verifying platform authenticator
-   *  (fingerprint / face / device PIN). Mirrors the mobile `available` flag. */
+  /** True when this browser/device exposes a user-verifying platform authenticator. */
   async isAvailable(): Promise<boolean> {
     if (!supported()) return false;
     try {
@@ -53,19 +68,29 @@ export const deviceAuth = {
     }
   },
 
-  /** Run the device's fingerprint / face / PIN prompt. Resolves true on success.
-   *  Registers a platform credential the first time (no secret leaves the device). */
-  async authenticate(_reason = 'Unlock chat'): Promise<boolean> {
+  /** Whether a credential is already registered for this user on this device. */
+  async hasCredential(): Promise<boolean> {
+    const uid = await currentUserId();
+    if (!uid) return false;
+    return !!loadStoredCredId(uid);
+  },
+
+  /**
+   * Register (first time) or assert (subsequent) the platform credential.
+   * Returns true only on success for THIS app's stored credential.
+   *
+   * NEVER uses unbound credentials.get — that would accept any UV credential.
+   */
+  async authenticate(_reason = 'Unlock'): Promise<boolean> {
     if (!supported()) return false;
     const uid = await currentUserId();
     if (!uid) return false;
     try {
       const challenge = crypto.getRandomValues(new Uint8Array(32));
-      const existing = localStorage.getItem(credKey(uid));
+      const existing = loadStoredCredId(uid);
 
       if (!existing) {
-        // First time on this device: create a platform credential. The OS prompts
-        // for fingerprint / face / PIN as part of this call.
+        // First time: create platform credential (OS prompts for biometrics/PIN).
         const cred = (await navigator.credentials.create({
           publicKey: {
             challenge,
@@ -88,10 +113,11 @@ export const deviceAuth = {
           },
         })) as PublicKeyCredential | null;
         if (!cred) return false;
-        localStorage.setItem(credKey(uid), b64url(cred.rawId));
+        saveCredId(uid, b64url(cred.rawId));
         return true;
       }
 
+      // Unlock: MUST bind allowCredentials to our stored id only.
       const assertion = (await navigator.credentials.get({
         publicKey: {
           challenge,
@@ -100,7 +126,10 @@ export const deviceAuth = {
           timeout: 60000,
         },
       })) as PublicKeyCredential | null;
-      return !!assertion;
+      if (!assertion) return false;
+      // Migrate legacy key → primary key after successful assert.
+      saveCredId(uid, existing);
+      return true;
     } catch {
       return false;
     }

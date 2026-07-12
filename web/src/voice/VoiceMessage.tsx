@@ -4,6 +4,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useSignedUrl } from '../lib/useSignedUrl';
+import { safeMediaSrc } from '../util/safeUrl';
 import './VoiceMessage.css';
 
 // Deterministic pseudo-waveform bars from the URL so each clip looks distinct
@@ -57,7 +58,7 @@ export function VoiceMessage({ url, mine }: { url: string; mine?: boolean }) {
 
   return (
     <div className={`voice-msg ${mine ? 'mine' : ''}`}>
-      <audio ref={audioRef} src={playableUrl ?? undefined} preload="metadata" />
+      <audio ref={audioRef} src={safeMediaSrc(playableUrl) ?? undefined} preload="metadata" />
       <button className="voice-play" onClick={toggle} aria-label={playing ? 'Pause voice message' : 'Play voice message'}>
         {playing ? '❚❚' : '▶'}
       </button>

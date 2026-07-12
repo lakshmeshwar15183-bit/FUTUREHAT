@@ -69,11 +69,10 @@ export default function NotificationsBridge({
     let stopTokenRefresh: (() => void) | null = null;
     let appStateSub: { remove: () => void } | null = null;
 
-    const kickDrain = () => {
-      void supabase.functions
-        .invoke('push', { body: { drainOutbox: true, limit: 50 } })
-        .catch(() => {});
-    };
+    // Global outbox drain is cron/service-role only (push Edge seal).
+    // Clients must not claim everyone else's outbox. Rely on DB triggers +
+    // sender fan-out + scheduled cron with CRON_SECRET.
+    const kickDrain = () => { /* no-op: user JWT cannot drain global outbox */ };
 
     const refreshBadge = () => {
       void syncBadgeFromServer();

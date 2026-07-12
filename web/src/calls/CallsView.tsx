@@ -22,6 +22,7 @@ import { useCall } from './CallContext';
 import { modalBackdrop, modalPanel } from '../motion';
 import { PhoneIcon, VideoIcon, TrashIcon, SearchIcon, PlusIcon } from '../Icons';
 import { LumixoCat } from '../mascot/LumixoCat';
+import { safeCssUrl } from '../util/safeUrl';
 import './Calls.css';
 
 const PAGE = 60;
@@ -182,7 +183,7 @@ export function CallsView({ onClose }: { onClose: () => void }) {
                     onContextMenu={(e) => { e.preventDefault(); setSelecting(true); toggle(g.key); }}
                   >
                     {selecting && <span className={`calls-check ${sel ? 'on' : ''}`}>{sel ? '✓' : ''}</span>}
-                    <div className="calls-avatar" style={g.peer_avatar ? { backgroundImage: `url(${g.peer_avatar})` } : undefined}>
+                    <div className="calls-avatar" style={safeCssUrl(g.peer_avatar) ? { backgroundImage: safeCssUrl(g.peer_avatar) } : undefined}>
                       {!g.peer_avatar && (g.title[0]?.toUpperCase() || '?')}
                     </div>
                     <div className="calls-row-main">
@@ -237,7 +238,7 @@ function CallDetail({ group, onBack, onCall, onDeleteLog }: {
         <h2>Call info</h2>
       </div>
       <div className="calls-detail">
-        <div className="calls-avatar lg" style={group.peer_avatar ? { backgroundImage: `url(${group.peer_avatar})` } : undefined}>
+        <div className="calls-avatar lg" style={safeCssUrl(group.peer_avatar) ? { backgroundImage: safeCssUrl(group.peer_avatar) } : undefined}>
           {!group.peer_avatar && (group.title[0]?.toUpperCase() || '?')}
         </div>
         <div className="calls-detail-name">{group.title}</div>
@@ -315,7 +316,7 @@ function ScheduleCompose({ convs, onClose, onDone }: { convs: ConversationSummar
               {directs.length === 0 && <div className="calls-empty-sub">No contacts.</div>}
               {directs.map((c) => (
                 <button key={c.conversation.id} className="calls-pick-row" onClick={() => setPicked(c)}>
-                  <span className="calls-avatar sm" style={c.avatarUrl ? { backgroundImage: `url(${c.avatarUrl})` } : undefined}>{!c.avatarUrl && (c.title[0]?.toUpperCase() || '?')}</span>
+                  <span className="calls-avatar sm" style={safeCssUrl(c.avatarUrl) ? { backgroundImage: safeCssUrl(c.avatarUrl) } : undefined}>{!c.avatarUrl && (c.title[0]?.toUpperCase() || '?')}</span>
                   <span className="calls-pick-name">{c.title}</span>
                 </button>
               ))}
@@ -383,7 +384,7 @@ function ContactPicker({ onClose, onCall }: { onClose: () => void; onCall: (c: C
           {filtered.length === 0 && <div className="calls-empty-sub">No contacts to call yet.</div>}
           {filtered.map((c) => (
             <div key={c.conversation.id} className="calls-pick-row">
-              <span className="calls-avatar sm" style={c.avatarUrl ? { backgroundImage: `url(${c.avatarUrl})` } : undefined}>{!c.avatarUrl && (c.title[0]?.toUpperCase() || '?')}</span>
+              <span className="calls-avatar sm" style={safeCssUrl(c.avatarUrl) ? { backgroundImage: safeCssUrl(c.avatarUrl) } : undefined}>{!c.avatarUrl && (c.title[0]?.toUpperCase() || '?')}</span>
               <span className="calls-pick-name">{c.title}</span>
               <button className="calls-type-btn" onClick={() => onCall(c, 'audio')} title="Voice"><PhoneIcon size={18} /></button>
               <button className="calls-type-btn" onClick={() => onCall(c, 'video')} title="Video"><VideoIcon size={18} /></button>

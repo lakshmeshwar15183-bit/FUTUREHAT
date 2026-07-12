@@ -12,6 +12,7 @@
 import { forwardRef, type ImgHTMLAttributes, type ReactNode, type VideoHTMLAttributes } from 'react';
 
 import { useSignedUrl } from './useSignedUrl';
+import { safeHref, safeMediaSrc } from '../util/safeUrl';
 
 // Inline styles so we don't require a new stylesheet import in every consumer.
 const PLACEHOLDER_STYLE: React.CSSProperties = {
@@ -63,7 +64,9 @@ export function SignedImage({ source, alt, className, style, ...rest }: SignedIm
       </button>
     );
   }
-  return <img src={url} alt={alt ?? ''} className={className} style={style} {...rest} />;
+  const src = safeMediaSrc(url);
+  if (!src) return null;
+  return <img src={src} alt={alt ?? ''} className={className} style={style} {...rest} />;
 }
 
 // ── SignedVideo ─────────────────────────────────────────────────────────────
@@ -87,7 +90,9 @@ export const SignedVideo = forwardRef<HTMLVideoElement, SignedVideoProps>(functi
       </button>
     );
   }
-  return <video ref={ref} src={url} className={className} style={style} {...rest} />;
+  const src = safeMediaSrc(url);
+  if (!src) return null;
+  return <video ref={ref} src={src} className={className} style={style} {...rest} />;
 });
 
 // ── SignedLink ──────────────────────────────────────────────────────────────
@@ -110,5 +115,10 @@ export function SignedLink({ source, className, children }: SignedLinkProps) {
       </button>
     );
   }
-  return <a href={url} target="_blank" rel="noopener noreferrer" className={className}>{children}</a>;
+  // Defense-in-depth: never put non-http(s) into href even if signing passed through.
+  const href = safeHref(url);
+  if (!href) {
+    return <span className={className}>{children}</span>;
+  }
+  return <a href={href} target="_blank" rel="noopener noreferrer" className={className}>{children}</a>;
 }

@@ -9,6 +9,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { DownloadIcon, ForwardIcon } from '../Icons';
 import { useSignedUrl } from '../lib/useSignedUrl';
+import { safeCssUrl, safeMediaSrc } from '../util/safeUrl';
 
 export interface MediaItem {
   id: string;
@@ -191,7 +192,7 @@ export function MediaLightbox({ items, index, onClose, onIndexChange }: Props) {
           >
             {item.kind === 'image' ? (
               <motion.img
-                src={currentUrl ?? ''}
+                src={safeMediaSrc(currentUrl) ?? ''}
                 alt={item.caption || 'Media'}
                 className="mlb-media"
                 draggable={false}
@@ -201,7 +202,7 @@ export function MediaLightbox({ items, index, onClose, onIndexChange }: Props) {
                 style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, cursor: zoom > 1 ? 'grab' : 'zoom-in' }}
               />
             ) : (
-              <video src={currentUrl ?? undefined} className="mlb-media" controls autoPlay playsInline onPointerDown={(e) => e.stopPropagation()} />
+              <video src={safeMediaSrc(currentUrl) ?? undefined} className="mlb-media" controls autoPlay playsInline onPointerDown={(e) => e.stopPropagation()} />
             )}
           </motion.div>
         </AnimatePresence>
@@ -237,7 +238,7 @@ function Thumb({ item, active, onClick }: { item: MediaItem; active: boolean; on
     <button
       className={`mlb-thumb ${active ? 'active' : ''}`}
       onClick={onClick}
-      style={item.kind === 'image' && signed ? { backgroundImage: `url(${signed})` } : undefined}
+      style={item.kind === 'image' && safeCssUrl(signed) ? { backgroundImage: safeCssUrl(signed) } : undefined}
       aria-label={item.kind === 'video' ? 'Play video' : 'View image'}
     >
       {item.kind === 'video' && <span className="mlb-thumb-play">▶</span>}

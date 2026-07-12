@@ -16,6 +16,7 @@ import { buildStatusGroups, pruneExpiredGroups, type StatusGroup } from './statu
 import { StatusViewer } from './StatusViewer';
 import { StatusComposer, type ComposerMode } from './StatusComposer';
 import { afterFirstPaint } from '../lib/startupCache';
+import { safeMediaSrc } from '../util/safeUrl';
 import './status.css';
 
 export function StatusStrip() {
@@ -123,8 +124,8 @@ export function StatusStrip() {
         <div className="status-tile-wrap">
           <button className="status-tile" onClick={openMine}>
             <div className={`strip-ring ${mine ? 'ring-mine' : 'ring-empty'}`}>
-              {mine?.avatar || profile?.avatar_url ? (
-                <img src={mine?.avatar || profile?.avatar_url || ''} alt="" className="strip-avatar" />
+              {safeMediaSrc(mine?.avatar || profile?.avatar_url) ? (
+                <img src={safeMediaSrc(mine?.avatar || profile?.avatar_url)!} alt="" className="strip-avatar" />
               ) : (
                 <div className="strip-avatar fallback">{(profile?.display_name || 'M')[0]}</div>
               )}
@@ -152,8 +153,8 @@ export function StatusStrip() {
         {groups.map((g) => (
           <button key={g.userId} className="status-tile" onClick={() => setPlayer(g)}>
             <div className={`strip-ring ${g.allSeen ? 'ring-seen' : 'ring-unseen'}`}>
-              {g.avatar ? (
-                <img src={g.avatar} alt="" className="strip-avatar" />
+              {safeMediaSrc(g.avatar) ? (
+                <img src={safeMediaSrc(g.avatar)!} alt="" className="strip-avatar" />
               ) : (
                 <div className="strip-avatar fallback">{g.name[0]}</div>
               )}

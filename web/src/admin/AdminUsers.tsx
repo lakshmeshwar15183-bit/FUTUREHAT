@@ -13,6 +13,7 @@ import {
   assignModerator, removeModerator,
 } from '@shared/adminApi';
 import type { AdminUserSummary, AdminUserDetail, PremiumDuration } from '@shared/types';
+import { safeMediaSrc } from '../util/safeUrl';
 
 const DURATIONS: { id: PremiumDuration; label: string }[] = [
   { id: '1m', label: '1 Month' }, { id: '3m', label: '3 Months' },
@@ -83,7 +84,7 @@ export function AdminUsers({ isOwner }: { isOwner: boolean }) {
           {results.length === 0 && <div className="admin-empty">No results yet — search above.</div>}
           {results.map((r) => (
             <button key={r.id} className={`admin-user-row ${detail?.id === r.id ? 'active' : ''}`} onClick={() => open(r.id)}>
-              <div className="admin-avatar">{r.avatar_url ? <img src={r.avatar_url} alt="" /> : (r.display_name || '?')[0]}</div>
+              <div className="admin-avatar">{safeMediaSrc(r.avatar_url) ? <img src={safeMediaSrc(r.avatar_url)!} alt="" /> : (r.display_name || '?')[0]}</div>
               <div className="admin-user-row-main">
                 <div className="admin-user-row-name">
                   {r.display_name || r.username || 'Unnamed'}
@@ -104,7 +105,7 @@ export function AdminUsers({ isOwner }: { isOwner: boolean }) {
           ) : (
             <>
               <div className="admin-user-head">
-                <div className="admin-avatar lg">{u.avatar_url ? <img src={u.avatar_url} alt="" /> : (u.display_name || '?')[0]}</div>
+                <div className="admin-avatar lg">{safeMediaSrc(u.avatar_url) ? <img src={safeMediaSrc(u.avatar_url)!} alt="" /> : (u.display_name || '?')[0]}</div>
                 <div>
                   <div className="admin-user-title">
                     {u.display_name || 'Unnamed'}

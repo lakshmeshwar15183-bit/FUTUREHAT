@@ -132,11 +132,12 @@ export function AppLockGate({ children }: { children: ReactNode }) {
 
   if (unlocked || !locked || !user) return <>{children}</>;
 
-  function unlock() {
+  function unlock(enrollBio = false) {
     sessionStorage.setItem(`fh_unlocked_${user!.id}`, '1');
     setUnlocked(true);
     setEntry('');
     setError('');
+    if (enrollBio) void registerBiometricsAfterPin();
   }
 
   async function submit() {
@@ -149,9 +150,9 @@ export function AppLockGate({ children }: { children: ReactNode }) {
     try {
       if (mode === 'create') {
         await storePin(user!.id, entry);
-        unlock();
+        unlock(true); // first PIN → enroll biometrics for next session
       } else if (await verifyPin(user!.id, entry)) {
-        unlock();
+        unlock(true); // successful PIN → ensure device credential exists
       } else {
         setError('Incorrect PIN');
         setEntry('');
@@ -165,15 +166,37 @@ export function AppLockGate({ children }: { children: ReactNode }) {
     setBusy(true);
     setError('');
     try {
-      // Bound platform credential only — never unbound WebAuthn get.
+      // Bound platform credential only — deviceAuth NEVER does unbound get.
+      const available = await deviceAuth.isAvailable();
+      if (!available) {
+        setError('Biometrics not available — use your PIN');
+        return;
+      }
+      // CRITICAL: do not allow credentials.create as an unlock path (would enroll
+      // any platform UV without knowing the PIN). Biometrics only after a
+      // credential was registered post-PIN unlock.
+      const has = await deviceAuth.hasCredential();
+      if (!has) {
+        setError('Unlock with PIN first to enable biometrics on this device');
+        return;
+      }
       const ok = await deviceAuth.authenticate('Unlock Lumixo');
       if (ok) unlock();
-      else setError('Biometric check cancelled or unavailable');
+      else setError('Biometric check cancelled or failed');
     } catch {
       setError('Biometric check cancelled');
     } finally {
       setBusy(false);
     }
+  }
+
+  /** After successful PIN unlock, register platform credential for next time. */
+  async function registerBiometricsAfterPin() {
+    try {
+      if (!(await deviceAuth.isAvailable())) return;
+      if (await deviceAuth.hasCredential()) return;
+      await deviceAuth.authenticate('Enable biometrics for Lumixo');
+    } catch { /* optional */ }
   }
 
   return (

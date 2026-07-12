@@ -54,7 +54,7 @@ import type {
   UUID,
 } from '@shared/types';
 import { useEscapeToClose } from './useEscapeToClose';
-import { safeHref } from './util/safeUrl';
+import { safeHref, safeMediaSrc } from './util/safeUrl';
 import './GroupInfoModal.css';
 import './GroupModal.css';
 
@@ -393,8 +393,8 @@ export function GroupInfoModal({ conversationId, onClose, onLeft, onUpdated }: P
           <div className="gi-body">
             <div className="gi-hero">
               <div className="gi-avatar">
-                {conversation.avatar_url ? (
-                  <img src={conversation.avatar_url} alt="" />
+                {safeMediaSrc(conversation.avatar_url) ? (
+                  <img src={safeMediaSrc(conversation.avatar_url)!} alt="" />
                 ) : (
                   <span>{(conversation.name || 'G')[0]}</span>
                 )}
@@ -471,8 +471,8 @@ export function GroupInfoModal({ conversationId, onClose, onLeft, onUpdated }: P
                   }}
                 >
                   <div className="gi-member-av">
-                    {m.profile.avatar_url ? (
-                      <img src={m.profile.avatar_url} alt="" />
+                    {safeMediaSrc(m.profile.avatar_url) ? (
+                      <img src={safeMediaSrc(m.profile.avatar_url)!} alt="" />
                     ) : (
                       (m.profile.display_name || '?')[0]
                     )}
@@ -834,8 +834,8 @@ export function GroupInfoModal({ conversationId, onClose, onLeft, onUpdated }: P
           <div className="gi-body">
             <div className="gi-hero">
               <div className="gi-avatar">
-                {selectedMember.profile.avatar_url ? (
-                  <img src={selectedMember.profile.avatar_url} alt="" />
+                {safeMediaSrc(selectedMember.profile.avatar_url) ? (
+                  <img src={safeMediaSrc(selectedMember.profile.avatar_url)!} alt="" />
                 ) : (
                   <span>{(selectedMember.profile.display_name || '?')[0]}</span>
                 )}
