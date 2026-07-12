@@ -180,10 +180,28 @@ export default function DialogHost() {
 
   const runButton = async (btn?: DialogButton | { onPress?: () => void | Promise<void> }) => {
     if (busy) return;
+    const press = btn?.onPress;
+    const kind = reqRef.current?.kind;
+
+    // Sheets: dismiss FIRST, then run the action after the close animation.
+    // Prevents stacked UI (e.g. sheet still visible under a Delete confirm).
+    if (kind === 'sheet') {
+      dismiss();
+      if (press) {
+        setTimeout(() => {
+          void Promise.resolve()
+            .then(() => press())
+            .catch(() => {});
+        }, motion.sheetCloseMs + 24);
+      }
+      return;
+    }
+
+    // Alerts / prompts: run action, then dismiss (supports async work + busy spinner).
     try {
-      if (btn?.onPress) {
+      if (press) {
         setBusy(true);
-        await btn.onPress();
+        await press();
       }
     } finally {
       dismiss();

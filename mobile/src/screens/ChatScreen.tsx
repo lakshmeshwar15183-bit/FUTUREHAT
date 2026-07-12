@@ -365,6 +365,8 @@ function ChatScreenInner() {
   // it back to offset 0 so the last bubble stays visible above the composer.
   /** Message held for reaction while the action sheet is fully dismissed. */
   const pendingReactMsg = useRef<Message | null>(null);
+  /** After loading deep history, scroll to oldest once the list lays out. */
+  const scrollToOldestPending = useRef(false);
 
   // Covers open/close, emoji keyboard, and height changes (each fires a fresh
   // show event); rotation re-runs via new metrics.
@@ -1376,21 +1378,22 @@ function ChatScreenInner() {
 
   async function goToFirstMessage() {
     try {
+      scrollToOldestPending.current = true;
       // Load a deep history slice so "first" is meaningful for long threads.
       const deep = await getMessages(supabase, conversationId, 1000);
       if (deep.length) {
         setMsgs((prev) => mergeById(deep, prev));
         cacheMessages(conversationId, deep).catch(() => {});
       }
-      // Inverted list: end of data = oldest (visual top).
-      requestAnimationFrame(() => {
-        setTimeout(() => {
-          try {
-            listRef.current?.scrollToEnd({ animated: true });
-          } catch { /* ignore */ }
-        }, 80);
-      });
+      // Actual scroll runs in FlatList onContentSizeChange (after layout).
+      // Fallback if content size does not fire (short threads).
+      setTimeout(() => {
+        if (!scrollToOldestPending.current) return;
+        scrollToOldestPending.current = false;
+        try { listRef.current?.scrollToEnd({ animated: true }); } catch { /* ignore */ }
+      }, 400);
     } catch {
+      scrollToOldestPending.current = false;
       Alert.alert('Could not jump', 'Try again in a moment.');
     }
   }
@@ -2214,6 +2217,16 @@ function ChatScreenInner() {
         }}
         // 16ms ≈ 60fps sampling; state only updates on FAB visibility edge.
         scrollEventThrottle={16}
+        onContentSizeChange={() => {
+          // Reliable jump after deep history load ("Go to first message").
+          if (!scrollToOldestPending.current) return;
+          scrollToOldestPending.current = false;
+          try {
+            listRef.current?.scrollToEnd({ animated: true });
+          } catch {
+            try { listRef.current?.scrollToOffset({ offset: 999999, animated: true }); } catch { /* ignore */ }
+          }
+        }}
         onScrollToIndexFailed={(info) => {
           setTimeout(() => {
             try { listRef.current?.scrollToIndex({ index: info.index, animated: true, viewPosition: 0.5 }); } catch { /* give up */ }
