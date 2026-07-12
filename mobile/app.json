@@ -38,6 +38,8 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#FFFFFF"
       },
+      "softwareKeyboardLayoutMode": "resize",
+      "navigationBarColor": "#0B141A",
       "intentFilters": [
         {
           "action": "VIEW",
