@@ -39,6 +39,7 @@ import { supabase } from '../lib/supabase';
 import {
   getMessages,
   sendMessage,
+  clearRemoteChatNotification,
   editMessage,
   deleteMessage,
   forwardMessage,
@@ -171,6 +172,8 @@ function ChatScreenInner() {
     useCallback(() => {
       setOpenConversation(conversationId);
       void clearConversationNotification(conversationId);
+      // Multi-device: clear tray on phone B when this chat is open here.
+      void clearRemoteChatNotification(supabase, conversationId);
       void syncBadgeFromServer();
       return () => setOpenConversation(null);
     }, [conversationId]),

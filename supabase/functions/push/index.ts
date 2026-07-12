@@ -50,6 +50,8 @@ interface Body {
   data?: Record<string, string>;
   drainOutbox?: boolean;
   limit?: number;
+  /** When true (clear_chat), fan only to the authenticated user's devices. */
+  clearSelfDevices?: boolean;
 }
 
 interface Prefs {
@@ -116,6 +118,16 @@ Deno.serve(async (req) => {
     let failed = 0;
     let skippedDup = 0;
 
+    // ── Multi-device clear tray (reader's other devices) ─────────────────────
+    if (body.clearSelfDevices && body.data?.type === 'clear_chat' && senderId && body.conversationId) {
+      const n = await fanOutSelfDevices(admin, accessToken, sa.project_id, {
+        userId: senderId,
+        conversationId: body.conversationId,
+      });
+      delivered += n;
+      return json({ delivered, failed: 0, skippedDup: 0 }, 200);
+    }
+
     // ── Single fan-out (client sendPush) ────────────────────────────────────
     if (body.conversationId && body.kind) {
       if (!isService && senderId) {
@@ -129,7 +141,11 @@ Deno.serve(async (req) => {
       }
 
       const data = body.data ?? {};
-      const dedupeKey = buildDedupeKey(body.kind, data);
+      // clear_chat without clearSelfDevices flag still treated as silent cancel.
+      const dedupeKey =
+        data.type === 'clear_chat'
+          ? `clear:${body.conversationId}:${senderId ?? 'x'}:${Date.now()}`
+          : buildDedupeKey(body.kind, data);
 
       const result = await fanOut(admin, accessToken, sa.project_id, {
         conversationId: body.conversationId,
@@ -138,13 +154,13 @@ Deno.serve(async (req) => {
         body: body.body ?? 'New notification',
         data,
         senderId,
-        dedupeKey,
+        dedupeKey: data.type === 'clear_chat' ? null : dedupeKey,
       });
       delivered += result.delivered;
       skippedDup += result.skippedDup;
 
       // Client already sent → mark matching outbox rows delivered so drain won't re-send.
-      if (dedupeKey && result.delivered > 0) {
+      if (dedupeKey && result.delivered > 0 && data.type !== 'clear_chat') {
         await admin.rpc('mark_push_dedupe_delivered', { p_dedupe_key: dedupeKey }).catch(() => {});
       }
     }
@@ -298,6 +314,7 @@ async function fanOut(
   const channelId = CHANNEL[job.kind] ?? 'messages';
   const isCall = job.kind === 'call' || job.kind === 'missed_call';
   const isCallCancel = job.data?.type === 'call_status';
+  const isClearChat = job.data?.type === 'clear_chat';
 
   let delivered = 0;
   const stale: string[] = [];
@@ -306,7 +323,7 @@ async function fanOut(
     tokens.map(async (t) => {
       const p = prefsByUser.get(t.user_id) ?? {};
 
-      if (!isCall && !isCallCancel) {
+      if (!isCall && !isCallCancel && !isClearChat) {
         if (mutedUsers.has(t.user_id)) return;
         if ((job.kind === 'group' || job.kind === 'mention') && p.groupMute) return;
         if (job.kind === 'message' && p.messageMute) return;
@@ -320,8 +337,8 @@ async function fanOut(
 
       let title: string;
       let bodyText: string;
-      if (isCallCancel) {
-        title = 'Call ended';
+      if (isClearChat || isCallCancel) {
+        title = isClearChat ? 'Read' : 'Call ended';
         bodyText = '';
       } else if (isCall || job.kind === 'system' || job.kind === 'status' || job.kind === 'missed_call') {
         title = job.title || 'Lumixo';
@@ -342,23 +359,25 @@ async function fanOut(
       }
 
       const data: Record<string, string> = {
-        type: isCallCancel
-          ? 'call_status'
-          : job.kind === 'missed_call'
-            ? 'missed_call'
-            : job.kind === 'call'
-              ? 'call'
-              : job.kind === 'mention'
-                ? 'mention'
-                : job.kind === 'status'
-                  ? 'status_reply'
-                  : 'message',
+        type: isClearChat
+          ? 'clear_chat'
+          : isCallCancel
+            ? 'call_status'
+            : job.kind === 'missed_call'
+              ? 'missed_call'
+              : job.kind === 'call'
+                ? 'call'
+                : job.kind === 'mention'
+                  ? 'mention'
+                  : job.kind === 'status'
+                    ? 'status_reply'
+                    : 'message',
         kind: job.kind,
         conversationId: job.conversationId,
         ...(job.data ?? {}),
       };
-      if (imageUrl) data.avatarUrl = imageUrl;
-      if (senderName) data.senderName = senderName;
+      if (imageUrl && !isClearChat) data.avatarUrl = imageUrl;
+      if (senderName && !isClearChat) data.senderName = senderName;
 
       const tag =
         isCall || isCallCancel
@@ -369,18 +388,22 @@ async function fanOut(
       const collapseKey = isCall || isCallCancel ? tag : `chat:${job.conversationId}`;
 
       const message =
-        isCallCancel
+        isCallCancel || isClearChat
           ? {
               message: {
                 token: t.token,
                 data: { ...data, silent: '1' },
                 android: {
                   priority: 'high',
-                  ttl: '30s',
+                  ttl: isClearChat ? '60s' : '30s',
                   collapse_key: collapseKey,
                 },
                 apns: {
-                  headers: { 'apns-priority': '10', 'apns-push-type': 'background', 'apns-collapse-id': collapseKey },
+                  headers: {
+                    'apns-priority': '10',
+                    'apns-push-type': 'background',
+                    'apns-collapse-id': collapseKey,
+                  },
                   payload: { aps: { 'content-available': 1 } },
                 },
               },
@@ -464,6 +487,73 @@ async function fanOut(
   }
 
   return { delivered, skippedDup: 0 };
+}
+
+/** Silent clear for multi-device read sync — only the authenticated user's tokens. */
+async function fanOutSelfDevices(
+  admin: ReturnType<typeof createClient>,
+  accessToken: string,
+  projectId: string,
+  args: { userId: string; conversationId: string },
+): Promise<number> {
+  const { data: tokenRows } = await admin
+    .from('device_push_tokens')
+    .select('token')
+    .eq('user_id', args.userId);
+  const tokens = (tokenRows ?? []) as { token: string }[];
+  if (!tokens.length) return 0;
+
+  const fcmUrl = `https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`;
+  const collapseKey = `chat:${args.conversationId}`;
+  let delivered = 0;
+  const stale: string[] = [];
+
+  await Promise.all(
+    tokens.map(async (t) => {
+      const payload = {
+        message: {
+          token: t.token,
+          data: {
+            type: 'clear_chat',
+            silent: '1',
+            conversationId: args.conversationId,
+          },
+          android: { priority: 'high', ttl: '60s', collapse_key: collapseKey },
+          apns: {
+            headers: {
+              'apns-priority': '10',
+              'apns-push-type': 'background',
+              'apns-collapse-id': collapseKey,
+            },
+            payload: { aps: { 'content-available': 1 } },
+          },
+        },
+      };
+      const resp = await fetch(fcmUrl, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify(payload),
+      });
+      if (resp.ok) {
+        delivered++;
+        return;
+      }
+      const errText = await resp.text().catch(() => '');
+      if (resp.status === 404 || /UNREGISTERED|NOT_FOUND|Requested entity was not found/i.test(errText)) {
+        stale.push(t.token);
+      }
+    }),
+  );
+
+  if (stale.length) {
+    try {
+      await admin.from('device_push_tokens').delete().in('token', stale);
+    } catch { /* ignore */ }
+  }
+  return delivered;
 }
 
 function flattenData(d: unknown): Record<string, string> {

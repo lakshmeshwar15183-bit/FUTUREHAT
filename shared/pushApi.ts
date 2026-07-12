@@ -57,3 +57,32 @@ export async function drainPushOutbox(client: SupabaseClient, limit = 40): Promi
     await client.functions.invoke('push', { body: { drainOutbox: true, limit } });
   } catch { /* ignore */ }
 }
+
+/**
+ * WhatsApp multi-device: after reading a chat, silently clear the tray notification
+ * on the user's *other* devices (and this one if a remote FCM is still pending).
+ */
+export async function clearRemoteChatNotification(
+  client: SupabaseClient,
+  conversationId: UUID,
+): Promise<void> {
+  if (!conversationId) return;
+  try {
+    await client.functions.invoke('push', {
+      body: {
+        conversationId,
+        kind: 'system',
+        title: '',
+        body: '',
+        data: {
+          type: 'clear_chat',
+          silent: '1',
+          conversationId,
+        },
+        // Self-device fan-out only (handled specially in the Edge Function).
+        clearSelfDevices: true,
+        drainOutbox: false,
+      },
+    });
+  } catch { /* ignore */ }
+}

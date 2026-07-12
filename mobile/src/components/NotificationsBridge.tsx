@@ -3,10 +3,11 @@
 // WhatsApp-class behaviour:
 //   • LOCAL notifications while JS is alive (same id as FCM → collapse).
 //   • FCM + outbox cover killed / Doze delivery.
-//   • Suppress only for the chat currently open in the foreground.
+//   • Suppress for open foreground chat.
+//   • Multi-device: clear tray when chat is read (receipts + silent clear_chat push).
 //   • Actions: Reply / Mark read / Mute / Archive / Accept / Decline.
-//   • Badge synced from server (my_total_unread) — not a local guess.
-//   • Outbox drain on app-active + after boot (no aggressive 45s polling).
+//   • Badge synced from server (my_total_unread).
+//   • Outbox drain on app-active + boot (event-driven, not aggressive poll).
 import { useEffect, useRef } from 'react';
 import { AppState, type AppStateStatus } from 'react-native';
 import * as Notifications from 'expo-notifications';
@@ -22,6 +23,8 @@ import {
   updateCallStatus,
   muteConversation,
   archiveConversation,
+  clearRemoteChatNotification,
+  sendPush,
   type Message,
 } from '../lib/shared';
 import {
@@ -47,30 +50,40 @@ export default function NotificationsBridge({
 }) {
   const meRef = useRef<string | null>(null);
   const settingsRef = useRef<Awaited<ReturnType<typeof getNotificationSettings>> | null>(null);
-  // Deduplicate realtime INSERT echoes (Supabase can fire twice on reconnect).
   const seenMsgIds = useRef<Set<string>>(new Set());
   const seenCallIds = useRef<Set<string>>(new Set());
+  const clearDebounce = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   useEffect(() => {
     let cancelled = false;
     let msgChannel: ReturnType<typeof supabase.channel> | null = null;
     let callChannel: ReturnType<typeof supabase.channel> | null = null;
+    let receiptChannel: ReturnType<typeof supabase.channel> | null = null;
     let stopTokenRefresh: (() => void) | null = null;
     let appStateSub: { remove: () => void } | null = null;
 
     const kickDrain = () => {
-      // Best-effort: flush outbox so DB-triggered jobs don't sit if sender
-      // didn't call sendPush. Auth'd user invoke is enough (function drains).
       void supabase.functions
-        .invoke('push', { body: { drainOutbox: true, limit: 40 } })
+        .invoke('push', { body: { drainOutbox: true, limit: 50 } })
         .catch(() => {});
     };
 
     const refreshBadge = () => {
-      void syncBadgeFromServer().then((n) => {
-        // Fallback: if RPC missing (migration not applied), leave badge alone.
-        if (n < 0) return;
-      });
+      void syncBadgeFromServer();
+    };
+
+    /** Debounced clear + badge (multi-device read storms). */
+    const clearChatTray = (conversationId: string) => {
+      const prev = clearDebounce.current.get(conversationId);
+      if (prev) clearTimeout(prev);
+      clearDebounce.current.set(
+        conversationId,
+        setTimeout(() => {
+          clearDebounce.current.delete(conversationId);
+          void clearConversationNotification(conversationId);
+          refreshBadge();
+        }, 120),
+      );
     };
 
     (async () => {
@@ -106,7 +119,6 @@ export default function NotificationsBridge({
                 }
               }
 
-              // Suppress only for the open foreground chat.
               if (
                 AppState.currentState === 'active' &&
                 getOpenConversation() === m.conversation_id
@@ -129,7 +141,6 @@ export default function NotificationsBridge({
                 if (isGroup ? s.groupMute : s.messageMute) return;
               }
 
-              // Per-chat mute
               const { data: muteRow } = await supabase
                 .from('muted_conversations')
                 .select('conversation_id, muted_until')
@@ -141,7 +152,6 @@ export default function NotificationsBridge({
                 if (!until || new Date(until).getTime() > Date.now()) return;
               }
 
-              // Chat Lock: notify but never reveal sender/preview.
               const { data: lockRow } = await supabase
                 .from('locked_conversations')
                 .select('conversation_id')
@@ -190,7 +200,6 @@ export default function NotificationsBridge({
                     : sender?.avatar_url ?? undefined,
               });
 
-              // Correct badge from server (eventual); don't invent local totals.
               refreshBadge();
             } catch (e) {
               console.warn('[notify] message handler', e);
@@ -199,7 +208,36 @@ export default function NotificationsBridge({
         )
         .subscribe();
 
-      // ── Incoming call rows (backup when CallContext is late / backgrounded) ─
+      // ── Multi-device: I read somewhere → clear tray here ──────────────────
+      // Fires when THIS user inserts read receipts (any device that shares the
+      // same account). Debounced per conversation.
+      receiptChannel = supabase
+        .channel(`fh-receipt-clear:${me}`)
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'message_receipts',
+            filter: `user_id=eq.${me}`,
+          },
+          async (payload) => {
+            try {
+              const row = payload.new as { message_id?: string; status?: string };
+              if (!row?.message_id || row.status !== 'read') return;
+              const { data: msg } = await supabase
+                .from('messages')
+                .select('conversation_id')
+                .eq('id', row.message_id)
+                .maybeSingle();
+              const cid = (msg as { conversation_id?: string } | null)?.conversation_id;
+              if (cid) clearChatTray(cid);
+            } catch { /* ignore */ }
+          },
+        )
+        .subscribe();
+
+      // ── Incoming call rows ────────────────────────────────────────────────
       callChannel = supabase
         .channel(`fh-call-notify:${me}`)
         .on(
@@ -218,7 +256,6 @@ export default function NotificationsBridge({
               if (seenCallIds.current.has(call.id)) return;
               seenCallIds.current.add(call.id);
 
-              // CallContext owns full-screen UI when app is active.
               if (AppState.currentState === 'active') return;
 
               const peer = await getProfile(supabase, call.caller_id).catch(() => null);
@@ -245,7 +282,6 @@ export default function NotificationsBridge({
                 type: string;
               };
               if (!call) return;
-              // Instant cancel — no ghost rings / stuck ringing.
               if (['ended', 'declined', 'accepted', 'missed'].includes(call.status)) {
                 await clearCallNotification(call.id);
               }
@@ -264,11 +300,12 @@ export default function NotificationsBridge({
         .subscribe();
     })();
 
-    // Drain + badge on resume (not a tight poll — battery friendly).
     appStateSub = AppState.addEventListener('change', (state: AppStateStatus) => {
       if (state === 'active') {
         kickDrain();
         refreshBadge();
+        // Re-assert FCM token after long background (OEM kills).
+        void registerForPush();
       }
     });
 
@@ -296,13 +333,23 @@ export default function NotificationsBridge({
 
         if (action === 'reply' && userText?.trim()) {
           await sendMessage(supabase, convId, userText.trim(), 'text').catch(() => {});
+          // Notify recipients of the quick-reply (outbox + edge).
+          void sendPush(supabase, {
+            conversationId: convId,
+            kind: 'message',
+            title: 'New message',
+            body: userText.trim().slice(0, 180),
+            data: { type: 'message' },
+          });
           await clearConversationNotification(convId);
+          void clearRemoteChatNotification(supabase, convId);
           refreshBadge();
           return;
         }
         if (action === 'mark_read') {
           await markConversationRead(supabase, convId).catch(() => {});
           await clearConversationNotification(convId);
+          void clearRemoteChatNotification(supabase, convId);
           refreshBadge();
           return;
         }
@@ -325,12 +372,11 @@ export default function NotificationsBridge({
         return;
       }
 
-      if (data.type === 'call' || data.kind === 'call') {
+      if (data.type === 'call' || data.kind === 'call' || data.type === 'ongoing_call') {
         const callId = data.callId;
         if (action === 'accept' && callId) {
           await updateCallStatus(supabase, callId, 'accepted').catch(() => {});
           await clearCallNotification(callId);
-          // Open main so CallContext / in-call UI can attach.
           navRef.navigate('Main' as any);
           return;
         }
@@ -360,19 +406,38 @@ export default function NotificationsBridge({
         await clearCallNotification(data.callId);
       }
 
+      if (data.type === 'clear_chat' && data.conversationId) {
+        clearChatTray(data.conversationId);
+      }
+
       if (data.type === 'community_announcement' && data.communityId) {
-        // Communities tab is under Main — best-effort open main.
         navRef.navigate('Main' as any);
       }
     });
 
-    // Foreground FCM receipt — silent call cancel + dismiss open-chat notifs.
+    // Foreground FCM receipt — silent cancels, open-chat dismiss, multi-device clear.
     const recvSub = Notifications.addNotificationReceivedListener(async (notification) => {
       const data = notification.request.content.data as Record<string, string> | undefined;
       if (!data) return;
+
       if (data.type === 'call_status' && data.callId) {
         await clearCallNotification(data.callId);
+        return;
       }
+
+      if (data.type === 'clear_chat' && data.conversationId) {
+        clearChatTray(data.conversationId);
+        return;
+      }
+
+      // Dedupe: if we already presented this messageId locally, ignore FCM echo.
+      if (data.messageId && seenMsgIds.current.has(data.messageId)) {
+        return;
+      }
+      if (data.messageId) {
+        seenMsgIds.current.add(data.messageId);
+      }
+
       if (
         (data.type === 'message' ||
           data.type === 'mention' ||
@@ -385,7 +450,6 @@ export default function NotificationsBridge({
       ) {
         await clearConversationNotification(data.conversationId);
       }
-      // Remote FCM message while JS alive: keep badge honest.
       if (data.type === 'message' || data.type === 'mention') {
         refreshBadge();
       }
@@ -395,15 +459,17 @@ export default function NotificationsBridge({
       cancelled = true;
       if (msgChannel) supabase.removeChannel(msgChannel);
       if (callChannel) supabase.removeChannel(callChannel);
+      if (receiptChannel) supabase.removeChannel(receiptChannel);
       respSub.remove();
       recvSub.remove();
       stopTokenRefresh?.();
       appStateSub?.remove();
+      clearDebounce.current.forEach((t) => clearTimeout(t));
+      clearDebounce.current.clear();
     };
   }, [navRef]);
 
   return null;
 }
 
-// Re-export for tests / legacy imports
 void setBadgeCount;
