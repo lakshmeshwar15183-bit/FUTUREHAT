@@ -64,6 +64,23 @@
 }
 .chat-enc-note svg { opacity: 0.85; }
 
+.load-older-msgs {
+  display: block;
+  margin: 8px auto 16px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--fh-border, #2a3942);
+  background: var(--fh-panel, #202c33);
+  color: var(--fh-muted, #8696a0);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.load-older-msgs:hover {
+  color: var(--fh-text, #e9edef);
+  border-color: var(--fh-muted, #8696a0);
+}
+
 .messages-container {
   flex: 1;
   overflow-y: auto;

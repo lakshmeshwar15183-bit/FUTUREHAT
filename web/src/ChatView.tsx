@@ -40,7 +40,7 @@ import {
 import { FREE_LIMITS, PREMIUM_LIMITS } from '@shared/premium/features';
 import type { ConversationSummary, Message, MessageReceipt, MessageReaction, ParticipantRole } from '@shared/types';
 import { formatDistanceToNow, format, isToday, isYesterday, isSameDay } from 'date-fns';
-import { bubbleMine, bubbleTheirs, spring } from './motion';
+import { spring } from './motion';
 import { STICKERS } from './premium/stickers';
 import { GroupInfoModal } from './GroupInfoModal';
 import './ChatView.css';
@@ -57,6 +57,9 @@ const QUICK_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 const MORE_EMOJIS = ['🔥', '🎉', '🥳', '💯', '👀', '🤝', '✨', '🫶', '👏', '🙌', '😍', '🤔', '😭', '😡', '🤩', '💪', '✅', '⭐', '🚀', '💔'];
 const LANGUAGES = ['English', 'Hindi', 'Spanish', 'French', 'Japanese', 'German'];
 const TYPING_TIMEOUT = 2500;
+/** Windowed history: only mount the newest N messages; expand on scroll-up. */
+const MSG_WINDOW_INITIAL = 80;
+const MSG_WINDOW_STEP = 60;
 // AI assistant tools are hidden until the feature is finalized. Flip to true to restore.
 const AI_ENABLED = false;
 // Videos: first-class type='video' (migration 0031) + legacy type='file' with video extension.
@@ -156,6 +159,7 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const loadingOlderRef = useRef(false);
   // Touch long-press → open the message action menu (WhatsApp parity on touch
   // devices). Desktop keeps hover tools + right-click. ~300ms hold; a normal tap
   // (shorter) or a scroll (move) cancels it so image/link taps still work.
@@ -612,6 +616,15 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
     [messages, hiddenMsgIds, now],
   );
   const searchActive = searchOpen && (!!search || searchKind !== 'all');
+  // Windowed list: newest MSG_WINDOW_* messages only (except during search).
+  const [msgWindow, setMsgWindow] = useState(MSG_WINDOW_INITIAL);
+  useEffect(() => { setMsgWindow(MSG_WINDOW_INITIAL); }, [convId]);
+  const windowedMessages = useMemo(() => {
+    if (searchActive) return displayMessages;
+    if (displayMessages.length <= msgWindow) return displayMessages;
+    return displayMessages.slice(displayMessages.length - msgWindow);
+  }, [displayMessages, msgWindow, searchActive]);
+  const hasOlderMessages = !searchActive && displayMessages.length > msgWindow;
   const matchIds = useMemo(() => {
     if (!searchActive) return [] as string[];
     return displayMessages
@@ -778,39 +791,67 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
         )}
       </AnimatePresence>
 
-      <div ref={messagesContainerRef} className="messages-container"
-        onScroll={(e) => { const c = e.currentTarget; setShowJump(c.scrollHeight - c.scrollTop - c.clientHeight > 240); }}
-        onClick={() => { setPickerFor(null); setActionFor(null); setAiOpen(false); setStickersOpen(false); }}>
+      <div
+        ref={messagesContainerRef}
+        className="messages-container"
+        onScroll={(e) => {
+          const c = e.currentTarget;
+          setShowJump(c.scrollHeight - c.scrollTop - c.clientHeight > 240);
+          // Expand window when user scrolls near top (preserve scroll position).
+          if (hasOlderMessages && c.scrollTop < 100 && !loadingOlderRef.current) {
+            loadingOlderRef.current = true;
+            const prevHeight = c.scrollHeight;
+            const prevTop = c.scrollTop;
+            setMsgWindow((w) => Math.min(displayMessages.length, w + MSG_WINDOW_STEP));
+            requestAnimationFrame(() => {
+              const el = messagesContainerRef.current;
+              if (el) el.scrollTop = el.scrollHeight - prevHeight + prevTop;
+              loadingOlderRef.current = false;
+            });
+          }
+        }}
+        onClick={() => { setPickerFor(null); setActionFor(null); setAiOpen(false); setStickersOpen(false); }}
+      >
         <div className="chat-enc-note" role="note">
           <LockIcon size={12} /> Encrypted in transit
         </div>
-        <AnimatePresence initial={false}>
-          {displayMessages.map((msg, i) => {
-            // System notices (0027): centered WhatsApp-style info pill (disappearing
-            // timer on/off/changed). Not selectable, replyable, editable or deletable.
-            if (msg.type === 'system') {
-              return (
-                <div key={msg.id} className="system-notice">
-                  <span className="system-notice-pill">⏳ {msg.content}</span>
-                </div>
-              );
-            }
-            const isMine = msg.sender_id === profile?.id;
-            const sender = conversation.participants.find((p) => p.id === msg.sender_id);
-            const msgReactions = reactionsByMessage[msg.id] || [];
-            const replied = repliedOf(msg);
-            const prev = displayMessages[i - 1];
-            const showDaySep = !prev || !isSameDay(new Date(prev.created_at), new Date(msg.created_at));
-            const grouped = !!prev && !showDaySep && prev.sender_id === msg.sender_id
-              && new Date(msg.created_at).getTime() - new Date(prev.created_at).getTime() < GROUP_WINDOW_MS;
-            const isActiveMatch = msg.id === activeMatchId;
-            const isMatch = searchActive && matchIds.includes(msg.id);
-            return [
-              showDaySep && (
-                <div key={`${msg.id}-sep`} className="day-sep"><span>{daySepLabel(msg.created_at)}</span></div>
-              ),
-              <motion.div key={msg.id} id={`m-${msg.id}`} layout variants={isMine ? bubbleMine : bubbleTheirs} initial="initial" animate="animate"
-                className={`message ${isMine ? 'mine' : 'theirs'} ${grouped ? 'grouped' : ''} ${isMatch ? 'search-match' : ''} ${isActiveMatch ? 'search-match-active' : ''}`}>
+        {hasOlderMessages && (
+          <button
+            type="button"
+            className="load-older-msgs"
+            onClick={() => setMsgWindow((w) => Math.min(displayMessages.length, w + MSG_WINDOW_STEP))}
+          >
+            Load older messages ({displayMessages.length - msgWindow} more)
+          </button>
+        )}
+        {windowedMessages.map((msg, i) => {
+          // System notices (0027): centered WhatsApp-style info pill.
+          if (msg.type === 'system') {
+            return (
+              <div key={msg.id} className="system-notice">
+                <span className="system-notice-pill">⏳ {msg.content}</span>
+              </div>
+            );
+          }
+          const isMine = msg.sender_id === profile?.id;
+          const sender = conversation.participants.find((p) => p.id === msg.sender_id);
+          const msgReactions = reactionsByMessage[msg.id] || [];
+          const replied = repliedOf(msg);
+          const prev = windowedMessages[i - 1];
+          const showDaySep = !prev || !isSameDay(new Date(prev.created_at), new Date(msg.created_at));
+          const grouped = !!prev && !showDaySep && prev.sender_id === msg.sender_id
+            && new Date(msg.created_at).getTime() - new Date(prev.created_at).getTime() < GROUP_WINDOW_MS;
+          const isActiveMatch = msg.id === activeMatchId;
+          const isMatch = searchActive && matchIds.includes(msg.id);
+          return (
+            <div key={msg.id}>
+              {showDaySep && (
+                <div className="day-sep"><span>{daySepLabel(msg.created_at)}</span></div>
+              )}
+              <div
+                id={`m-${msg.id}`}
+                className={`message ${isMine ? 'mine' : 'theirs'} ${grouped ? 'grouped' : ''} ${isMatch ? 'search-match' : ''} ${isActiveMatch ? 'search-match-active' : ''}`}
+              >
                 {!isMine && isGroup && !msg.is_deleted && !grouped && <div className="message-sender">{sender?.display_name || 'Unknown'}</div>}
                 <div className="message-row">
                   <div className={`message-bubble ${msg.is_deleted ? 'deleted' : ''}`} {...bubbleHoldHandlers(msg.id, !!msg.is_deleted)}>
@@ -842,8 +883,6 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
                         {msg.type === 'file' && msg.media_url && !isVideoUrl(msg.media_url) && safeHref(msg.media_url) && (
                           <SignedLink source={msg.media_url} className="message-file">📎 {msg.content || 'File'}</SignedLink>
                         )}
-                        {/* Captions for media + text body. Skip for pure audio (player owns UI)
-                            and for file docs where content is the filename already shown. */}
                         {(msg.type === 'text' ||
                           (msg.content &&
                             msg.type !== 'audio' &&
@@ -855,19 +894,22 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
                           {msg.edited_at && <span className="edited-tag">edited</span>}
                           {clockTime(msg.created_at)}
                           {isMine && (
-                            <motion.span key={readMessageIds.has(msg.id) ? 'read' : 'sent'} initial={{ scale: 0.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={spring}
-                              className={`read-receipt ${readMessageIds.has(msg.id) ? 'read' : ''}`}>
+                            <span className={`read-receipt ${readMessageIds.has(msg.id) ? 'read' : ''}`}>
                               {readMessageIds.has(msg.id) ? '✓✓' : '✓'}
-                            </motion.span>
+                            </span>
                           )}
                         </div>
                         {msgReactions.length > 0 && (
                           <div className="reaction-pills">
                             {msgReactions.map((r) => (
-                              <motion.button key={r.emoji} layout initial={{ scale: 0 }} animate={{ scale: 1 }} transition={spring}
-                                className={`reaction-pill ${r.mine ? 'mine' : ''}`} onClick={(e) => { e.stopPropagation(); handleReact(msg.id, r.emoji); }}>
+                              <button
+                                key={r.emoji}
+                                type="button"
+                                className={`reaction-pill ${r.mine ? 'mine' : ''}`}
+                                onClick={(e) => { e.stopPropagation(); handleReact(msg.id, r.emoji); }}
+                              >
                                 {r.emoji} {r.count}
-                              </motion.button>
+                              </button>
                             ))}
                           </div>
                         )}
@@ -877,39 +919,39 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
 
                   {!msg.is_deleted && (
                     <div className="msg-tools">
-                      <button className="react-trigger" onClick={(e) => { e.stopPropagation(); setActionFor(null); setPickerFor((c) => (c === msg.id ? null : msg.id)); }} title="React">☺</button>
-                      <button className="react-trigger" onClick={(e) => { e.stopPropagation(); setPickerFor(null); setActionFor((c) => (c === msg.id ? null : msg.id)); }} title="More">⋮</button>
+                      <button type="button" className="react-trigger" onClick={(e) => { e.stopPropagation(); setActionFor(null); setPickerFor((c) => (c === msg.id ? null : msg.id)); }} title="React">☺</button>
+                      <button type="button" className="react-trigger" onClick={(e) => { e.stopPropagation(); setPickerFor(null); setActionFor((c) => (c === msg.id ? null : msg.id)); }} title="More">⋮</button>
                     </div>
                   )}
 
-                  <AnimatePresence>
-                    {pickerFor === msg.id && (
-                      <motion.div className="emoji-picker glass" initial={{ opacity: 0, y: 6, scale: 0.9 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} onClick={(e) => e.stopPropagation()}>
-                        {emojiSet.map((emoji) => (<motion.button key={emoji} whileHover={{ scale: 1.3 }} onClick={() => handleReact(msg.id, emoji)}>{emoji}</motion.button>))}
-                      </motion.div>
-                    )}
-                    {actionFor === msg.id && (
-                      <motion.div className="action-menu glass" initial={{ opacity: 0, y: 6, scale: 0.95 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} onClick={(e) => e.stopPropagation()}>
-                        <button onClick={() => startReply(msg)}><ReplyIcon size={16} /> Reply</button>
-                        <button onClick={() => openForward(msg)}><ForwardIcon size={16} /> Forward</button>
-                        <button onClick={() => toggleStar(msg)}><StarIcon size={16} filled={starredIds.has(msg.id)} /> {starredIds.has(msg.id) ? 'Unstar' : 'Star'}</button>
-                        {isGroup && canPinMessages(myGroupRole, permissionsFromConversation(conversation.conversation)) && (
-                          <button onClick={() => togglePin(msg)}>
-                            📌 {pinnedIds.has(msg.id) ? 'Unpin' : 'Pin'}
-                          </button>
-                        )}
-                        {msg.content && <button onClick={() => copyText(msg)}><CopyIcon size={16} /> Copy</button>}
-                        {isMine && msg.type === 'text' && <button onClick={() => startEdit(msg)}><EditIcon size={16} /> Edit</button>}
-                        <button onClick={() => deleteForMe(msg)}><TrashIcon size={16} /> Delete for me</button>
-                        {isMine && <button className="danger" onClick={() => doDelete(msg)}><TrashIcon size={16} /> Unsend</button>}
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
+                  {pickerFor === msg.id && (
+                    <div className="emoji-picker glass" onClick={(e) => e.stopPropagation()}>
+                      {emojiSet.map((emoji) => (
+                        <button type="button" key={emoji} onClick={() => handleReact(msg.id, emoji)}>{emoji}</button>
+                      ))}
+                    </div>
+                  )}
+                  {actionFor === msg.id && (
+                    <div className="action-menu glass" onClick={(e) => e.stopPropagation()}>
+                      <button type="button" onClick={() => startReply(msg)}><ReplyIcon size={16} /> Reply</button>
+                      <button type="button" onClick={() => openForward(msg)}><ForwardIcon size={16} /> Forward</button>
+                      <button type="button" onClick={() => toggleStar(msg)}><StarIcon size={16} filled={starredIds.has(msg.id)} /> {starredIds.has(msg.id) ? 'Unstar' : 'Star'}</button>
+                      {isGroup && canPinMessages(myGroupRole, permissionsFromConversation(conversation.conversation)) && (
+                        <button type="button" onClick={() => togglePin(msg)}>
+                          📌 {pinnedIds.has(msg.id) ? 'Unpin' : 'Pin'}
+                        </button>
+                      )}
+                      {msg.content && <button type="button" onClick={() => copyText(msg)}><CopyIcon size={16} /> Copy</button>}
+                      {isMine && msg.type === 'text' && <button type="button" onClick={() => startEdit(msg)}><EditIcon size={16} /> Edit</button>}
+                      <button type="button" onClick={() => deleteForMe(msg)}><TrashIcon size={16} /> Delete for me</button>
+                      {isMine && <button type="button" className="danger" onClick={() => doDelete(msg)}><TrashIcon size={16} /> Unsend</button>}
+                    </div>
+                  )}
                 </div>
-              </motion.div>,
-            ];
-          })}
-        </AnimatePresence>
+              </div>
+            </div>
+          );
+        })}
         {search && displayMessages.length === 0 && <div className="empty-state">No messages match “{searchTerm.trim()}”.</div>}
         {uploading && <div className="message mine"><div className="message-bubble uploading">Uploading...</div></div>}
         <div ref={messagesEndRef} />

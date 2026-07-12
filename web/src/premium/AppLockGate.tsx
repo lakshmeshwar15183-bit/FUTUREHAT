@@ -1,17 +1,16 @@
 // Lumixo+ — App lock. When enabled (premium), the app is hidden behind a PIN
 // (and device biometrics via WebAuthn when available) until unlocked this session.
+// No framer-motion — keeps app shell off the motion chunk.
 
 import { useEffect, useState, type ReactNode } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../AuthContext';
 import { usePremium } from '../PremiumContext';
-import { spring } from '../motion';
 
-// SHA-256 of the PIN, salted with the user id, via Web Crypto. The plaintext PIN
-// is never stored. (For a hardware-backed factor, enable real WebAuthn passkeys.)
 async function digest(userId: string, pin: string): Promise<string> {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${userId}:${pin}`));
-  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
+  return Array.from(new Uint8Array(buf))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
 }
 
 export function pinStorageKey(userId: string) {
@@ -30,8 +29,6 @@ export function AppLockGate({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!user) {
-      // Signed out: drop any session unlock flags so a re-login (same tab) must
-      // re-enter the PIN instead of inheriting the previous session's unlock.
       for (let i = sessionStorage.length - 1; i >= 0; i--) {
         const k = sessionStorage.key(i);
         if (k && k.startsWith('fh_unlocked_')) sessionStorage.removeItem(k);
@@ -98,11 +95,8 @@ export function AppLockGate({ children }: { children: ReactNode }) {
 
   return (
     <div className="fh-splash">
-      <motion.div
+      <div
         className="glass"
-        initial={{ scale: 0.9, opacity: 0, y: 20 }}
-        animate={{ scale: 1, opacity: 1, y: 0 }}
-        transition={spring}
         style={{ padding: 32, borderRadius: 24, width: 320, textAlign: 'center' }}
       >
         <div style={{ fontSize: 40 }}>🔐</div>
@@ -118,35 +112,61 @@ export function AppLockGate({ children }: { children: ReactNode }) {
           inputMode="numeric"
           value={entry}
           onChange={(e) => setEntry(e.target.value.replace(/\D/g, ''))}
-          onKeyDown={(e) => e.key === 'Enter' && submit()}
+          onKeyDown={(e) => e.key === 'Enter' && void submit()}
           placeholder="••••"
           style={{
-            width: '100%', textAlign: 'center', letterSpacing: 8, fontSize: 22,
-            padding: '12px', borderRadius: 12, border: '1px solid var(--fh-border)',
-            background: 'var(--fh-elevated)', color: 'var(--fh-text)', outline: 'none',
+            width: '100%',
+            textAlign: 'center',
+            letterSpacing: 8,
+            fontSize: 22,
+            padding: '12px',
+            borderRadius: 12,
+            border: '1px solid var(--fh-border)',
+            background: 'var(--fh-elevated)',
+            color: 'var(--fh-text)',
+            outline: 'none',
           }}
         />
-        <AnimatePresence>
-          {error && (
-            <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
-              style={{ color: '#ff6b6b', fontSize: 13, marginTop: 10 }}>
-              {error}
-            </motion.div>
-          )}
-        </AnimatePresence>
-        <motion.button whileTap={{ scale: 0.96 }} onClick={submit}
-          style={{ width: '100%', marginTop: 16, padding: 12, borderRadius: 12, border: 'none',
-            background: 'var(--fh-accent)', color: '#fff', fontWeight: 700, fontSize: 15 }}>
+        {error && (
+          <div style={{ color: '#ff6b6b', fontSize: 13, marginTop: 10 }}>{error}</div>
+        )}
+        <button
+          type="button"
+          onClick={() => void submit()}
+          style={{
+            width: '100%',
+            marginTop: 16,
+            padding: 12,
+            borderRadius: 12,
+            border: 'none',
+            background: 'var(--fh-accent)',
+            color: '#fff',
+            fontWeight: 700,
+            fontSize: 15,
+            cursor: 'pointer',
+          }}
+        >
           {mode === 'create' ? 'Set PIN' : 'Unlock'}
-        </motion.button>
+        </button>
         {mode === 'enter' && (
-          <button onClick={biometric}
-            style={{ width: '100%', marginTop: 10, padding: 10, borderRadius: 12,
-              border: '1px solid var(--fh-border)', background: 'transparent', color: 'var(--fh-text)' }}>
+          <button
+            type="button"
+            onClick={() => void biometric()}
+            style={{
+              width: '100%',
+              marginTop: 10,
+              padding: 10,
+              borderRadius: 12,
+              border: '1px solid var(--fh-border)',
+              background: 'transparent',
+              color: 'var(--fh-text)',
+              cursor: 'pointer',
+            }}
+          >
             Use Face ID / Touch ID
           </button>
         )}
-      </motion.div>
+      </div>
     </div>
   );
 }

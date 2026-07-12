@@ -1,29 +1,20 @@
-// Lumixo web — Auth screen with interactive mascot + motion.
+// Lumixo web — Auth screen with interactive mascot (CSS-only — no framer-motion).
 
 import { useState, type FormEvent } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
 import { signInWithEmail, signUpWithEmail } from '@shared/api';
 import { supabase } from './supabase';
 import { Mascot } from './Mascot';
-import { spring, quick } from './motion';
 import './Auth.css';
 
 // Where we tell Supabase to send the user after they click the reset-password
-// link. MUST match one of the entries in Supabase → Auth → URL Configuration →
-// Additional Redirect URLs, otherwise the auth server silently downgrades to
-// the project's Site URL (and the "reset link opens the wrong page" bug is back).
-// VITE_SITE_URL overrides `window.location.origin` for cases where the app is
-// hosted behind a proxy that reports a different origin than the public domain.
+// link. MUST match Supabase Auth redirect allow-list.
 function resetRedirectUrl(): string {
-  // Prefer explicit production site URL so reset emails never embed localhost
-  // when the developer happens to trigger forgot-password from a local tab.
   const envSite = (import.meta as any).env?.VITE_SITE_URL as string | undefined;
   let base = envSite?.replace(/\/+$/, '') || '';
   if (!base) {
     const origin = window.location.origin;
     const isLocal = /localhost|127\.0\.0\.1/.test(origin);
     if (isLocal) {
-      // Fall back to known production host rather than poisoning reset emails.
       base = 'https://futurehat-app.netlify.app';
       console.warn('[auth] VITE_SITE_URL unset on localhost — using production site for reset redirect');
     } else {
@@ -66,7 +57,7 @@ export function AuthScreen() {
           redirectTo: resetRedirectUrl(),
         });
         if (err) throw err;
-        setNotice("Password reset link sent. Check your email and click the link to continue.");
+        setNotice('Password reset link sent. Check your email and click the link to continue.');
         setMode('signin');
       } else {
         const { error: err } = await signInWithEmail(supabase, email, password);
@@ -83,12 +74,7 @@ export function AuthScreen() {
   return (
     <div className="auth-screen">
       <div className="auth-aurora" aria-hidden />
-      <motion.div
-        className="auth-card glass"
-        initial={{ opacity: 0, y: 24, scale: 0.96 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        transition={spring}
-      >
+      <div className="auth-card glass auth-card-enter">
         <div className="auth-mascot">
           <Mascot gaze={gaze} coverEyes={pwFocused} happy={happy} />
         </div>
@@ -96,24 +82,16 @@ export function AuthScreen() {
         <p className="auth-tagline">Real-time messaging, reimagined</p>
 
         <form onSubmit={handleSubmit} className="auth-form">
-          <AnimatePresence initial={false} mode="popLayout">
-            {mode === 'signup' && (
-              <motion.input
-                key="name"
-                layout
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: 48 }}
-                exit={{ opacity: 0, height: 0 }}
-                transition={quick}
-                type="text"
-                placeholder="Display name"
-                value={displayName}
-                onChange={(e) => setDisplayName(e.target.value)}
-                required
-                disabled={loading}
-              />
-            )}
-          </AnimatePresence>
+          {mode === 'signup' && (
+            <input
+              type="text"
+              placeholder="Display name"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              required
+              disabled={loading}
+            />
+          )}
           <input
             type="email"
             placeholder="Email"
@@ -136,38 +114,23 @@ export function AuthScreen() {
               disabled={loading}
             />
           )}
-          <AnimatePresence>
-            {error && (
-              <motion.div
-                key="err"
-                className="auth-error"
-                initial={{ opacity: 0, y: -6 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }}
-              >
-                {error}
-              </motion.div>
-            )}
-            {notice && (
-              <motion.div
-                key="ntc"
-                className="auth-error"
-                style={{ background: 'rgba(0, 168, 132, 0.15)', color: 'inherit' }}
-                initial={{ opacity: 0, y: -6 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }}
-              >
-                {notice}
-              </motion.div>
-            )}
-          </AnimatePresence>
-          <motion.button whileTap={{ scale: 0.96 }} type="submit" disabled={loading} className="auth-submit">
+          {error && <div className="auth-error">{error}</div>}
+          {notice && (
+            <div className="auth-error" style={{ background: 'rgba(0, 168, 132, 0.15)', color: 'inherit' }}>
+              {notice}
+            </div>
+          )}
+          <button type="submit" disabled={loading} className="auth-submit">
             {loading ? (
               <span className="fh-spinner" style={{ width: 20, height: 20, borderWidth: 2 }} />
-            ) : mode === 'signin' ? 'Sign In'
-              : mode === 'signup' ? 'Create account'
-              : 'Send reset link'}
-          </motion.button>
+            ) : mode === 'signin' ? (
+              'Sign In'
+            ) : mode === 'signup' ? (
+              'Create account'
+            ) : (
+              'Send reset link'
+            )}
+          </button>
         </form>
 
         <div className="auth-toggle">
@@ -179,13 +142,19 @@ export function AuthScreen() {
             </>
           )}
           {mode === 'signup' && (
-            <>Already have an account? <a onClick={() => { setError(''); setNotice(''); setMode('signin'); }}>Sign in</a></>
+            <>
+              Already have an account?{' '}
+              <a onClick={() => { setError(''); setNotice(''); setMode('signin'); }}>Sign in</a>
+            </>
           )}
           {mode === 'forgot' && (
-            <>Remembered it? <a onClick={() => { setError(''); setNotice(''); setMode('signin'); }}>Back to sign in</a></>
+            <>
+              Remembered it?{' '}
+              <a onClick={() => { setError(''); setNotice(''); setMode('signin'); }}>Back to sign in</a>
+            </>
           )}
         </div>
-      </motion.div>
+      </div>
 
       <div className="auth-footer">Developed by LAKSHMESHWAR PANDEY</div>
     </div>

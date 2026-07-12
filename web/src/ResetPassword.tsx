@@ -1,28 +1,15 @@
-// Lumixo web — recovery-link landing page.
+// Lumixo web — recovery-link landing page (CSS-only — no framer-motion).
 //
-// Trigger: the user clicked "Reset password" in an email. Supabase redirects
-// them to `${SITE_URL}/reset-password#access_token=…&refresh_token=…&type=recovery`.
-// Because our client sets `detectSessionInUrl: true` on the web, the Supabase
-// SDK reads that fragment on load, calls setSession() under the hood, and fires
-// a PASSWORD_RECOVERY event on onAuthStateChange. Main.tsx catches that event
-// (or the pathname) and mounts this screen so the user can actually pick a new
-// password — the old build silently dropped them into the chat app instead.
-//
-// This screen calls updateUser({ password }), then signs the user out so any
-// old refresh tokens are invalidated (Supabase-recommended pattern).
+// Trigger: user clicked "Reset password" in email. Supabase redirects to
+// `${SITE_URL}/reset-password#…&type=recovery`. AuthContext sets recoveryMode
+// and appTree mounts this screen.
+
 import { useEffect, useState, type FormEvent } from 'react';
-import { motion } from 'framer-motion';
 import { supabase } from './supabase';
-import { spring } from './motion';
 import './Auth.css';
 
 interface Props {
-  /** True when we arrived via a PASSWORD_RECOVERY event OR the URL matched
-   *  `/reset-password`. False → we render an "invalid link" state so users who
-   *  bookmark or share the URL don't hit a live form with no recovery session. */
   hasRecoverySession: boolean;
-  /** Called when the flow is done or the user aborts. Main.tsx uses it to
-   *  clear its own `recoveryMode` flag and drop the user back on Auth. */
   onDone: () => void;
 }
 
@@ -33,11 +20,6 @@ export function ResetPasswordScreen({ hasRecoverySession, onDone }: Props) {
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
 
-  // Strip the recovery fragment from the URL — but ONLY once the SDK has
-  // installed a session, so we don't race the detectSessionInUrl handler that
-  // reads the tokens on client creation. If the fragment is still there when
-  // the user opens the site again (e.g. via history back), Supabase would
-  // re-process an already-consumed token and hit the "already used" error.
   useEffect(() => {
     if (!hasRecoverySession) return;
     if (window.location.hash || window.location.pathname === '/reset-password') {
@@ -48,15 +30,19 @@ export function ResetPasswordScreen({ hasRecoverySession, onDone }: Props) {
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError('');
-    if (password.length < 6) { setError('Password must be at least 6 characters.'); return; }
-    if (password !== confirm) { setError('Passwords do not match.'); return; }
+    if (password.length < 6) {
+      setError('Password must be at least 6 characters.');
+      return;
+    }
+    if (password !== confirm) {
+      setError('Passwords do not match.');
+      return;
+    }
     setLoading(true);
     try {
       const { error: err } = await supabase.auth.updateUser({ password });
       if (err) throw err;
       setDone(true);
-      // Force a fresh sign-in with the new password: invalidates any old
-      // refresh tokens tied to the recovery session.
       await supabase.auth.signOut();
       setTimeout(() => onDone(), 900);
     } catch (err: any) {
@@ -74,12 +60,7 @@ export function ResetPasswordScreen({ hasRecoverySession, onDone }: Props) {
   return (
     <div className="auth-screen">
       <div className="auth-aurora" aria-hidden />
-      <motion.div
-        className="auth-card glass"
-        initial={{ opacity: 0, y: 24, scale: 0.96 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        transition={spring}
-      >
+      <div className="auth-card glass auth-card-enter">
         <h1 className="auth-logo">Lumixo</h1>
         <p className="auth-tagline">Choose a new password</p>
 
@@ -88,15 +69,9 @@ export function ResetPasswordScreen({ hasRecoverySession, onDone }: Props) {
             <div className="auth-error" role="alert">
               This reset link is invalid or has expired. Request a new one from the sign-in screen.
             </div>
-            <motion.button
-              whileTap={{ scale: 0.96 }}
-              type="button"
-              onClick={onDone}
-              className="auth-submit"
-              style={{ marginTop: 16 }}
-            >
+            <button type="button" onClick={onDone} className="auth-submit" style={{ marginTop: 16 }}>
               Back to sign in
-            </motion.button>
+            </button>
           </>
         ) : done ? (
           <div className="auth-error" role="status" style={{ background: 'rgba(0, 168, 132, 0.15)', color: 'inherit' }}>
@@ -127,15 +102,15 @@ export function ResetPasswordScreen({ hasRecoverySession, onDone }: Props) {
             {error && (
               <div className="auth-error" role="alert">{error}</div>
             )}
-            <motion.button whileTap={{ scale: 0.96 }} type="submit" disabled={loading} className="auth-submit">
+            <button type="submit" disabled={loading} className="auth-submit">
               {loading ? <span className="fh-spinner" style={{ width: 20, height: 20, borderWidth: 2 }} /> : 'Update password'}
-            </motion.button>
+            </button>
             <div className="auth-toggle">
               <a onClick={onDone}>Back to sign in</a>
             </div>
           </form>
         )}
-      </motion.div>
+      </div>
 
       <div className="auth-footer">Developed by LAKSHMESHWAR PANDEY</div>
     </div>

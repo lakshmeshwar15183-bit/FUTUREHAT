@@ -116,7 +116,7 @@ Measured from `web/dist` production builds.
 | `index-*.css` (monolithic) | 77 KB |
 | **Critical JS sum (approx)** | **~694 KB** |
 
-### After (this pass)
+### After (first pass)
 
 | Asset | Raw | Role |
 |-------|-----|------|
@@ -125,12 +125,25 @@ Measured from `web/dist` production builds.
 | `supabase-*.js` | 204.7 KB | Vendor (parallel) |
 | `motion-*.js` | 111.5 KB | Still pulled by CallProvider |
 | `ChatView-*.js` | **68.6 KB** | **Lazy** |
-| `index-*.css` | **39.8 KB** | Shell styles only |
-| `ChatView-*.css` | 34.4 KB | Lazy with chat |
-| **Critical JS sum** | **~591 KB** | −15% raw; **ChatView off critical** |
-| **Main app chunk** | **422 → 136 KB (−68%)** | Largest single win |
+| **Critical JS sum** | **~591 KB** | |
 
-Gzip (build output): `index` ~42 KB, `react` ~45 KB, `supabase` ~55 KB, `motion` ~38 KB → **~180 KB gzip critical**.
+### After (bottleneck pass — all 3 fixed)
+
+| Asset | Raw | When loaded |
+|-------|-----|-------------|
+| `index-*.js` | **5.3 KB** | **First paint** (boot only) |
+| `react-*.js` | 138.3 KB | **First paint** (modulepreload) |
+| `index-*.css` | ~6 KB | First paint |
+| `appTree-*.js` | **~111 KB** | Async after boot |
+| `supabase-*.js` | 204.7 KB | Async with appTree |
+| `datefns-*.js` | 22 KB | Async with appTree |
+| `CallEngine-*.js` | **~19 KB** | After paint / on call |
+| `motion-*.js` | 111.5 KB | **Only** with CallEngine / ChatView / modals |
+| `ChatView-*.js` | **~70 KB** | On open chat (or idle prefetch) |
+| **Critical first-paint JS** | **~144 KB** | index + react (**was ~694 KB**) |
+| **Main entry** | **422 → 5.3 KB (−99%)** | |
+
+Gzip critical path: entry ~2.5 KB + react ~45 KB ≈ **~48 KB gzip** before appTree.
 
 ---
 
@@ -201,18 +214,22 @@ Directional estimates; run Lighthouse on production URL for field numbers.
 
 ---
 
-## 8. Remaining bottlenecks
+## 8. Remaining bottlenecks — **all three fixed (follow-up pass)**
+
+| Bottleneck | Status | Fix |
+|------------|--------|-----|
+| **CallProvider** eager → motion early | ✅ Fixed | Light `CallContext` + lazy `CallEngine` after paint; startCall queued until ready |
+| **Supabase ~205 KB** on first paint | ✅ Fixed | Tiny `main.tsx` entry; `appTree` dynamic import pulls supabase **after** shell |
+| Long message list DOM cost | ✅ Fixed | Windowed list (newest **80**, +60 on scroll-up); plain bubbles (no motion) |
+
+### Additional residual (lower priority)
 
 | Bottleneck | Severity | Next step |
 |------------|----------|-----------|
-| **CallProvider** still eager → pulls **motion** + call stack into first load | High | Split overlay; dynamic import WebRTC on first call only |
-| **Supabase JS ~205 KB** on critical path | High | Consider lighter auth-only path / delayed realtime import |
-| Cold visit still downloads ~180 KB gzip JS | Medium | CDN compression, HTTP/2, optional modulepreload for `index`+`react` only |
-| **ChatView** still uses framer-motion heavily | Medium | CSS for bubble enter; drop motion in hot path |
-| Message list virtualization | Medium | Window long threads (mobile already does) |
-| Status/media thumbnails | Low | `loading="lazy"` + size hints |
-| No React Query / SWR for shared dedupe | Low | Optional later |
-| Field Web Vitals not collected | Ops | RUM or Lighthouse CI on deploy URL |
+| ChatView still uses motion for some chrome (search/panels) | Low | Optional CSS swap |
+| Cold visit still needs appTree+supabase after entry | Medium | CDN / HTTP3; already non-blocking for shell |
+| Field Web Vitals RUM | Ops | Lighthouse CI on deploy URL |
+| True pixel virtualization (variable heights) | Low | Windowing is enough for typical threads |
 
 ---
 
@@ -220,13 +237,13 @@ Directional estimates; run Lighthouse on production URL for field numbers.
 
 | Dimension | Score | Notes |
 |-----------|------:|-------|
-| Startup / blank-screen elimination | **92 / 100** | Shell + cache-first |
-| Bundle / code-splitting | **84 / 100** | Main chunk fixed; CallProvider residual |
-| Runtime list smoothness | **88 / 100** | No layout motion; content-visibility |
+| Startup / blank-screen elimination | **94 / 100** | Shell + 5 KB entry |
+| Bundle / code-splitting | **93 / 100** | Entry 5 KB; motion/call off critical path |
+| Runtime list smoothness | **92 / 100** | Windowed messages + no bubble motion |
 | Cache-first data | **90 / 100** | Convs + prefs + recent |
 | Reliability (errors / SW) | **88 / 100** | Error boundary; safe SW |
-| Web Vitals readiness | **82 / 100** | Needs production RUM to confirm |
-| **Overall web performance** | **87 / 100** | |
+| Web Vitals readiness | **86 / 100** | Architecture ready; measure on prod host |
+| **Overall web performance** | **92 / 100** | |
 
 ### Verdict
 
@@ -274,4 +291,13 @@ Target: FCP < 1.0s · LCP < 2.5s · CLS < 0.1 · INP < 200ms
 
 ---
 
-*Pass completed: cache-first, shell-first, network-second. Measure on production host for final Web Vitals numbers.*
+### Bottleneck pass artifacts
+
+- `web/src/main.tsx` — tiny boot
+- `web/src/appTree.tsx` — async app graph
+- `web/src/calls/CallContext.tsx` — light provider
+- `web/src/calls/CallEngine.tsx` — heavy WebRTC overlay
+- `web/src/ChatView.tsx` — windowed messages
+- Auth / Mascot / AppLockGate / ResetPassword — motion stripped from shell path
+
+*Pass completed: cache-first, shell-first, network-second, deferred supabase/calls, windowed chat. Measure on production host for final Web Vitals numbers.*
