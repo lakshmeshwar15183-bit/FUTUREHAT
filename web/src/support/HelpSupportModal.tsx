@@ -9,6 +9,7 @@ import { submitTicket, getMyTickets } from '@shared/supportApi';
 import type { SupportTicket, TicketKind } from '@shared/supportApi';
 import { modalBackdrop, modalPanel } from '../motion';
 import { OWNER } from '../branding';
+import { LumixoCat } from '../mascot/LumixoCat';
 import './HelpSupportModal.css';
 
 const FAQ: { q: string; a: string }[] = [
@@ -147,7 +148,12 @@ export function HelpSupportModal({ onClose }: { onClose: () => void }) {
             {loadingTickets ? (
               <div className="help-empty">Loading your tickets…</div>
             ) : tickets.length === 0 ? (
-              <div className="help-empty">No tickets yet. Submit one from “Get help”.</div>
+              <div className="help-empty">
+                <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 8 }} aria-hidden>
+                  <LumixoCat mood="sleeping" size="sm" decorative />
+                </div>
+                No tickets yet. Submit one from “Get help”.
+              </div>
             ) : (
               <div className="ticket-list">
                 {tickets.map((t) => (

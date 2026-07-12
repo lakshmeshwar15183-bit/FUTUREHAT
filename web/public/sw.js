@@ -2,8 +2,8 @@
 // Does NOT precache hashed Vite assets (avoids stale-chunk white screens after deploy).
 // Optional: runtime cache for static icons only.
 
-const ICON_CACHE = 'lumixo-icons-v1';
-const ICON_PATHS = ['/lumixo.svg', '/favicon.png', '/lumixo-192.png', '/lumixo-512.png', '/manifest.webmanifest'];
+const ICON_CACHE = 'lumixo-icons-v2';
+const ICON_PATHS = ['/lumixo.svg', '/lumi.svg', '/favicon.png', '/lumixo-192.png', '/lumixo-512.png', '/manifest.webmanifest', '/offline.html'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -39,6 +39,11 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Navigations & JS/CSS chunks: network-first. Never serve stale index.html.
-  // Default browser fetch for everything else.
+  // Document navigations: network-first, fall back to branded offline page.
+  // Never serve a stale index.html (hashed Vite chunks would break).
+  if (req.mode === 'navigate') {
+    event.respondWith(
+      fetch(req).catch(() => caches.match('/offline.html').then((hit) => hit || Response.error())),
+    );
+  }
 });
