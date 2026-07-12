@@ -62,11 +62,24 @@ interface CallContextValue {
 
 const Ctx = createContext<CallContextValue | null>(null);
 
+/** Central tone killer — call from every transition (answer/decline/end/timeout). */
+function stopAllCallTones() {
+  try { InCallManager.stopRingback?.(); } catch { /* noop */ }
+  try { InCallManager.stopRingtone?.(); } catch { /* noop */ }
+  try { (InCallManager as any).stopBusytone?.(); } catch { /* noop */ }
+}
+
 export function CallProvider({ children }: { children: React.ReactNode }) {
   const [uid, setUid] = useState<string | null>(null);
   const [incoming, setIncoming] = useState<{ call: Call; peer: Profile | null } | null>(null);
   const [active, setActive] = useState<ActiveCall | null>(null);
   const ringTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Refs avoid re-subscribing the INSERT channel on every active/incoming change
+  // (that race was causing missed hangups + stuck ring).
+  const activeRef = useRef<ActiveCall | null>(null);
+  const incomingRef = useRef<{ call: Call; peer: Profile | null } | null>(null);
+  useEffect(() => { activeRef.current = active; }, [active]);
+  useEffect(() => { incomingRef.current = incoming; }, [incoming]);
 
   // Keep our user id in sync with auth. Fetching once on mount is not enough:
   // on a cold start the session is restored from storage *after* this provider
@@ -81,45 +94,39 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     return () => { alive = false; unsubscribe(); };
   }, []);
 
-  // Listen for incoming calls addressed to my conversations.
+  // Listen for incoming calls (stable subscription — do NOT depend on active/incoming).
   useEffect(() => {
     if (!uid) return;
     const channel = subscribeToIncomingCalls(supabase, async (call) => {
       if (call.caller_id === uid || call.status !== 'ringing') return;
-      if (active || incoming) {
-        // Busy — auto-decline so the second caller stops ringing instead of
-        // timing out (web parity: CallContext busy branch).
+      if (activeRef.current || incomingRef.current) {
+        // Busy — decline so caller gets a terminal state (no stuck "Ringing…").
         await updateCallStatus(supabase, call.id, 'declined').catch(() => {});
         return;
       }
       const peer = await getProfile(supabase, call.caller_id);
+      if (activeRef.current || incomingRef.current) {
+        await updateCallStatus(supabase, call.id, 'declined').catch(() => {});
+        return;
+      }
       setIncoming({ call, peer });
-      // Audio routing (WhatsApp-class):
-      //  • App foreground → play RINGTONE via InCallManager (RING stream).
-      //  • App background/killed → system "Incoming calls" channel rings (ringtone
-      //    usage). Do NOT also start InCallManager here or you get double audio.
-      //  • Never use ringback for the callee (ringback = caller-only DTMF).
-      try { InCallManager.stopRingback?.(); } catch { /* noop */ }
+      stopAllCallTones();
       if (AppState.currentState === 'active') {
         try {
           (InCallManager as any).startRingtone('_DEFAULT_');
         } catch { /* noop */ }
       }
-      // High-priority tray notif (locked screen / heads-up Accept·Decline).
-      // Foreground handler suppresses channel *sound* when JS is ringing.
       void presentCallNotification({
         callId: call.id,
         conversationId: call.conversation_id,
         title: peer?.display_name ?? 'Lumixo',
         video: call.type === 'video',
+        avatarUrl: peer?.avatar_url ?? undefined,
       });
 
-      // Ring timeout: if the call isn't answered/declined within 60s, auto-decline.
-      // This catches cases where the subscription misses the caller's hangup update.
       if (ringTimeoutRef.current) clearTimeout(ringTimeoutRef.current);
       ringTimeoutRef.current = setTimeout(async () => {
-        // Check if the call is still in 'ringing' state. If so, it's a missed call.
-        let currentCall = null;
+        let currentCall: { status?: string } | null = null;
         try {
           const { data } = await supabase
             .from('calls')
@@ -127,14 +134,10 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
             .eq('id', call.id)
             .single();
           currentCall = data;
-        } catch {
-          // Query failed, continue with null
-        }
+        } catch { /* continue */ }
 
         if (currentCall?.status === 'ringing') {
-          // Still ringing after 60s — mark as missed and stop ringing
-          try { InCallManager.stopRingtone(); } catch { /* noop */ }
-          try { InCallManager.stopRingback?.(); } catch { /* noop */ }
+          stopAllCallTones();
           void clearCallNotification(call.id);
           await updateCallStatus(supabase, call.id, 'missed').catch(() => {});
           void presentMissedCallNotification({
@@ -143,14 +146,14 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
             title: peer?.display_name ?? 'Someone',
             isVideo: call.type === 'video',
           });
-          setIncoming(null);
+          setIncoming((cur) => (cur?.call.id === call.id ? null : cur));
         }
-      }, 60000);
+      }, 60_000);
     });
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [uid, active, incoming]);
+  }, [uid]);
 
   // Watch the incoming call's row so a caller-hangup (status → ended/declined/
   // missed) stops the ring INSTANTLY. subscribeToIncomingCalls above listens to
@@ -163,20 +166,28 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     let alive = true;
 
     // Subscribe to real-time status updates
+    const clearIncomingRing = () => {
+      if (ringTimeoutRef.current) {
+        clearTimeout(ringTimeoutRef.current);
+        ringTimeoutRef.current = null;
+      }
+      stopAllCallTones();
+      void clearCallNotification(id);
+      setIncoming(null);
+    };
+
     const ch = subscribeToCallStatus(supabase, id, (c) => {
       if (!alive) return;
-      if (c.status === 'ended' || c.status === 'declined' || c.status === 'missed') {
-        try { InCallManager.stopRingtone(); } catch { /* noop */ }
-        try { InCallManager.stopRingback?.(); } catch { /* noop */ }
-        void clearCallNotification(id);
-        setIncoming(null);
+      if (c.status === 'ended' || c.status === 'declined' || c.status === 'missed' || c.status === 'accepted') {
+        // accepted: UI transitions to ActiveCallView via acceptIncoming; status
+        // accepted from *remote* while we still show incoming means caller cancelled?
+        // Only clear ring UI for terminal states here.
+        if (c.status === 'accepted') return;
+        clearIncomingRing();
       }
     });
 
-    // CRITICAL: Also check the call status immediately. If the subscription
-    // isn't ready yet and the caller hangs up before we subscribe, we need to
-    // detect it. This prevents the "keeps ringing after caller hangs up" bug.
-    // We use a short delay to let the subscription establish, then check once.
+    // Poll once after subscribe attaches — catches hangup that raced the channel.
     const checkTimer = setTimeout(async () => {
       if (!alive) return;
       try {
@@ -187,15 +198,10 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
           .single();
         if (!alive || !call) return;
         if (call.status === 'ended' || call.status === 'declined' || call.status === 'missed') {
-          try { InCallManager.stopRingtone(); } catch { /* noop */ }
-          try { InCallManager.stopRingback?.(); } catch { /* noop */ }
-          void clearCallNotification(id);
-          setIncoming(null);
+          clearIncomingRing();
         }
-      } catch {
-        // If the query fails, the subscription should catch the real update anyway
-      }
-    }, 500);
+      } catch { /* subscription remains primary */ }
+    }, 400);
 
     return () => {
       alive = false;
@@ -236,56 +242,58 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     [uid, active],
   );
 
-  const stopIncomingAudio = useCallback(() => {
-    try { InCallManager.stopRingtone(); } catch { /* noop */ }
-    try { InCallManager.stopRingback?.(); } catch { /* noop */ }
-  }, []);
-
   const acceptIncoming = useCallback(async () => {
     if (!incoming) return;
-    if (ringTimeoutRef.current) clearTimeout(ringTimeoutRef.current);
-    stopIncomingAudio();
+    if (ringTimeoutRef.current) {
+      clearTimeout(ringTimeoutRef.current);
+      ringTimeoutRef.current = null;
+    }
+    stopAllCallTones();
     void clearCallNotification(incoming.call.id);
-    await updateCallStatus(supabase, incoming.call.id, 'accepted');
+    const snap = incoming;
+    setIncoming(null);
+    await updateCallStatus(supabase, snap.call.id, 'accepted');
     setActive({
-      callId: incoming.call.id,
-      conversationId: incoming.call.conversation_id,
-      peer: incoming.peer,
-      type: incoming.call.type,
+      callId: snap.call.id,
+      conversationId: snap.call.conversation_id,
+      peer: snap.peer,
+      type: snap.call.type,
       isCaller: false,
     });
-    setIncoming(null);
-  }, [incoming, stopIncomingAudio]);
+  }, [incoming]);
 
   const declineIncoming = useCallback(async () => {
     if (!incoming) return;
-    if (ringTimeoutRef.current) clearTimeout(ringTimeoutRef.current);
-    stopIncomingAudio();
+    if (ringTimeoutRef.current) {
+      clearTimeout(ringTimeoutRef.current);
+      ringTimeoutRef.current = null;
+    }
+    stopAllCallTones();
     void clearCallNotification(incoming.call.id);
-    await updateCallStatus(supabase, incoming.call.id, 'declined');
+    const id = incoming.call.id;
     setIncoming(null);
-  }, [incoming, stopIncomingAudio]);
+    await updateCallStatus(supabase, id, 'declined');
+  }, [incoming]);
 
-  const endActive = useCallback(async () => {
-    if (!active) return;
-    const conv = active.conversationId;
-    const callId = active.callId;
-    await updateCallStatus(supabase, callId, 'ended');
-    void clearCallNotification(callId);
-    // Push a cancel so other devices stop ringing immediately (outbox + FCM).
+  const endActive = useCallback(async (status: 'ended' | 'missed' = 'ended') => {
+    const cur = activeRef.current;
+    if (!cur) return;
+    // Clear first so re-entrant onEnded/cleanup cannot double-end.
+    activeRef.current = null;
+    setActive(null);
+    stopAllCallTones();
+    void clearCallNotification(cur.callId);
+    await updateCallStatus(supabase, cur.callId, status).catch(() => {});
+    // Cancel signal for any device still showing the ring UI.
     void sendPush(supabase, {
-      conversationId: conv,
+      conversationId: cur.conversationId,
       kind: 'system',
       title: 'Call ended',
-      body: 'ended',
-      data: { callId, type: 'call_status', status: 'ended' },
+      body: status,
+      data: { callId: cur.callId, type: 'call_status', status },
     });
-    setActive(null);
-    // Live streak signal (fire-and-forget). The server checks the real call's
-    // connected duration (>15s, answered) itself — a short/unanswered call simply
-    // won't qualify. Never sets a score; the daily job is authoritative.
-    recordStreakActivity(supabase, conv).catch(() => {});
-  }, [active]);
+    recordStreakActivity(supabase, cur.conversationId).catch(() => {});
+  }, []);
 
   return (
     <Ctx.Provider value={{ startCall }}>
@@ -299,7 +307,14 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
         />
       )}
       {active && uid && (
-        <ActiveCallView key={active.callId} self={uid} call={active} onHangup={endActive} />
+        <ActiveCallView
+          key={active.callId}
+          self={uid}
+          call={active}
+          onHangup={(st) => {
+            void endActive(st ?? 'ended');
+          }}
+        />
       )}
     </Ctx.Provider>
   );
@@ -344,7 +359,7 @@ function ActiveCallView({
 }: {
   self: UUID;
   call: ActiveCall;
-  onHangup: () => void;
+  onHangup: (status?: 'ended' | 'missed') => void | Promise<void>;
 }) {
   const insets = useSafeAreaInsets();
   const sessionRef = useRef<CallSession | null>(null);
@@ -368,6 +383,14 @@ function ActiveCallView({
   useEffect(() => {
     let remoteTick = 0;
     let localTick = 0;
+    let finished = false;
+    const finish = (status: 'ended' | 'missed' = 'ended') => {
+      if (finished) return;
+      finished = true;
+      stopAllCallTones();
+      void onHangup(status);
+    };
+
     const session = new CallSession(call.callId, self, call.isCaller, call.type, {
       onLocalStream: (s) => {
         setLocalStream(s);
@@ -379,8 +402,11 @@ function ActiveCallView({
         remoteTick += 1;
         setRemoteGen(remoteTick);
       },
-      onConnected: () => setConnected(true),
-      onEnded: () => onHangup(),
+      onConnected: () => {
+        stopAllCallTones();
+        setConnected(true);
+      },
+      onEnded: () => finish('ended'),
       onFacingChange: (f) => setFacing(f),
     });
     sessionRef.current = session;
@@ -389,17 +415,43 @@ function ActiveCallView({
         console.warn('[call] start() FAILED:', e?.message ?? String(e));
       }
       session.end(false);
+      finish('ended');
     });
+
+    // Caller no-answer timeout (WhatsApp ~45–60s) → missed.
+    let ringTimer: ReturnType<typeof setTimeout> | null = null;
+    if (call.isCaller) {
+      ringTimer = setTimeout(() => {
+        if (finished || sessionRef.current !== session) return;
+        // Still not connected → treat as missed for callee, end for us.
+        void updateCallStatus(supabase, call.callId, 'missed').catch(() => {});
+        session.end(true);
+        finish('missed');
+      }, 55_000);
+    }
 
     const statusCh = subscribeToCallStatus(supabase, call.callId, (c) => {
       if (c.status === 'ended' || c.status === 'declined' || c.status === 'missed') {
+        stopAllCallTones();
         session.end(false);
+        finish(c.status === 'missed' ? 'missed' : 'ended');
+      }
+      // Remote accepted: stop ringback even before ICE connects.
+      if (c.status === 'accepted') {
+        stopAllCallTones();
+        session.stopAllTones();
       }
     });
 
     return () => {
+      if (ringTimer) clearTimeout(ringTimer);
       supabase.removeChannel(statusCh);
       session.end(false);
+      // Unmount without re-entering hangup if already finished.
+      if (!finished) {
+        finished = true;
+        stopAllCallTones();
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -453,7 +505,11 @@ function ActiveCallView({
 
   const showVideo = call.type === 'video';
   const timer = `${Math.floor(elapsed / 60)}:${(elapsed % 60).toString().padStart(2, '0')}`;
-  const status = connected ? timer : call.isCaller ? 'Ringing…' : 'Connecting…';
+  const status = connected
+    ? timer
+    : call.isCaller
+      ? 'Ringing…'
+      : 'Connecting…';
 
   // Remote has a *live* video track (not just audio) — otherwise RTCView paints white.
   const remoteHasVideo = !!(

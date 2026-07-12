@@ -1588,11 +1588,22 @@ function ChatScreenInner() {
     // System messages (0027): centered WhatsApp-style info notice. Not selectable,
     // replyable, editable or deletable — just an informational pill.
     if (msg.type === 'system') {
+      // Call system lines: "Voice call · 1:23 [call:uuid]" — strip tag, show call icon.
+      const raw = msg.content ?? '';
+      const callMatch = raw.match(/\[call:([0-9a-f-]{36})\]\s*$/i);
+      const text = callMatch ? raw.replace(/\s*\[call:[0-9a-f-]{36}\]\s*$/i, '').trim() : raw;
+      const isCallLine = !!callMatch || /^(missed|declined|cancelled|voice|video)\b/i.test(text);
+      const isMissed = /^missed\b/i.test(text);
       return (
         <View style={styles.systemNotice}>
           <View style={styles.systemPill}>
-            <Ionicons name="timer-outline" size={12} color={colors.textMuted} style={{ marginRight: 5 }} />
-            <Text style={styles.systemNoticeText}>{msg.content}</Text>
+            <Ionicons
+              name={isCallLine ? (isMissed ? 'call' : 'call-outline') : 'timer-outline'}
+              size={12}
+              color={isMissed ? colors.danger : colors.textMuted}
+              style={{ marginRight: 5, transform: isMissed ? [{ rotate: '135deg' }] : undefined }}
+            />
+            <Text style={[styles.systemNoticeText, isMissed && { color: colors.danger }]}>{text}</Text>
           </View>
         </View>
       );

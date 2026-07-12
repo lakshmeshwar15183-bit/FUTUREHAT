@@ -130,21 +130,19 @@ export class CallSession {
     this.cb.onFacingChange?.(this.facing);
 
     // 2) Audio session.
-    // CRITICAL: Caller ringback must be `_DTMF_` (ToneGenerator on VOICE_CALL stream
-    // = classic "trrr… trrr…"). `_DEFAULT_` maps to the device RINGTONE URI in
-    // react-native-incall-manager and makes the *caller* hear their own incoming
-    // ringtone — the WhatsApp-breaking bug.
-    // Callee: no ringback here; CallContext starts ringtone separately.
+    // CRITICAL: never pass ringback into start() AND call startRingback — that
+    // double-starts the DTMF "tuuu…" and often fails to stop one instance.
+    // Caller: explicit startRingback('_DTMF_') only. Callee: ringtone in CallContext.
+    this.stopAllTones();
     InCallManager.start({
       media: this.type === 'video' ? 'video' : 'audio',
       auto: true,
-      ringback: this.isCaller ? '_DTMF_' : '',
+      ringback: '', // always empty — we control tones ourselves
     } as any);
     if (this.isCaller) {
-      // Explicit API so we can stop/restart cleanly on state transitions.
       try {
         InCallManager.startRingback('_DTMF_');
-      } catch { /* start() may already play it */ }
+      } catch { /* optional */ }
     }
     InCallManager.setForceSpeakerphoneOn(this.speakerOn);
     // Keep screen awake during video; proximity sensor for earpiece audio calls.
@@ -209,12 +207,11 @@ export class CallSession {
         this.connectTimer = null;
       }
       this.iceRestartAttempts = 0;
+      // Always silence tones on every connect edge (recovers from double-start).
+      this.stopAllTones();
       if (!this.connectedOnce) {
         this.connectedOnce = true;
         clog('✅ CONNECTED');
-        // Connected: silence ALL local tones immediately (ringback + any ringtone leak).
-        try { InCallManager.stopRingback?.(); } catch { /* noop */ }
-        try { InCallManager.stopRingtone?.(); } catch { /* noop */ }
       }
       this.cb.onConnected();
     };
@@ -468,6 +465,8 @@ export class CallSession {
         clog('CALLEE → answer');
         this.signaling?.send({ kind: 'answer', from: this.selfId, data: answer });
       } else if (msg.kind === 'answer') {
+        // Peer answered — stop ringback immediately (don't wait for ICE connected).
+        this.stopAllTones();
         if (
           this.answered &&
           (this.pc as any).signalingState !== 'have-local-offer'
@@ -607,10 +606,19 @@ export class CallSession {
     }
   }
 
+  /** Stop every local call tone. Safe to call repeatedly. */
+  stopAllTones() {
+    try { InCallManager.stopRingback?.(); } catch { /* noop */ }
+    try { InCallManager.stopRingtone?.(); } catch { /* noop */ }
+    try { (InCallManager as any).stopBusytone?.(); } catch { /* noop */ }
+  }
+
   end(sendBye = true) {
     if (this.ended) return;
     this.ended = true;
     this.stopReadyHeartbeat();
+    // Silence first — before async track teardown — kills "tuuu…" leaks.
+    this.stopAllTones();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -623,7 +631,11 @@ export class CallSession {
       clearTimeout(this.connectTimer);
       this.connectTimer = null;
     }
-    if (sendBye) this.signaling?.send({ kind: 'bye', from: this.selfId });
+    if (sendBye) {
+      try {
+        this.signaling?.send({ kind: 'bye', from: this.selfId });
+      } catch { /* noop */ }
+    }
     try {
       this.localStream?.getTracks().forEach((t) => t.stop());
       this.remoteStream?.getTracks().forEach((t) => {
@@ -633,17 +645,21 @@ export class CallSession {
       });
       this.pc?.close();
     } catch { /* noop */ }
-    // End: stop every local tone before tearing down the audio session.
-    try { InCallManager.stopRingback?.(); } catch { /* noop */ }
-    try { InCallManager.stopRingtone?.(); } catch { /* noop */ }
-    try { (InCallManager as any).stopBusytone?.(); } catch { /* noop */ }
+    // Second pass after stop() — some OEMs keep DTMF until full session stop.
+    this.stopAllTones();
     try {
       InCallManager.stop();
     } catch { /* noop */ }
+    this.stopAllTones();
     try {
       (InCallManager as any).setKeepScreenOn?.(false);
     } catch { /* noop */ }
-    this.signaling?.close();
+    try {
+      this.signaling?.close();
+    } catch { /* noop */ }
+    this.localStream = null;
+    this.remoteStream = null;
+    this.pc = null;
     this.cb.onEnded();
   }
 }
