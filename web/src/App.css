@@ -6,6 +6,66 @@
   overflow: hidden;
 }
 
+/* Instant navigation — CSS only, GPU-friendly */
+.chat-pane-enter {
+  height: 100%;
+  animation: fh-pane-in 0.18s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes fh-pane-in {
+  from { opacity: 0.6; transform: translateX(8px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-pane-enter { animation: none; }
+}
+
+/* Conversation list skeleton (matches boot shell) */
+.conv-list-skeleton { flex: 1; overflow: hidden; }
+.conv-skel-row {
+  display: flex; gap: 12px; align-items: center;
+  padding: 12px 16px; border-bottom: 1px solid rgba(42, 57, 66, 0.45);
+}
+.conv-skel-row .boot-av {
+  width: 48px; height: 48px; border-radius: 50%; flex-shrink: 0;
+  background: var(--fh-panel, #202c33);
+}
+.conv-skel-row .boot-lines { flex: 1; display: flex; flex-direction: column; gap: 8px; }
+.conv-skel-row .skel,
+.chat-skeleton .skel {
+  height: 14px; border-radius: 8px;
+  background: linear-gradient(90deg, var(--fh-panel, #1f2c33) 25%, var(--fh-elevated, #2a3942) 50%, var(--fh-panel, #1f2c33) 75%);
+  background-size: 200% 100%;
+  animation: fh-shimmer 1.2s ease-in-out infinite;
+}
+@keyframes fh-shimmer {
+  0% { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+
+/* Chat open skeleton */
+.chat-skeleton { display: flex; flex-direction: column; height: 100%; background: var(--fh-chat-bg, #0b141a); }
+.chat-skeleton-head {
+  height: 60px; background: var(--fh-panel, #202c33);
+  border-bottom: 1px solid var(--fh-border, #2a3942);
+}
+.chat-skeleton-body { flex: 1; padding: 20px 16px; display: flex; flex-direction: column; gap: 12px; }
+.chat-skeleton-bubble {
+  height: 44px; border-radius: 12px; max-width: 55%;
+  background: var(--fh-panel, #202c33);
+  animation: fh-shimmer 1.2s ease-in-out infinite;
+  background-size: 200% 100%;
+  background-image: linear-gradient(90deg, #1f2c33 25%, #2a3942 50%, #1f2c33 75%);
+}
+.chat-skeleton-bubble.mine { align-self: flex-end; background-image: linear-gradient(90deg, #005c4b 25%, #067562 50%, #005c4b 75%); }
+.chat-skeleton-bubble.short { max-width: 35%; height: 36px; }
+
+/* Conversation rows — cheaper hover, no layout thrash */
+.conversation-item {
+  contain: content;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 72px;
+}
+
 .sidebar {
   width: 360px;
   background: var(--fh-bg);

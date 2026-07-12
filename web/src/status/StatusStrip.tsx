@@ -15,6 +15,7 @@ import type { StatusAudience } from '@shared/types';
 import { buildStatusGroups, pruneExpiredGroups, type StatusGroup } from './statusData';
 import { StatusViewer } from './StatusViewer';
 import { StatusComposer, type ComposerMode } from './StatusComposer';
+import { afterFirstPaint } from '../lib/startupCache';
 import './status.css';
 
 export function StatusStrip() {
@@ -40,18 +41,27 @@ export function StatusStrip() {
     setGroups(g);
   }, [myId]);
 
-  useEffect(() => { load(); }, [load]);
-
+  // Status is non-critical for first paint — defer network + realtime.
   useEffect(() => {
-    getStatusAudiencePref(supabase)
-      .then((pref) => { setAudience(pref.audience); setMembers(pref.memberIds); })
-      .catch(() => {});
-  }, []);
-
-  // Realtime: a new/removed status anywhere refreshes the strip.
-  useEffect(() => {
-    const ch = subscribeStatusChanges(supabase, () => { load(); });
-    return () => { ch.unsubscribe(); };
+    let cancelled = false;
+    let ch: { unsubscribe: () => void } | null = null;
+    afterFirstPaint(() => {
+      if (cancelled) return;
+      void load();
+      getStatusAudiencePref(supabase)
+        .then((pref) => {
+          if (!cancelled) {
+            setAudience(pref.audience);
+            setMembers(pref.memberIds);
+          }
+        })
+        .catch(() => {});
+      ch = subscribeStatusChanges(supabase, () => { void load(); });
+    });
+    return () => {
+      cancelled = true;
+      ch?.unsubscribe();
+    };
   }, [load]);
 
   // Client-side 36h expiry (CP5): prune expired statuses at `expires_at` and

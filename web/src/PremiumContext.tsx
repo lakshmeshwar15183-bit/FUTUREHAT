@@ -1,7 +1,6 @@
-// Lumixo+ — premium state: subscription, preferences, gating, and the live
-// set of premium users (for badges). Applies appearance preferences to the DOM.
+// Lumixo+ — premium state. Network refresh is deferred so first paint never waits.
 
-import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, useCallback, useMemo, type ReactNode } from 'react';
 import { supabase } from './supabase';
 import { useAuth } from './AuthContext';
 import {
@@ -10,7 +9,6 @@ import {
   getServerPremium,
   getServerAdmin,
   getPreferences,
-  // (getServerOwner imported from adminApi below)
   updatePreferences,
   getPremiumUserIds,
   DEFAULT_PREFERENCES,
@@ -18,6 +16,7 @@ import {
 import { getServerOwner } from '@shared/adminApi';
 import type { Subscription, UserPreferences } from '@shared/types';
 import { applyPreferences } from './theme/themes';
+import { afterFirstPaint, readCachedPrefs, writeCachedPrefs } from './lib/startupCache';
 
 interface PremiumContextValue {
   isPremium: boolean;
@@ -53,12 +52,15 @@ export function PremiumProvider({ children }: { children: ReactNode }) {
   const [serverPremium, setServerPremium] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [isOwner, setIsOwner] = useState(false);
-  const [preferences, setPreferences] = useState<UserPreferences>(defaultPrefs());
-  const [premiumUserIds, setPremiumUserIds] = useState<Set<string>>(new Set());
-  const [loading, setLoading] = useState(true);
+  const [preferences, setPreferences] = useState<UserPreferences>(() => {
+    const uid = user?.id;
+    if (!uid) return defaultPrefs();
+    const cached = readCachedPrefs(uid);
+    return cached ? { ...defaultPrefs(uid), ...cached, user_id: uid } : defaultPrefs(uid);
+  });
+  const [premiumUserIds, setPremiumUserIds] = useState<Set<string>>(() => new Set());
+  const [loading, setLoading] = useState(false); // never block shell
 
-  // Premium if the local subscription is active OR the server says so (the latter
-  // honors the developer override even with no subscription row).
   const isPremium = isSubscriptionActive(subscription) || serverPremium;
 
   const refresh = useCallback(async () => {
@@ -72,49 +74,77 @@ export function PremiumProvider({ children }: { children: ReactNode }) {
       setLoading(false);
       return;
     }
-    const [sub, srvPremium, admin, owner, prefs, premiumIds] = await Promise.all([
-      getSubscription(supabase),
-      getServerPremium(supabase),
-      getServerAdmin(supabase),
-      getServerOwner(supabase),
-      getPreferences(supabase),
-      getPremiumUserIds(supabase),
-    ]);
-    setSubscription(sub);
-    setServerPremium(srvPremium);
-    setIsAdmin(admin);
-    setIsOwner(owner);
-    setPreferences(prefs ?? defaultPrefs(user.id));
-    setPremiumUserIds(new Set(premiumIds));
-    setLoading(false);
+    setLoading(true);
+    try {
+      const [sub, srvPremium, admin, owner, prefs, premiumIds] = await Promise.all([
+        getSubscription(supabase),
+        getServerPremium(supabase),
+        getServerAdmin(supabase),
+        getServerOwner(supabase),
+        getPreferences(supabase),
+        getPremiumUserIds(supabase),
+      ]);
+      setSubscription(sub);
+      setServerPremium(srvPremium);
+      setIsAdmin(admin);
+      setIsOwner(owner);
+      const next = prefs ?? defaultPrefs(user.id);
+      setPreferences(next);
+      writeCachedPrefs(user.id, next);
+      setPremiumUserIds(new Set(premiumIds));
+    } finally {
+      setLoading(false);
+    }
   }, [user]);
 
   useEffect(() => {
-    setLoading(true);
-    refresh();
-  }, [refresh]);
+    if (!user) {
+      void refresh();
+      return;
+    }
+    // Apply cached prefs immediately for theme; fetch network after first paint.
+    const cached = readCachedPrefs(user.id);
+    if (cached) {
+      setPreferences((prev) => ({ ...prev, ...cached, user_id: user.id }));
+    }
+    afterFirstPaint(() => {
+      void refresh();
+    });
+  }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Apply appearance whenever preferences or premium status changes.
   useEffect(() => {
     applyPreferences(preferences, isPremium);
   }, [preferences, isPremium]);
 
-  const setPreference = useCallback(
-    async (updates: Partial<UserPreferences>) => {
-      setPreferences((prev) => ({ ...prev, ...updates })); // optimistic
-      const { preferences: saved } = await updatePreferences(supabase, updates as any);
-      if (saved) setPreferences(saved);
-    },
-    [],
+  const setPreference = useCallback(async (updates: Partial<UserPreferences>) => {
+    setPreferences((prev) => {
+      const next = { ...prev, ...updates };
+      if (prev.user_id) writeCachedPrefs(prev.user_id, next as UserPreferences);
+      return next;
+    });
+    const { preferences: saved } = await updatePreferences(supabase, updates as any);
+    if (saved) {
+      setPreferences(saved);
+      if (saved.user_id) writeCachedPrefs(saved.user_id, saved);
+    }
+  }, []);
+
+  const value = useMemo(
+    () => ({
+      isPremium,
+      isAdmin,
+      isOwner,
+      subscription,
+      preferences,
+      premiumUserIds,
+      loading,
+      refresh,
+      setPreference,
+    }),
+    [isPremium, isAdmin, isOwner, subscription, preferences, premiumUserIds, loading, refresh, setPreference],
   );
 
-  return (
-    <PremiumContext.Provider
-      value={{ isPremium, isAdmin, isOwner, subscription, preferences, premiumUserIds, loading, refresh, setPreference }}
-    >
-      {children}
-    </PremiumContext.Provider>
-  );
+  return <PremiumContext.Provider value={value}>{children}</PremiumContext.Provider>;
 }
 
 export function usePremium() {
