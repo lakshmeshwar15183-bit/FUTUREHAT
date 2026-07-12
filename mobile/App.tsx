@@ -18,7 +18,9 @@ import { startSync } from './src/lib/sync';
 import { hydrateAppIcon } from './src/lib/appIcon';
 import { installCrashReporter } from './src/lib/crashReporter';
 import { runProdHealthChecks } from './src/lib/prodHealth';
-import { ThemeProvider, useTheme } from './src/theme';
+import { ThemeProvider, useTheme, enableLayoutAnimations } from './src/theme';
+// Soft LayoutAnimation for selection/chip transitions (Android opt-in).
+enableLayoutAnimations();
 import { AppLockProvider, useAppLock } from './src/security/AppLock';
 import { ChatLockProvider } from './src/security/ChatLock';
 import { CallProvider } from './src/calls/CallContext';
@@ -313,6 +315,11 @@ function RootNavigator() {
     },
     headerShadowVisible: false,
     contentStyle: { backgroundColor: colors.bg },
+    // Native stack: snappy messenger push (not default slow iOS-ish slide).
+    animation: 'slide_from_right' as const,
+    animationDuration: 220,
+    gestureEnabled: true,
+    fullScreenGestureEnabled: true,
   };
 
   if (loading) {

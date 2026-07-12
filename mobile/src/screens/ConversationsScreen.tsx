@@ -62,7 +62,7 @@ import {
 } from '../lib/localCache';
 import { onConnectivity, queueAction } from '../lib/sync';
 import { formatListTimestamp } from '../lib/time';
-import { useColors, spacing, radius, font, type Palette } from '../theme';
+import { useColors, spacing, radius, font, listPerf, animateLayoutSoft, type Palette } from '../theme';
 import Avatar from '../components/Avatar';
 import StatusStrip from '../components/status/StatusStrip';
 import { useChatLock } from '../security/ChatLock';
@@ -76,7 +76,7 @@ type Nav = NativeStackNavigationProp<RootStackParamList>;
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
-const animateSelection = () => LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+const animateSelection = () => animateLayoutSoft();
 
 // Cache-key bases for the per-user conversation flag sets, so pinned/muted/hidden
 // state hydrates instantly (offline included) and survives an app restart.
@@ -1096,9 +1096,11 @@ export default function ConversationsScreen() {
         // Cheap identity for external row state — avoid joining every fav/pin id (jank).
         extraData={`${selectionGen}:${filter}:${pinnedOrder.length}:${favIds.size}:${mutedIds.size}:${onlineIds.size}`}
         keyboardShouldPersistTaps="handled"
-        initialNumToRender={14}
-        maxToRenderPerBatch={12}
-        windowSize={11}
+        initialNumToRender={listPerf.chatList.initialNumToRender}
+        maxToRenderPerBatch={listPerf.chatList.maxToRenderPerBatch}
+        windowSize={listPerf.chatList.windowSize}
+        updateCellsBatchingPeriod={listPerf.chatList.updateCellsBatchingPeriod}
+        removeClippedSubviews={listPerf.chatList.removeClippedSubviews}
         ItemSeparatorComponent={Separator}
         ListHeaderComponent={selectionMode ? null : (
           <View>
@@ -1133,7 +1135,7 @@ export default function ConversationsScreen() {
                     <Pressable
                       key={chip.key}
                       onPress={() => {
-                        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                        animateLayoutSoft();
                         setMoreFilters(false);
                         setFilter(chip.key);
                       }}
@@ -1151,7 +1153,7 @@ export default function ConversationsScreen() {
                 })}
                 <Pressable
                   onPress={() => {
-                    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                    animateLayoutSoft();
                     setMoreFilters((v) => !v);
                   }}
                   style={({ pressed }) => [
@@ -1186,7 +1188,7 @@ export default function ConversationsScreen() {
                     <Pressable
                       key={chip.key}
                       onPress={() => {
-                        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                        animateLayoutSoft();
                         setFilter(chip.key);
                         setMoreFilters(false);
                       }}
@@ -1306,8 +1308,10 @@ export default function ConversationsScreen() {
       <Pressable
         style={({ pressed }) => [styles.fab, pressed && styles.fabPressed]}
         onPress={() => navigation.navigate('NewChat')}
+        accessibilityRole="button"
+        accessibilityLabel="New chat"
       >
-        <Ionicons name="create-outline" size={26} color="#fff" />
+        <Ionicons name="create-outline" size={24} color="#fff" />
       </Pressable>
 
     </View>

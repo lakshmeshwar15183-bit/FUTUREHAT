@@ -31,7 +31,7 @@ import type { CallGroup, CallHistoryItem, ConversationSummary, Profile, CallType
 import { useCalls } from '../calls/CallContext';
 import { getCache, setCache } from '../lib/localCache';
 import { formatListTimestamp } from '../lib/time';
-import { useColors, spacing, radius, font, type Palette } from '../theme';
+import { useColors, spacing, radius, font, listPerf, type Palette } from '../theme';
 import Avatar from '../components/Avatar';
 import type { RootStackParamList } from '../navigation/types';
 import { Alert, showSheet } from '../ui/dialog';
@@ -269,10 +269,15 @@ export default function CallsScreen() {
         onEndReached={loadMore}
         onEndReachedThreshold={0.4}
         contentContainerStyle={groups.length === 0 ? { flex: 1 } : { paddingBottom: 96 }}
+        initialNumToRender={listPerf.generic.initialNumToRender}
+        maxToRenderPerBatch={listPerf.generic.maxToRenderPerBatch}
+        windowSize={listPerf.generic.windowSize}
+        updateCellsBatchingPeriod={listPerf.generic.updateCellsBatchingPeriod}
+        removeClippedSubviews={listPerf.generic.removeClippedSubviews}
         ListEmptyComponent={
           !loading ? (
             <View style={styles.empty}>
-              <View style={styles.emptyIllus}><Ionicons name="call-outline" size={54} color={colors.primary} /></View>
+              <View style={styles.emptyIllus}><Ionicons name="call-outline" size={48} color={colors.primary} /></View>
               <Text style={styles.emptyText}>No recent calls</Text>
               <Text style={styles.emptySub}>Start a voice or video call from any chat, or tap the button below.</Text>
             </View>
@@ -281,9 +286,9 @@ export default function CallsScreen() {
       />
 
       {/* Always-visible FAB */}
-      <Pressable style={({ pressed }) => [styles.fab, pressed && { opacity: 0.85 }]} onPress={() => setPickerOpen(true)}>
-        <Ionicons name="call" size={24} color="#fff" />
-        <Ionicons name="add" size={16} color="#fff" style={styles.fabPlus} />
+      <Pressable style={({ pressed }) => [styles.fab, pressed && { opacity: 0.88, transform: [{ scale: 0.96 }] }]} onPress={() => setPickerOpen(true)}>
+        <Ionicons name="call" size={22} color="#fff" />
+        <Ionicons name="add" size={14} color="#fff" style={styles.fabPlus} />
       </Pressable>
 
       {/* FAB contact picker */}

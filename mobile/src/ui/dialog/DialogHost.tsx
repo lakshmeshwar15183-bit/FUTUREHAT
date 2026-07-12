@@ -25,7 +25,6 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Animated, {
-  Easing,
   runOnJS,
   useAnimatedStyle,
   useSharedValue,
@@ -33,7 +32,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { useColors, type Palette } from '../../theme';
+import { useColors, motion, ease, radius as sysRadius, type Palette } from '../../theme';
 import { bindDialogHost } from './controller';
 import { ioniconFor, inferIcon } from './icons';
 import type {
@@ -45,19 +44,19 @@ import type {
   DialogTone,
 } from './types';
 
-// ── Design tokens (single source for every dialog / sheet) ───────────────────
-const RADIUS = 22;
-const SHEET_RADIUS = 20;
+// ── Design tokens (aligned with global design system) ────────────────────────
+const RADIUS = sysRadius.xl + 2; // 22
+const SHEET_RADIUS = sysRadius.xl;
 const ICON_SIZE = 44;
 const ICON_GLYPH = 22;
 const CARD_MAX_W = 300;
-const OPEN_MS = 170;
-const CLOSE_MS = 140;
-const SHEET_OPEN_MS = 180;
-const SHEET_CLOSE_MS = 150;
-const OPEN_EASING = Easing.out(Easing.cubic);
-const CLOSE_EASING = Easing.in(Easing.cubic);
-const SHEET_EASING = Easing.bezier(0.25, 0.1, 0.25, 1);
+const OPEN_MS = motion.openMs;
+const CLOSE_MS = motion.closeMs;
+const SHEET_OPEN_MS = motion.sheetOpenMs;
+const SHEET_CLOSE_MS = motion.sheetCloseMs;
+const OPEN_EASING = ease.out;
+const CLOSE_EASING = ease.in;
+const SHEET_EASING = ease.sheet;
 
 export default function DialogHost() {
   const colors = useColors();

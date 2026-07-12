@@ -111,7 +111,7 @@ import { flushOutbox, onOutboxSent, queueAction } from '../lib/sync';
 import { uploadMediaFromUri, guessMime } from '../lib/media';
 import { registerMediaHandler, type MediaSubmission } from '../media/mediaSendBridge';
 import { formatLastSeen, formatDaySeparator, formatTime } from '../lib/time';
-import { useColors, useTheme, spacing, radius, font, type Palette } from '../theme';
+import { useColors, useTheme, spacing, radius, font, listPerf, type Palette } from '../theme';
 import MessageBubble, { type TickStatus, replySummary } from '../components/MessageBubble';
 import SwipeToReply from '../components/SwipeToReply';
 import MediaViewer, { type ViewerItem } from '../components/MediaViewer';
@@ -1803,16 +1803,21 @@ function ChatScreenInner() {
             <Text style={styles.encNoteText}>Encrypted in transit</Text>
           </View>
         }
-        initialNumToRender={18}
-        maxToRenderPerBatch={12}
-        windowSize={11}
-        updateCellsBatchingPeriod={40}
+        initialNumToRender={listPerf.messageList.initialNumToRender}
+        maxToRenderPerBatch={listPerf.messageList.maxToRenderPerBatch}
+        windowSize={listPerf.messageList.windowSize}
+        updateCellsBatchingPeriod={listPerf.messageList.updateCellsBatchingPeriod}
+        removeClippedSubviews={listPerf.messageList.removeClippedSubviews}
         onScroll={(e) => {
           const bottom = e.nativeEvent.contentOffset.y < 240;
-          atBottomRef.current = bottom;
-          setAtBottom(bottom);
+          // Only re-render when the jump-to-latest FAB visibility flips.
+          if (atBottomRef.current !== bottom) {
+            atBottomRef.current = bottom;
+            setAtBottom(bottom);
+          }
         }}
-        scrollEventThrottle={80}
+        // 16ms ≈ 60fps sampling; state only updates on FAB visibility edge.
+        scrollEventThrottle={16}
         onScrollToIndexFailed={(info) => {
           setTimeout(() => {
             try { listRef.current?.scrollToIndex({ index: info.index, animated: true, viewPosition: 0.5 }); } catch { /* give up */ }

@@ -141,4 +141,52 @@ export const elevation = {
     shadowOffset: { width: 0, height: 4 },
     elevation: 4,
   },
+  sheet: {
+    shadowColor: '#000' as const,
+    shadowOpacity: 0.16,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: -4 },
+    elevation: 16,
+  },
 };
+
+/**
+ * Icon size scale — use these everywhere so tabs/rows/headers never mismatch.
+ * Aligns with Material + messenger density (22pt primary chrome).
+ */
+export const iconSize = {
+  xs: 14,
+  sm: 16,
+  md: 20,
+  /** Primary chrome (tab, header actions, list trailing) */
+  lg: 22,
+  xl: 26,
+  /** Empty states */
+  empty: 56,
+} as const;
+
+/** Minimum touch targets (accessibility + messenger UX). */
+export const touch = {
+  min: 44,
+  hitSlop: { top: 8, bottom: 8, left: 8, right: 8 } as const,
+  hitSlopSm: { top: 6, bottom: 6, left: 6, right: 6 } as const,
+};
+
+/** Row / list density */
+export const density = {
+  chatRowMin: 68,
+  settingsRowMin: 48,
+  tabIcon: 22,
+  avatarChat: 48,
+  avatarHeader: 36,
+  fab: 54,
+} as const;
+
+/** Typography line heights paired with `font` sizes for consistent hierarchy. */
+export const lineHeight = {
+  title: 26,
+  heading: 21,
+  body: 20,
+  small: 17,
+  tiny: 15,
+} as const;
