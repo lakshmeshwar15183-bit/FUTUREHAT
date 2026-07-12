@@ -18,8 +18,8 @@ import { supabase } from './supabase';
 import { registerPushToken, removePushToken } from './shared';
 
 // Bump when channel definitions change so they're re-created once.
-// v5: channel groups + mute/archive actions + grouping metadata.
-const CHANNELS_VERSION = '5';
+// v6: ongoing_call channel for in-call sticky status.
+const CHANNELS_VERSION = '6';
 const CHANNELS_KEY = 'fh:channelsVersion';
 const UNREAD_STACK_KEY = 'fh:notifStack'; // conversationId → { count, lastBody, title }
 
@@ -28,6 +28,8 @@ export const CHANNELS = {
   groups: 'group_messages',
   calls: 'calls',
   missedCalls: 'missed_calls',
+  /** Silent sticky channel for ongoing in-call status (WhatsApp-class). */
+  ongoingCall: 'ongoing_call',
   status: 'status_replies',
   mentions: 'mentions',
   communities: 'communities',
@@ -285,6 +287,16 @@ export async function initNotifications(): Promise<void> {
           requestHardwareAudioVideoSynchronization: false,
         },
       },
+    });
+    // Ongoing call: low importance, no sound — keeps OS aware of active call.
+    await Notifications.setNotificationChannelAsync(CHANNELS.ongoingCall, {
+      name: 'Ongoing calls',
+      importance: I.LOW,
+      sound: undefined,
+      enableVibrate: false,
+      showBadge: false,
+      groupId: 'calls_grp',
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
     });
     await Notifications.setNotificationChannelAsync(CHANNELS.status, {
       name: 'Status Replies',
@@ -684,6 +696,47 @@ export async function clearConversationNotification(conversationId: string): Pro
 export async function clearCallNotification(callId: string): Promise<void> {
   try {
     await Notifications.dismissNotificationAsync(`call:${callId}`);
+  } catch { /* ignore */ }
+  await clearOngoingCallNotification(callId);
+}
+
+/** Sticky "call in progress" tray entry so users can return from other apps. */
+export async function presentOngoingCallNotification(o: {
+  callId: string;
+  conversationId: string;
+  title: string;
+  video?: boolean;
+  connected?: boolean;
+}): Promise<void> {
+  try {
+    await Notifications.scheduleNotificationAsync({
+      identifier: `ongoing:${o.callId}`,
+      content: {
+        title: o.connected ? 'Call in progress' : 'Connecting…',
+        body: o.title,
+        data: {
+          type: 'ongoing_call',
+          kind: 'call',
+          callId: o.callId,
+          conversationId: o.conversationId,
+          video: String(!!o.video),
+        },
+        sticky: true,
+        autoDismiss: false,
+        priority: Notifications.AndroidNotificationPriority.LOW,
+        sound: undefined,
+        ...(Platform.OS === 'android'
+          ? { channelId: CHANNELS.ongoingCall }
+          : { interruptionLevel: 'active' as const }),
+      },
+      trigger: null,
+    });
+  } catch { /* ignore */ }
+}
+
+export async function clearOngoingCallNotification(callId: string): Promise<void> {
+  try {
+    await Notifications.dismissNotificationAsync(`ongoing:${callId}`);
   } catch { /* ignore */ }
 }
 

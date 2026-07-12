@@ -47,6 +47,8 @@ import {
   presentCallNotification,
   clearCallNotification,
   presentMissedCallNotification,
+  presentOngoingCallNotification,
+  clearOngoingCallNotification,
 } from '../lib/notifications';
 import { CallSession, type ConnectionPath } from './webrtc';
 import Avatar from '../components/Avatar';
@@ -306,6 +308,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     setActive(null);
     stopAllCallTones();
     void clearCallNotification(cur.callId);
+    void clearOngoingCallNotification(cur.callId);
     await updateCallStatus(supabase, cur.callId, status).catch(() => {});
     // Cancel signal for any device still showing the ring UI.
     void sendPush(supabase, {
@@ -361,11 +364,28 @@ function IncomingCallView({
   onAccept: () => void;
   onDecline: () => void;
 }) {
+  const pulse = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1.06, duration: 700, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 1, duration: 700, useNativeDriver: true }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulse]);
+
   return (
     <View style={[StyleSheet.absoluteFill, styles.ringContainer]}>
-      <Text style={styles.incomingLabel}>Incoming {type} call</Text>
-      <Avatar uri={peer?.avatar_url} name={peer?.display_name} size={120} />
+      <Text style={styles.incomingLabel}>
+        Incoming {type === 'video' ? 'video' : 'voice'} call
+      </Text>
+      <Animated.View style={{ transform: [{ scale: pulse }] }}>
+        <Avatar uri={peer?.avatar_url} name={peer?.display_name} size={128} />
+      </Animated.View>
       <Text style={styles.peerName}>{peer?.display_name ?? 'Lumixo user'}</Text>
+      <Text style={styles.incomingHint}>Lumixo · end-to-end media (DTLS/SRTP)</Text>
       <View style={styles.ringActions}>
         <CircleButton icon="call" color="#2BD167" label="Accept" onPress={onAccept} />
         <CircleButton icon="close" color="#F15C6D" label="Decline" onPress={onDecline} />
@@ -439,13 +459,29 @@ function ActiveCallView({
           ringTimer = null;
         }
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+        void presentOngoingCallNotification({
+          callId: call.callId,
+          conversationId: call.conversationId,
+          title: call.peer?.display_name ?? 'Call',
+          video: call.type === 'video',
+          connected: true,
+        });
       },
       onEnded: () => finish('ended'),
       onFacingChange: (f) => setFacing(f),
       onReconnecting: (r) => setReconnecting(r),
       onConnectionPath: (p) => setConnPath(p),
+      onQuality: (q) => setNetQuality(q),
     });
     sessionRef.current = session;
+    // Sticky ongoing tray immediately (Connecting…) so user can return to the app.
+    void presentOngoingCallNotification({
+      callId: call.callId,
+      conversationId: call.conversationId,
+      title: call.peer?.display_name ?? 'Call',
+      video: call.type === 'video',
+      connected: false,
+    });
     session.start().catch((e) => {
       if (typeof __DEV__ !== 'undefined' && __DEV__) {
         console.warn('[call] start() FAILED:', e?.message ?? String(e));
@@ -468,6 +504,15 @@ function ActiveCallView({
     const statusCh = subscribeToCallStatus(supabase, call.callId, (c) => {
       if (c.status === 'ended' || c.status === 'declined' || c.status === 'missed') {
         stopAllCallTones();
+        // Busy tone for caller when peer declines (classic telephony UX).
+        if (c.status === 'declined' && call.isCaller) {
+          try {
+            (InCallManager as any).startBusytone?.('_BUSY_');
+            setTimeout(() => {
+              try { (InCallManager as any).stopBusytone?.(); } catch { /* noop */ }
+            }, 1400);
+          } catch { /* optional */ }
+        }
         session.end(false);
         finish(c.status === 'missed' ? 'missed' : 'ended');
       }
@@ -495,14 +540,10 @@ function ActiveCallView({
     return () => clearInterval(t);
   }, [connected]);
 
-  // Network quality from getStats (packet loss + RTT).
+  // Quality also pushed from CallSession.onQuality (adaptive probe). Keep a light
+  // fallback poll so bars still move if stats API shape differs.
   useEffect(() => {
-    if (!connected) {
-      setNetQuality(4);
-      return;
-    }
-    let prevLost = 0;
-    let prevRecv = 0;
+    if (!connected) return;
     const id = setInterval(async () => {
       const stats = await sessionRef.current?.getStats();
       if (!stats) return;
@@ -522,17 +563,13 @@ function ActiveCallView({
           rtt = report.currentRoundTripTime;
         }
       });
-      const dLost = Math.max(0, lost - prevLost);
-      const dRecv = Math.max(0, recv - prevRecv);
-      prevLost = lost;
-      prevRecv = recv;
-      const loss = dRecv + dLost > 0 ? dLost / (dRecv + dLost) : 0;
-      let q = 4;
+      const loss = recv + lost > 0 ? lost / (recv + lost) : 0;
+      let q: 1 | 2 | 3 | 4 = 4;
       if (loss > 0.08 || rtt > 0.5) q = 1;
       else if (loss > 0.04 || rtt > 0.3) q = 2;
       else if (loss > 0.015 || rtt > 0.15) q = 3;
       setNetQuality(q);
-    }, 2000);
+    }, 4000);
     return () => clearInterval(id);
   }, [connected]);
 
@@ -905,7 +942,8 @@ function RoundCtl({ icon, active, onPress }: { icon: keyof typeof Ionicons.glyph
 
 const styles = StyleSheet.create({
   ringContainer: { backgroundColor: '#0B141A', alignItems: 'center', justifyContent: 'center', zIndex: 100 },
-  incomingLabel: { color: '#8696A0', fontSize: 15, marginBottom: 24 },
+  incomingLabel: { color: '#8696A0', fontSize: 15, marginBottom: 24, letterSpacing: 0.3 },
+  incomingHint: { color: 'rgba(134,150,160,0.75)', fontSize: 12, marginTop: 8 },
   peerName: { color: '#fff', fontSize: 26, fontWeight: '700', marginTop: 20 },
   ringActions: { flexDirection: 'row', gap: 60, marginTop: 80 },
   circle: { width: 70, height: 70, borderRadius: 35, alignItems: 'center', justifyContent: 'center' },

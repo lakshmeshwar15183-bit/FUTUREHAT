@@ -31,11 +31,11 @@ const clog = (...args: unknown[]) => {
   if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[call]', ...args);
 };
 
-const CONNECT_TIMEOUT_MS = 45000;
-const ICE_RESTART_GRACE_MS = 4000;
-const DISCONNECT_TEARDOWN_MS = 16000;
-/** Max ICE restart attempts on flaky mobile networks (was 2 — too low for handoff). */
-const MAX_ICE_RESTARTS = 3;
+const CONNECT_TIMEOUT_MS = 50_000;
+const ICE_RESTART_GRACE_MS = 3500;
+const DISCONNECT_TEARDOWN_MS = 20_000;
+/** Aggressive ICE recovery on mobile handoffs (Wi‑Fi ↔ LTE). */
+const MAX_ICE_RESTARTS = 5;
 
 const ICE_SERVERS = buildIceServers(
   process.env.EXPO_PUBLIC_TURN_URL
@@ -60,6 +60,8 @@ export interface CallCallbacks {
   onReconnecting?: (reconnecting: boolean) => void;
   /** Host/srflx = direct, relay = TURN (transparency WhatsApp doesn't show) */
   onConnectionPath?: (path: ConnectionPath) => void;
+  /** 1–4 quality for UI net bars (computed server-side of getStats) */
+  onQuality?: (q: 1 | 2 | 3 | 4) => void;
 }
 
 export class CallSession {
@@ -83,6 +85,7 @@ export class CallSession {
   private connectedOnce = false;
   private iceRestartAttempts = 0;
   private facing: 'user' | 'environment' = 'user';
+  private offerRetryTimer: ReturnType<typeof setInterval> | null = null;
 
   muted = false;
   videoEnabled: boolean;
@@ -109,18 +112,24 @@ export class CallSession {
 
     // 1) Local media — use ideal constraints (not rigid) so mid/low-end devices
     //    still open a camera; HD when the device can deliver it.
+    // Prefer hardware AEC/NS/AGC (Chrome/WebRTC flags still honored on many RN builds).
     this.localStream = (await mediaDevices.getUserMedia({
       audio: {
         echoCancellation: true,
         noiseSuppression: true,
         autoGainControl: true,
         channelCount: 1,
+        // Android WebRTC extras (ignored if unsupported).
+        googEchoCancellation: true,
+        googNoiseSuppression: true,
+        googAutoGainControl: true,
+        googHighpassFilter: true,
+        googTypingNoiseDetection: true,
       } as any,
       video:
         this.type === 'video'
           ? ({
               facingMode: 'user',
-              // Start HD-capable; adaptive layer can downscale mid-call.
               width: { min: 320, ideal: 1280, max: 1920 },
               height: { min: 240, ideal: 720, max: 1080 },
               frameRate: { min: 15, ideal: 30, max: 30 },
@@ -154,11 +163,15 @@ export class CallSession {
         InCallManager.startRingback('_DTMF_');
       } catch { /* optional */ }
     }
-    InCallManager.setForceSpeakerphoneOn(this.speakerOn);
-    // Keep screen awake during video; proximity sensor for earpiece audio calls.
+    this.applyAudioRoute();
+    // Keep screen on for video; proximity sensor helps earpiece audio (InCallManager).
     try {
-      if (this.type === 'video') (InCallManager as any).setKeepScreenOn?.(true);
+      (InCallManager as any).setKeepScreenOn?.(this.type === 'video' || this.speakerOn);
     } catch { /* optional API */ }
+    try {
+      // Prefer Bluetooth SCO when a headset is connected (auto routing).
+      (InCallManager as any).startProximitySensor?.();
+    } catch { /* optional */ }
 
     if (!HAS_TURN) {
       clog(
@@ -167,13 +180,12 @@ export class CallSession {
       );
     }
 
-    // 3) Peer connection
+    // 3) Peer connection — larger ICE pool for faster first candidate on mobile.
     this.pc = new RTCPeerConnection({
       iceServers: ICE_SERVERS,
-      iceCandidatePoolSize: 10,
+      iceCandidatePoolSize: 16,
       bundlePolicy: 'max-bundle',
       rtcpMuxPolicy: 'require',
-      // Prefer continual gathering so mid-call network changes get new candidates.
       iceTransportPolicy: 'all',
     } as any);
 
@@ -422,8 +434,9 @@ export class CallSession {
 
   private startReadyHeartbeat() {
     if (this.readyTimer) return;
+    // Faster than WhatsApp's typical ring path — burst ready so offer lands ASAP.
     const ping = () => {
-      if (this.ended || this.offerHandled || this.readyTicks > 16) {
+      if (this.ended || this.offerHandled || this.readyTicks > 24) {
         this.stopReadyHeartbeat();
         return;
       }
@@ -431,7 +444,7 @@ export class CallSession {
       this.signaling?.send({ kind: 'ready', from: this.selfId });
     };
     ping();
-    this.readyTimer = setInterval(ping, 600);
+    this.readyTimer = setInterval(ping, 280);
   }
 
   private stopReadyHeartbeat() {
@@ -444,12 +457,30 @@ export class CallSession {
   private async makeOffer(iceRestart = false) {
     if (!this.pc || (this.answered && !iceRestart)) return;
     if (!this.cachedOffer || iceRestart) {
-      const offer = await this.pc.createOffer(iceRestart ? ({ iceRestart: true } as any) : {});
+      const offer = await this.pc.createOffer({
+        iceRestart: !!iceRestart,
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: this.type === 'video',
+      } as any);
       await this.pc.setLocalDescription(offer);
       this.cachedOffer = offer;
     }
     clog('CALLER → offer', iceRestart ? '(ICE restart)' : '');
     this.signaling?.send({ kind: 'offer', from: this.selfId, data: this.cachedOffer });
+    // Retransmit offer until answer (broadcast has no store-and-forward).
+    if (!iceRestart && !this.offerRetryTimer) {
+      let n = 0;
+      this.offerRetryTimer = setInterval(() => {
+        if (this.ended || this.answered || n++ > 12) {
+          if (this.offerRetryTimer) clearInterval(this.offerRetryTimer);
+          this.offerRetryTimer = null;
+          return;
+        }
+        if (this.cachedOffer) {
+          this.signaling?.send({ kind: 'offer', from: this.selfId, data: this.cachedOffer });
+        }
+      }, 900);
+    }
   }
 
   private async onSignal(msg: SignalMessage) {
@@ -493,6 +524,10 @@ export class CallSession {
         }
         if ((this.pc as any).signalingState === 'have-local-offer') {
           this.answered = true;
+          if (this.offerRetryTimer) {
+            clearInterval(this.offerRetryTimer);
+            this.offerRetryTimer = null;
+          }
           await this.pc.setRemoteDescription(new RTCSessionDescription(msg.data as any));
           this.remoteDescSet = true;
           await this.flushCandidates();
@@ -536,8 +571,26 @@ export class CallSession {
 
   toggleSpeaker() {
     this.speakerOn = !this.speakerOn;
-    InCallManager.setForceSpeakerphoneOn(this.speakerOn);
+    this.applyAudioRoute();
+    try {
+      (InCallManager as any).setKeepScreenOn?.(this.type === 'video' || this.speakerOn);
+    } catch { /* optional */ }
     return this.speakerOn;
+  }
+
+  /** Earpiece ↔ speaker (InCallManager also routes BT SCO when connected). */
+  private applyAudioRoute() {
+    try {
+      InCallManager.setForceSpeakerphoneOn(this.speakerOn);
+    } catch { /* noop */ }
+    try {
+      // When speaker is off, allow BT headset / earpiece auto-pick.
+      if (!this.speakerOn) {
+        (InCallManager as any).chooseAudioRoute?.('EARPIECE');
+      } else {
+        (InCallManager as any).chooseAudioRoute?.('SPEAKER_PHONE');
+      }
+    } catch { /* optional API */ }
   }
 
   /**
@@ -615,6 +668,11 @@ export class CallSession {
       } else if (!this.lowDataMode && loss < 0.01 && rtt < 0.12) {
         void this.applySenderBitrate(1_500_000, 30);
       }
+      let q: 1 | 2 | 3 | 4 = 4;
+      if (loss > 0.08 || rtt > 0.5) q = 1;
+      else if (loss > 0.04 || rtt > 0.3) q = 2;
+      else if (loss > 0.015 || rtt > 0.15) q = 3;
+      this.cb.onQuality?.(q);
     } catch { /* stats optional */ }
   }
 
@@ -719,6 +777,10 @@ export class CallSession {
       clearInterval(this.adaptiveTimer);
       this.adaptiveTimer = null;
     }
+    if (this.offerRetryTimer) {
+      clearInterval(this.offerRetryTimer);
+      this.offerRetryTimer = null;
+    }
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -753,6 +815,9 @@ export class CallSession {
     this.stopAllTones();
     try {
       (InCallManager as any).setKeepScreenOn?.(false);
+    } catch { /* noop */ }
+    try {
+      (InCallManager as any).stopProximitySensor?.();
     } catch { /* noop */ }
     try {
       this.signaling?.close();
