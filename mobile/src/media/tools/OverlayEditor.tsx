@@ -18,6 +18,7 @@ import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import Animated, { useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors, spacing, radius, font, type Palette } from '../../theme';
 import { STICKERS } from '../../lib/stickers';
 import { EMOJI_CATEGORIES } from '../../lib/emojiData';
@@ -48,6 +49,7 @@ export default function OverlayEditor({
   onDone: (r: OverlayResult) => void;
 }) {
   const colors = useColors();
+  const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const { width: winW, height: winH } = useWindowDimensions();
   const stageW = winW;
@@ -115,8 +117,8 @@ export default function OverlayEditor({
   }
 
   return (
-    <View style={styles.container}>
-      <View style={styles.top}>
+    <View style={[styles.container, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+      <View style={[styles.top, { paddingTop: Math.max(insets.top, 8) + 8 }]}>
         <Pressable hitSlop={10} onPress={onCancel}><Ionicons name="close" size={26} color="#fff" /></Pressable>
         <View style={styles.topMid}>
           <Pressable hitSlop={8} onPress={addText}><Ionicons name="text" size={22} color="#fff" /></Pressable>
@@ -307,7 +309,7 @@ const stickStyles = StyleSheet.create({
 const makeStyles = (colors: Palette) =>
   StyleSheet.create({
     container: { ...StyleSheet.absoluteFillObject, backgroundColor: '#000', zIndex: 20 },
-    top: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing(4), paddingTop: spacing(10), paddingBottom: spacing(2) },
+    top: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing(4), paddingBottom: spacing(2) },
     topMid: { flexDirection: 'row', gap: 20 },
     stage: { alignSelf: 'center', overflow: 'hidden' },
     styleBar: { position: 'absolute', bottom: 120, left: 0, right: 0, height: 44, justifyContent: 'center' },

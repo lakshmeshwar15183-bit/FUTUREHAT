@@ -16,6 +16,7 @@ import {
   BlurMask, type SkPath,
 } from '@shopify/react-native-skia';
 
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors, spacing, font, type Palette } from '../../theme';
 
 export interface DrawResult { uri: string; width: number; height: number; }
@@ -46,6 +47,7 @@ export default function DrawTool({
   onDone: (r: DrawResult) => void;
 }) {
   const colors = useColors();
+  const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const { width: winW, height: winH } = useWindowDimensions();
   const canvasRef = useCanvasRef();
@@ -146,8 +148,8 @@ export default function DrawTool({
     : strokes;
 
   return (
-    <View style={styles.container}>
-      <View style={styles.top}>
+    <View style={[styles.container, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+      <View style={[styles.top, { paddingTop: Math.max(insets.top, 8) + 8 }]}>
         <Pressable hitSlop={10} onPress={onCancel}><Ionicons name="close" size={26} color="#fff" /></Pressable>
         <View style={styles.topMid}>
           <Pressable hitSlop={8} onPress={undo} disabled={!strokes.length}><Ionicons name="arrow-undo" size={22} color={strokes.length ? '#fff' : '#555'} /></Pressable>
@@ -219,7 +221,7 @@ export default function DrawTool({
 const makeStyles = (colors: Palette) =>
   StyleSheet.create({
     container: { ...StyleSheet.absoluteFillObject, backgroundColor: '#000', zIndex: 20 },
-    top: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing(4), paddingTop: spacing(10), paddingBottom: spacing(2) },
+    top: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing(4), paddingBottom: spacing(2) },
     topMid: { flexDirection: 'row', gap: 18 },
     stage: { flex: 1, alignItems: 'center', justifyContent: 'center' },
     colorRow: { flexDirection: 'row', justifyContent: 'center', flexWrap: 'wrap', gap: 8, paddingHorizontal: spacing(4), paddingVertical: spacing(2) },
@@ -228,7 +230,7 @@ const makeStyles = (colors: Palette) =>
     sliderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingVertical: spacing(2) },
     dotWrap: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center' },
     dot: { borderRadius: 20, backgroundColor: '#bbb' },
-    brushRow: { flexDirection: 'row', justifyContent: 'space-around', paddingVertical: spacing(3), paddingBottom: spacing(8) },
+    brushRow: { flexDirection: 'row', justifyContent: 'space-around', paddingVertical: spacing(3), paddingBottom: spacing(2) },
     brushBtn: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.1)' },
     brushBtnOn: { backgroundColor: colors.primary },
   });

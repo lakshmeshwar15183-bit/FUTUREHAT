@@ -15,6 +15,7 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { supabase } from '../../lib/supabase';
 import { getMyConversations, getCurrentUser } from '../../lib/shared';
@@ -39,6 +40,7 @@ const OPTIONS: { key: StatusAudience; label: string; sub: string; icon: keyof ty
 
 export default function AudiencePicker({ visible, audience, memberIds, onClose, onSave }: Props) {
   const colors = useColors();
+  const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
   const [sel, setSel] = useState<StatusAudience>(audience);
@@ -114,8 +116,8 @@ export default function AudiencePicker({ visible, audience, memberIds, onClose, 
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <View style={styles.container}>
-        <View style={styles.header}>
+      <View style={[styles.container, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+        <View style={[styles.header, { paddingTop: Math.max(insets.top, 8) + 8 }]}>
           <Pressable hitSlop={10} onPress={onClose}>
             <Ionicons name="close" size={26} color={colors.text} />
           </Pressable>
@@ -201,7 +203,7 @@ const makeStyles = (colors: Palette) =>
     container: { flex: 1, backgroundColor: colors.bg },
     header: {
       flexDirection: 'row', alignItems: 'center', gap: spacing(4),
-      paddingHorizontal: spacing(4), paddingTop: spacing(12), paddingBottom: spacing(3),
+      paddingHorizontal: spacing(4), paddingTop: spacing(4), paddingBottom: spacing(3),
       backgroundColor: colors.surface,
       borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border,
     },

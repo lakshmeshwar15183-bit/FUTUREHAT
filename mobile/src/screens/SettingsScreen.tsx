@@ -87,7 +87,11 @@ export default function SettingsScreen() {
   }
 
   return (
-    <ScrollView style={styles.container}>
+    <ScrollView
+      style={styles.container}
+      // Tab bar already reserves system nav inset — only need scroll breathing room.
+      contentContainerStyle={{ paddingBottom: spacing(6) }}
+    >
       <Pressable
         style={styles.profileRow}
         onPress={() => uid && navigation.navigate('Profile', { userId: uid })}

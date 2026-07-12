@@ -16,6 +16,7 @@ import { ResizeMode, Video, type AVPlaybackStatus } from 'expo-av';
 import { Ionicons } from '@expo/vector-icons';
 import * as VideoThumbnails from 'expo-video-thumbnails';
 
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors, spacing, radius, font, type Palette } from '../../theme';
 import { estimateBytes, formatBytes, type Quality } from '../qualityEstimate';
 
@@ -37,6 +38,7 @@ export default function VideoEditor({
   onDone: (r: VideoEditResult) => void;
 }) {
   const colors = useColors();
+  const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const { width: winW } = useWindowDimensions();
   const videoRef = useRef<Video>(null);
@@ -99,8 +101,8 @@ export default function VideoEditor({
   const endPct = dur ? endMs / dur : 1;
 
   return (
-    <View style={styles.container}>
-      <View style={styles.top}>
+    <View style={[styles.container, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+      <View style={[styles.top, { paddingTop: Math.max(insets.top, 8) + 8 }]}>
         <Pressable hitSlop={10} onPress={onCancel}><Ionicons name="close" size={26} color="#fff" /></Pressable>
         <Text style={styles.title}>Edit video</Text>
         <Pressable hitSlop={10} onPress={() => onDone({ startMs, endMs, muted, coverUri: cover, quality })}>
@@ -177,7 +179,7 @@ function Toggle({ icon, label, active, onPress, colors }: {
 const makeStyles = (colors: Palette) =>
   StyleSheet.create({
     container: { ...StyleSheet.absoluteFillObject, backgroundColor: '#000', zIndex: 20 },
-    top: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing(4), paddingTop: spacing(10), paddingBottom: spacing(2) },
+    top: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing(4), paddingBottom: spacing(2) },
     title: { color: '#fff', fontSize: font.heading, fontWeight: '700' },
     stage: { flex: 1, alignItems: 'center', justifyContent: 'center' },
     video: { width: '100%', height: '100%' },
@@ -194,5 +196,5 @@ const makeStyles = (colors: Palette) =>
     qText: { color: '#ddd', fontSize: font.small, fontWeight: '600' },
     qTextOn: { color: '#fff' },
     est: { marginLeft: 'auto', color: '#bbb', fontSize: font.small },
-    note: { color: '#888', fontSize: font.tiny, textAlign: 'center', paddingHorizontal: spacing(6), paddingBottom: spacing(8), lineHeight: 16 },
+    note: { color: '#888', fontSize: font.tiny, textAlign: 'center', paddingHorizontal: spacing(6), paddingBottom: spacing(2), lineHeight: 16 },
   });

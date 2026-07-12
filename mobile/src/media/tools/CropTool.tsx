@@ -12,6 +12,7 @@ import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import * as ImageManipulator from 'expo-image-manipulator';
 
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors, spacing, radius, font, type Palette } from '../../theme';
 
 export interface CropResult { uri: string; width: number; height: number; }
@@ -33,6 +34,7 @@ export default function CropTool({
   onDone: (r: CropResult) => void;
 }) {
   const colors = useColors();
+  const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const { width: winW, height: winH } = useWindowDimensions();
 
@@ -114,8 +116,8 @@ export default function CropTool({
   }
 
   return (
-    <View style={styles.container}>
-      <View style={styles.top}>
+    <View style={[styles.container, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+      <View style={[styles.top, { paddingTop: Math.max(insets.top, 8) + 8 }]}>
         <Pressable hitSlop={10} onPress={onCancel}><Ionicons name="close" size={26} color="#fff" /></Pressable>
         <Text style={styles.title}>Crop</Text>
         <Pressable hitSlop={10} onPress={apply} disabled={busy}>
@@ -177,7 +179,7 @@ const styles0 = StyleSheet.create({
 const makeStyles = (colors: Palette) =>
   StyleSheet.create({
     container: { ...StyleSheet.absoluteFillObject, backgroundColor: '#000', zIndex: 20 },
-    top: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing(4), paddingTop: spacing(10), paddingBottom: spacing(3) },
+    top: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing(4), paddingBottom: spacing(3) },
     title: { color: '#fff', fontSize: font.heading, fontWeight: '700' },
     stage: { flex: 1, alignItems: 'center', justifyContent: 'center' },
     frame: { overflow: 'hidden', backgroundColor: '#111', borderWidth: 1, borderColor: 'rgba(255,255,255,0.5)' },
@@ -185,7 +187,7 @@ const makeStyles = (colors: Palette) =>
     gridV: { position: 'absolute', left: '33%', top: 0, bottom: 0, width: StyleSheet.hairlineWidth, backgroundColor: 'rgba(255,255,255,0.35)' },
     gridH: { position: 'absolute', top: '33%', left: 0, right: 0, height: StyleSheet.hairlineWidth, backgroundColor: 'rgba(255,255,255,0.35)' },
     controls: { flexDirection: 'row', justifyContent: 'space-around', paddingVertical: spacing(4) },
-    aspects: { flexDirection: 'row', justifyContent: 'center', gap: 8, paddingBottom: spacing(8), paddingHorizontal: spacing(4) },
+    aspects: { flexDirection: 'row', justifyContent: 'center', gap: 8, paddingBottom: spacing(3), paddingHorizontal: spacing(4) },
     aspectChip: { borderRadius: 999, paddingHorizontal: 14, paddingVertical: 7, backgroundColor: 'rgba(255,255,255,0.12)' },
     aspectChipOn: { backgroundColor: colors.primary },
     aspectText: { color: '#ddd', fontSize: font.small, fontWeight: '600' },

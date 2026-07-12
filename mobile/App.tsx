@@ -1,15 +1,16 @@
 // Lumixo mobile — root component. Providers (safe-area, theme, app-lock),
 // auth gate, bottom tabs, and the full navigation stack.
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, Platform, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import * as Linking from 'expo-linking';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { NavigationContainer, DefaultTheme, useNavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
+import { tabBarSafeStyle } from './src/lib/safeLayout';
 
 import { supabase } from './src/lib/supabase';
 import { getCurrentUser, onAuthChange } from './src/lib/shared';
@@ -81,6 +82,21 @@ const Tab = createBottomTabNavigator();
 
 function MainTabs() {
   const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
+  // Dynamically lift the tab bar above the system navigation bar / home
+  // indicator / gesture handle. Hardcoded heights (e.g. Android 58 / pad 6)
+  // clip labels under 3-button nav on Samsung, Pixel, Realme, Xiaomi, etc.
+  const tabBarStyle = useMemo(
+    () =>
+      tabBarSafeStyle(insets, {
+        backgroundColor: colors.surface,
+        borderTopColor: colors.isLight ? 'rgba(0,0,0,0.06)' : colors.border,
+        borderTopWidth: StyleSheet.hairlineWidth,
+        elevation: 0,
+      }),
+    [insets.bottom, colors.surface, colors.isLight, colors.border],
+  );
+
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
@@ -99,15 +115,11 @@ function MainTabs() {
         },
         headerTintColor: colors.isLight ? '#fff' : colors.text,
         headerTitleAlign: 'left' as const,
-        tabBarStyle: {
-          backgroundColor: colors.surface,
-          borderTopColor: colors.isLight ? 'rgba(0,0,0,0.06)' : colors.border,
-          borderTopWidth: StyleSheet.hairlineWidth,
-          height: Platform.OS === 'ios' ? 84 : 58,
-          paddingTop: 4,
-          paddingBottom: Platform.OS === 'ios' ? 28 : 6,
-          elevation: 0,
-        },
+        // We apply bottom inset ourselves via tabBarSafeStyle — disable the
+        // navigator's automatic double-padding so OEM nav bars aren't padded twice.
+        safeAreaInsets: { top: 0, bottom: 0, left: 0, right: 0 },
+        tabBarStyle,
+        tabBarHideOnKeyboard: true,
         tabBarLabelStyle: {
           fontSize: 11,
           fontWeight: '600',

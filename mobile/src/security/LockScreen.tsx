@@ -2,6 +2,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAppLock } from './AppLock';
 import { useColors, spacing, font, type Palette } from '../theme';
@@ -12,6 +13,7 @@ const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'bio', '0', 'del'];
 export default function LockScreen() {
   const { unlockWithPin, unlockWithBiometric, biometricEnabled, biometricAvailable } = useAppLock();
   const colors = useColors();
+  const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const [pin, setPin] = useState('');
   const [error, setError] = useState(false);
@@ -46,7 +48,15 @@ export default function LockScreen() {
   }
 
   return (
-    <View style={styles.container}>
+    <View
+      style={[
+        styles.container,
+        {
+          paddingTop: Math.max(insets.top, 24),
+          paddingBottom: Math.max(insets.bottom, 16),
+        },
+      ]}
+    >
       <Ionicons name="lock-closed" size={40} color={colors.primary} />
       <Text style={styles.title}>{APP_NAME} is locked</Text>
       <Text style={styles.sub}>Enter your PIN to continue</Text>

@@ -21,7 +21,9 @@ import { supabase } from '../lib/supabase';
 import { searchProfiles, createGroupConversation, getCurrentUser, sendPush } from '../lib/shared';
 import type { Profile } from '../lib/shared';
 import { uploadAvatarFromUri } from '../lib/media';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
+import { fabBottom } from '../lib/safeLayout';
 import Avatar from '../components/Avatar';
 import type { RootStackParamList } from '../navigation/types';
 import { Alert } from '../ui/dialog';
@@ -31,6 +33,7 @@ type Nav = NativeStackNavigationProp<RootStackParamList, 'NewGroup'>;
 export default function NewGroupScreen() {
   const navigation = useNavigation<Nav>();
   const colors = useColors();
+  const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
   const [step, setStep] = useState<'members' | 'details'>('members');
@@ -226,7 +229,11 @@ export default function NewGroupScreen() {
         />
 
         <Pressable
-          style={[styles.fab, !selected.length && styles.fabDisabled]}
+          style={[
+            styles.fab,
+            { bottom: fabBottom(insets, { extra: spacing(5) }) },
+            !selected.length && styles.fabDisabled,
+          ]}
           onPress={() => selected.length > 0 && setStep('details')}
           disabled={!selected.length}
         >
@@ -407,7 +414,7 @@ const makeStyles = (colors: Palette) =>
     fab: {
       position: 'absolute',
       right: spacing(5),
-      bottom: spacing(6),
+      // bottom set dynamically via safe-area insets
       width: 60,
       height: 60,
       borderRadius: 30,

@@ -28,6 +28,7 @@ import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Audio, ResizeMode, Video } from 'expo-av';
 import * as FileSystem from 'expo-file-system';
@@ -421,6 +422,7 @@ function VideoPage({
 
 export default function MediaViewer({ items, index, onClose, onForward, onDelete }: Props) {
   const { width: screenW, height: screenH } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const [current, setCurrent] = useState(index);
   const [zoomed, setZoomed] = useState(false);
   const [chrome, setChrome] = useState(true);
@@ -648,7 +650,10 @@ export default function MediaViewer({ items, index, onClose, onForward, onDelete
            * 360dp screen. We surface the four most-used (Forward · Share · Save
            * · More) directly and put Info + Delete in the More sheet — the
            * pattern every modern messaging app uses. */}
-        <Animated.View style={[styles.header, chromeStyle]} pointerEvents={chrome ? 'auto' : 'none'}>
+        <Animated.View
+          style={[styles.header, chromeStyle, { paddingTop: Math.max(insets.top, 12) + 8 }]}
+          pointerEvents={chrome ? 'auto' : 'none'}
+        >
           <Pressable onPress={requestClose} hitSlop={12} style={styles.headerBtn} accessibilityRole="button" accessibilityLabel="Close">
             <Ionicons name="close" size={26} color="#fff" />
           </Pressable>
@@ -671,7 +676,7 @@ export default function MediaViewer({ items, index, onClose, onForward, onDelete
 
         {/* ── Footer: caption + meta + thumbnail strip ── */}
         <Animated.View
-          style={[styles.footer, chromeStyle]}
+          style={[styles.footer, chromeStyle, { paddingBottom: Math.max(insets.bottom, 12) + 10 }]}
           pointerEvents={chrome && !zoomed ? 'auto' : 'none'}
         >
           {(!!item?.sender || !!item?.time) && (
@@ -718,7 +723,12 @@ export default function MediaViewer({ items, index, onClose, onForward, onDelete
 
         {/* ── Info sheet ── */}
         {infoOpen && item && (
-          <InfoSheet item={item} natural={natural[item.id]} onClose={() => setInfoOpen(false)} />
+          <InfoSheet
+            item={item}
+            natural={natural[item.id]}
+            onClose={() => setInfoOpen(false)}
+            bottomInset={insets.bottom}
+          />
         )}
       </GestureHandlerRootView>
     </Modal>
@@ -758,7 +768,17 @@ function MenuRow({ icon, label, onPress, danger }: { icon: any; label: string; o
 }
 
 // ── Info sheet ────────────────────────────────────────────────────────────────
-function InfoSheet({ item, natural, onClose }: { item: ViewerItem; natural?: { w: number; h: number }; onClose: () => void }) {
+function InfoSheet({
+  item,
+  natural,
+  onClose,
+  bottomInset = 0,
+}: {
+  item: ViewerItem;
+  natural?: { w: number; h: number };
+  onClose: () => void;
+  bottomInset?: number;
+}) {
   const [bytes, setBytes] = useState<number | null>(null);
   const dims = natural ?? (item.meta?.width && item.meta?.height ? { w: item.meta.width, h: item.meta.height } : null);
 
@@ -800,7 +820,10 @@ function InfoSheet({ item, natural, onClose }: { item: ViewerItem; natural?: { w
   return (
     <Modal visible transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
       <Pressable style={styles.infoBackdrop} onPress={onClose}>
-        <Pressable style={styles.infoSheet} onPress={(e) => e.stopPropagation()}>
+        <Pressable
+          style={[styles.infoSheet, { paddingBottom: Math.max(bottomInset, 12) + 18 }]}
+          onPress={(e) => e.stopPropagation()}
+        >
           <View style={styles.infoHandle} />
           <Text style={styles.infoTitle}>Media info</Text>
           {rows.map(([k, v]) => (
@@ -826,7 +849,8 @@ const styles = StyleSheet.create({
   header: {
     position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingTop: 44, paddingHorizontal: 8, paddingBottom: 10,
+    // paddingTop set dynamically from safe-area top inset
+    paddingHorizontal: 8, paddingBottom: 10,
     backgroundColor: 'rgba(0,0,0,0.42)',
   },
   headerRight: { flexDirection: 'row', alignItems: 'center' },
@@ -838,7 +862,8 @@ const styles = StyleSheet.create({
   retryText: { color: '#fff', fontSize: 13, fontWeight: '600' },
   footer: {
     position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 10,
-    paddingTop: 10, paddingBottom: 30, paddingHorizontal: 14,
+    // paddingBottom set dynamically from safe-area bottom inset
+    paddingTop: 10, paddingHorizontal: 14,
     backgroundColor: 'rgba(0,0,0,0.50)',
   },
   meta: { color: '#e9edef', fontSize: 12, fontWeight: '600', marginBottom: 2 },
@@ -850,14 +875,14 @@ const styles = StyleSheet.create({
   thumbImg: { width: 46, height: 46 },
   thumbPlay: { position: 'absolute', inset: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.25)' },
   // More menu
-  menuBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', paddingTop: 90, paddingRight: 12, alignItems: 'flex-end' },
+  menuBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', paddingTop: 96, paddingRight: 12, alignItems: 'flex-end' },
   menu: { backgroundColor: '#1F272C', borderRadius: 12, paddingVertical: 6, minWidth: 200, elevation: 8 },
   menuRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, paddingHorizontal: 16 },
   menuRowPressed: { backgroundColor: 'rgba(255,255,255,0.06)' },
   menuLabel: { color: '#fff', fontSize: 15, fontWeight: '500' },
   // Info sheet
   infoBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  infoSheet: { backgroundColor: '#151E24', borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: 18, paddingBottom: 34 },
+  infoSheet: { backgroundColor: '#151E24', borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: 18 },
   infoHandle: { alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: '#3A464E', marginBottom: 12 },
   infoTitle: { color: '#fff', fontSize: 18, fontWeight: '700', marginBottom: 10 },
   infoRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 9, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#2A363E', gap: 16 },

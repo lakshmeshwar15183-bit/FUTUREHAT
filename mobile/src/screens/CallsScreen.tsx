@@ -31,6 +31,7 @@ import type { CallGroup, CallHistoryItem, ConversationSummary, Profile, CallType
 import { useCalls } from '../calls/CallContext';
 import { getCache, setCache } from '../lib/localCache';
 import { formatListTimestamp } from '../lib/time';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors, spacing, radius, font, listPerf, type Palette } from '../theme';
 import Avatar from '../components/Avatar';
 import { LumixoCat } from '../components/LumixoCat';
@@ -307,6 +308,7 @@ function ContactPicker({
   onCall: (conv: ConversationSummary, type: CallType) => void;
   colors: Palette; styles: Styles;
 }) {
+  const insets = useSafeAreaInsets();
   const [convs, setConvs] = useState<ConversationSummary[]>([]);
   const [q, setQ] = useState('');
   useEffect(() => {
@@ -317,7 +319,10 @@ function ContactPicker({
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
       <Pressable style={styles.sheetBackdrop} onPress={onClose}>
-        <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+        <Pressable
+          style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 12) + 16 }]}
+          onPress={(e) => e.stopPropagation()}
+        >
           <View style={styles.handle} />
           <Text style={styles.sheetTitle}>Call a contact</Text>
           <View style={styles.searchBar}>
@@ -378,7 +383,7 @@ const makeStyles = (colors: Palette) =>
       borderTopRightRadius: 20,
       padding: spacing(4),
       paddingTop: spacing(2),
-      paddingBottom: spacing(8),
+      // paddingBottom applied dynamically via safe-area insets
       shadowColor: '#000',
       shadowOpacity: 0.3,
       shadowRadius: 20,
