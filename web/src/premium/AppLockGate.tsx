@@ -130,7 +130,10 @@ export function AppLockGate({ children }: { children: ReactNode }) {
     void deviceAuth.isAvailable().then(setBioAvailable);
   }, [locked, user]);
 
-  if (unlocked || !locked || !user) return <>{children}</>;
+  // CRITICAL STABILITY: never unmount children when locked. Unmounting App on
+  // lock (or on prefs flicker) destroyed chat/call state and could leave a blank
+  // shell after minimize→restore. Keep the tree mounted; overlay the PIN UI.
+  const showLockUi = !!(locked && user && !unlocked);
 
   function unlock(enrollBio = false) {
     sessionStorage.setItem(`fh_unlocked_${user!.id}`, '1');
@@ -200,87 +203,107 @@ export function AppLockGate({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="fh-splash">
+    <div className="fh-app-lock-shell" style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', flex: 1 }}>
+      {/* Always mount app tree so chat/call state survives lock overlay + tab restore. */}
       <div
-        className="glass"
-        style={{ padding: 32, borderRadius: 24, width: 320, textAlign: 'center' }}
+        className="fh-app-lock-content"
+        style={{
+          flex: 1,
+          minHeight: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          // Hide from AT / pointer when locked (tree stays alive).
+          visibility: showLockUi ? 'hidden' : 'visible',
+          pointerEvents: showLockUi ? 'none' : 'auto',
+        }}
+        aria-hidden={showLockUi || undefined}
       >
-        <div style={{ fontSize: 40 }}>🔐</div>
-        <h2 style={{ margin: '10px 0 4px' }}>
-          {mode === 'create' ? 'Set a PIN' : 'Lumixo locked'}
-        </h2>
-        <p style={{ color: 'var(--fh-muted)', fontSize: 13, marginBottom: 18 }}>
-          {mode === 'create'
-            ? `Create a ${MIN_PIN_LEN}+ digit PIN to protect your chats`
-            : 'Enter your PIN to continue'}
-        </p>
-        <input
-          autoFocus
-          type="password"
-          inputMode="numeric"
-          autoComplete="one-time-code"
-          value={entry}
-          disabled={busy}
-          onChange={(e) => setEntry(e.target.value.replace(/\D/g, '').slice(0, 12))}
-          onKeyDown={(e) => e.key === 'Enter' && !busy && void submit()}
-          placeholder="••••••"
-          aria-label="App lock PIN"
-          style={{
-            width: '100%',
-            textAlign: 'center',
-            letterSpacing: 8,
-            fontSize: 22,
-            padding: '12px 10px',
-            borderRadius: 12,
-            border: '1px solid var(--fh-border)',
-            background: 'var(--fh-surface)',
-            color: 'var(--fh-text)',
-            marginBottom: 12,
-          }}
-        />
-        {error && (
-          <p role="alert" style={{ color: '#ef4444', fontSize: 13, margin: '0 0 10px' }}>
-            {error}
-          </p>
-        )}
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => void submit()}
-          style={{
-            width: '100%',
-            padding: '12px 16px',
-            borderRadius: 12,
-            border: 'none',
-            background: 'var(--fh-primary)',
-            color: '#fff',
-            fontWeight: 700,
-            cursor: busy ? 'wait' : 'pointer',
-            marginBottom: 10,
-          }}
-        >
-          {mode === 'create' ? 'Save PIN' : 'Unlock'}
-        </button>
-        {bioAvailable && mode === 'enter' && (
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => void biometric()}
-            style={{
-              width: '100%',
-              padding: '10px 16px',
-              borderRadius: 12,
-              border: '1px solid var(--fh-border)',
-              background: 'transparent',
-              color: 'var(--fh-text)',
-              fontWeight: 600,
-              cursor: busy ? 'wait' : 'pointer',
-            }}
-          >
-            Use biometrics
-          </button>
-        )}
+        {children}
       </div>
+      {showLockUi && (
+        <div className="fh-splash" style={{ position: 'fixed', inset: 0, zIndex: 10000 }}>
+          <div
+            className="glass"
+            style={{ padding: 32, borderRadius: 24, width: 320, textAlign: 'center' }}
+          >
+            <div style={{ fontSize: 40 }}>🔐</div>
+            <h2 style={{ margin: '10px 0 4px' }}>
+              {mode === 'create' ? 'Set a PIN' : 'Lumixo locked'}
+            </h2>
+            <p style={{ color: 'var(--fh-muted)', fontSize: 13, marginBottom: 18 }}>
+              {mode === 'create'
+                ? `Create a ${MIN_PIN_LEN}+ digit PIN to protect your chats`
+                : 'Enter your PIN to continue'}
+            </p>
+            <input
+              autoFocus
+              type="password"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              value={entry}
+              disabled={busy}
+              onChange={(e) => setEntry(e.target.value.replace(/\D/g, '').slice(0, 12))}
+              onKeyDown={(e) => e.key === 'Enter' && !busy && void submit()}
+              placeholder="••••••"
+              aria-label="App lock PIN"
+              style={{
+                width: '100%',
+                textAlign: 'center',
+                letterSpacing: 8,
+                fontSize: 22,
+                padding: '12px 10px',
+                borderRadius: 12,
+                border: '1px solid var(--fh-border)',
+                background: 'var(--fh-surface)',
+                color: 'var(--fh-text)',
+                marginBottom: 12,
+              }}
+            />
+            {error && (
+              <p role="alert" style={{ color: '#ef4444', fontSize: 13, margin: '0 0 10px' }}>
+                {error}
+              </p>
+            )}
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void submit()}
+              style={{
+                width: '100%',
+                padding: '12px 16px',
+                borderRadius: 12,
+                border: 'none',
+                background: 'var(--fh-primary)',
+                color: '#fff',
+                fontWeight: 700,
+                cursor: busy ? 'wait' : 'pointer',
+                marginBottom: 10,
+              }}
+            >
+              {mode === 'create' ? 'Save PIN' : 'Unlock'}
+            </button>
+            {bioAvailable && mode === 'enter' && (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void biometric()}
+                style={{
+                  width: '100%',
+                  padding: '10px 16px',
+                  borderRadius: 12,
+                  border: '1px solid var(--fh-border)',
+                  background: 'transparent',
+                  color: 'var(--fh-text)',
+                  fontWeight: 600,
+                  cursor: busy ? 'wait' : 'pointer',
+                }}
+              >
+                Use biometrics
+              </button>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

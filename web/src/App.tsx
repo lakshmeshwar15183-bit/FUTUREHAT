@@ -1,7 +1,7 @@
 // Lumixo web — main app (conversation list + chat) with premium wiring.
 // Performance: cache-first chat list, deferred secondary network, lazy ChatView.
 
-import { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense, type MouseEvent } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, Suspense, type MouseEvent } from 'react';
 import { useAuth } from './AuthContext';
 import { usePremium } from './PremiumContext';
 import { usePresence } from './PresenceContext';
@@ -36,24 +36,26 @@ import {
   mark,
 } from './lib/startupCache';
 import { startWebOutbox } from './lib/outbox';
+import { lazyStable } from './lib/lazyStable';
+import { ErrorBoundary } from './lib/ErrorBoundary';
 import './App.css';
 
-// ChatView is large — load only when a conversation is opened (or prefetch idle).
-const ChatView = lazy(() => import('./ChatView').then((m) => ({ default: m.ChatView })));
+// ChatView is large — load once; lazyStable never re-suspends (no blank skeleton on remount).
+const ChatView = lazyStable('ChatView', () => import('./ChatView').then((m) => ({ default: m.ChatView })));
 
-// Modals are lazy — they're off the critical path and keep the initial bundle small.
-const ProfileModal = lazy(() => import('./ProfileModal').then((m) => ({ default: m.ProfileModal })));
-const GroupModal = lazy(() => import('./GroupModal').then((m) => ({ default: m.GroupModal })));
-const JoinGroupInvite = lazy(() => import('./JoinGroupInvite').then((m) => ({ default: m.JoinGroupInvite })));
-const SettingsModal = lazy(() => import('./premium/SettingsModal').then((m) => ({ default: m.SettingsModal })));
-const HelpSupportModal = lazy(() => import('./support/HelpSupportModal').then((m) => ({ default: m.HelpSupportModal })));
-const CommunitiesModal = lazy(() => import('./communities/CommunitiesModal').then((m) => ({ default: m.CommunitiesModal })));
-const StarredMessagesModal = lazy(() => import('./StarredMessagesModal').then((m) => ({ default: m.StarredMessagesModal })));
-const AdminDashboard = lazy(() => import('./admin/AdminDashboard').then((m) => ({ default: m.AdminDashboard })));
-const AdminGate = lazy(() => import('./admin/AdminGate').then((m) => ({ default: m.AdminGate })));
-const ModeratorDashboard = lazy(() => import('./moderator/ModeratorDashboard').then((m) => ({ default: m.ModeratorDashboard })));
-const Mailbox = lazy(() => import('./Mailbox').then((m) => ({ default: m.Mailbox })));
-const CallsView = lazy(() => import('./calls/CallsView').then((m) => ({ default: m.CallsView })));
+// Modals are lazy — off the critical path; stable promises avoid fallback flashes.
+const ProfileModal = lazyStable('ProfileModal', () => import('./ProfileModal').then((m) => ({ default: m.ProfileModal })));
+const GroupModal = lazyStable('GroupModal', () => import('./GroupModal').then((m) => ({ default: m.GroupModal })));
+const JoinGroupInvite = lazyStable('JoinGroupInvite', () => import('./JoinGroupInvite').then((m) => ({ default: m.JoinGroupInvite })));
+const SettingsModal = lazyStable('SettingsModal', () => import('./premium/SettingsModal').then((m) => ({ default: m.SettingsModal })));
+const HelpSupportModal = lazyStable('HelpSupportModal', () => import('./support/HelpSupportModal').then((m) => ({ default: m.HelpSupportModal })));
+const CommunitiesModal = lazyStable('CommunitiesModal', () => import('./communities/CommunitiesModal').then((m) => ({ default: m.CommunitiesModal })));
+const StarredMessagesModal = lazyStable('StarredMessagesModal', () => import('./StarredMessagesModal').then((m) => ({ default: m.StarredMessagesModal })));
+const AdminDashboard = lazyStable('AdminDashboard', () => import('./admin/AdminDashboard').then((m) => ({ default: m.AdminDashboard })));
+const AdminGate = lazyStable('AdminGate', () => import('./admin/AdminGate').then((m) => ({ default: m.AdminGate })));
+const ModeratorDashboard = lazyStable('ModeratorDashboard', () => import('./moderator/ModeratorDashboard').then((m) => ({ default: m.ModeratorDashboard })));
+const Mailbox = lazyStable('Mailbox', () => import('./Mailbox').then((m) => ({ default: m.Mailbox })));
+const CallsView = lazyStable('CallsView', () => import('./calls/CallsView').then((m) => ({ default: m.CallsView })));
 
 function ChatSkeleton() {
   return (
@@ -101,6 +103,12 @@ function writeCachedRecent(uid: string, list: RecentContact[]): void {
 function AppInner() {
   // Durable offline message outbox (localStorage + online flush).
   useEffect(() => startWebOutbox(), []);
+  // Prefetch ChatView after first paint so first open is instant (no Suspense flash).
+  useEffect(() => {
+    afterFirstPaint(() => {
+      void import('./ChatView');
+    });
+  }, []);
   const { user, profile } = useAuth();
   const { isPremium, premiumUserIds } = usePremium();
   const { onlineIds } = usePresence();
@@ -864,18 +872,23 @@ function AppInner() {
 
       <div className="main-content">
         {selectedConv ? (
-          <div key={selectedConv.conversation.id} style={{ height: '100%' }} className="chat-pane-enter">
-            <Suspense fallback={<ChatSkeleton />}>
-              <ChatView
-                conversation={selectedConv}
-                isOtherPremium={otherIsPremium(selectedConv)}
-                onBack={() => setSelectedConvId(null)}
-                onConversationGone={() => {
-                  setSelectedConvId(null);
-                  void loadConversations();
-                }}
-              />
-            </Suspense>
+          <div
+            key={selectedConv.conversation.id}
+            className="chat-pane-enter main-content-pane"
+          >
+            <ErrorBoundary fallbackLabel="This chat hit an error. Try again or pick another conversation.">
+              <Suspense fallback={<ChatSkeleton />}>
+                <ChatView
+                  conversation={selectedConv}
+                  isOtherPremium={otherIsPremium(selectedConv)}
+                  onBack={() => setSelectedConvId(null)}
+                  onConversationGone={() => {
+                    setSelectedConvId(null);
+                    void loadConversations();
+                  }}
+                />
+              </Suspense>
+            </ErrorBoundary>
           </div>
         ) : (
           <div key="empty" className="empty-chat">

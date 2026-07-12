@@ -19,7 +19,15 @@
   <title>Lumixo</title>
   <!-- Instant first paint: WhatsApp-class shell before JS executes. Removed when React mounts. -->
   <style>
-    html, body, #root { height: 100%; margin: 0; }
+    html, body, #root {
+      height: 100%;
+      height: 100dvh;
+      min-height: 100%;
+      min-height: 100dvh;
+      margin: 0;
+      width: 100%;
+    }
+    #root { display: flex; flex-direction: column; background: #0b141a; }
     body {
       margin: 0;
       background: #0b141a;

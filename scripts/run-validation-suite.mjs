@@ -134,6 +134,15 @@ if (existsSync(notifMatrix)) {
   ]);
 }
 
+// 10) Web stability (blank-screen / resize contracts)
+const webStab = join(ROOT, 'scripts', 'web-stability-stress.mjs');
+if (existsSync(webStab)) {
+  results.push([
+    'web-stability',
+    run('Web stability contracts', 'node scripts/web-stability-stress.mjs', ROOT),
+  ]);
+}
+
 // 10) Optional DB verify
 if (process.env.SUPABASE_DB_PASSWORD || process.env.DATABASE_URL) {
   const authz = join(ROOT, 'scripts', 'db-verify-authz.mjs');

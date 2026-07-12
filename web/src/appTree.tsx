@@ -54,7 +54,7 @@ function Root() {
 
   if (user) {
     return (
-      <div style={{ height: '100%' }} className="fh-app-root">
+      <div className="fh-app-root" style={{ flex: 1, minHeight: 0, height: '100%', display: 'flex', flexDirection: 'column' }}>
         <AppLockGate>
           <App />
         </AppLockGate>
@@ -63,7 +63,7 @@ function Root() {
   }
 
   return (
-    <div style={{ height: '100%' }} className="fh-auth-root">
+    <div className="fh-auth-root" style={{ flex: 1, minHeight: 0, height: '100%', display: 'flex', flexDirection: 'column' }}>
       <AuthScreen />
     </div>
   );
