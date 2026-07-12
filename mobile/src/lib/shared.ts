@@ -22,3 +22,11 @@ export * from '../../../shared/premium/plans';
 export * from '../../../shared/premium/features';
 export { createLumixoClient } from '../../../shared/client';
 export type { LumixoClientOptions, SupabaseClient } from '../../../shared/client';
+export {
+  catMoodFromAuth,
+  catGazeFromEmail,
+  catAriaLabel,
+  CAT_SIZE_PX,
+  type CatMood,
+  type CatSize,
+} from '../../../shared/lumixoCat';

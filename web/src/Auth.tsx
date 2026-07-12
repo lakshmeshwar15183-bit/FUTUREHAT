@@ -1,13 +1,13 @@
-// Lumixo web — Auth screen with interactive mascot (CSS-only — no framer-motion).
+// Lumixo web — Auth screen with official Lumi cat mascot.
+// Authentication APIs/Supabase are unchanged — UI/animation only.
 
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { signInWithEmail, signUpWithEmail } from '@shared/api';
 import { supabase } from './supabase';
-import { Mascot } from './Mascot';
+import { LumixoCat } from './mascot/LumixoCat';
+import { catGazeFromEmail, catMoodFromAuth, type CatMood } from '@shared/lumixoCat';
 import './Auth.css';
 
-// Where we tell Supabase to send the user after they click the reset-password
-// link. MUST match Supabase Auth redirect allow-list.
 function resetRedirectUrl(): string {
   const envSite = (import.meta as any).env?.VITE_SITE_URL as string | undefined;
   let base = envSite?.replace(/\/+$/, '') || '';
@@ -32,26 +32,43 @@ export function AuthScreen() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [loading, setLoading] = useState(false);
-  const [pwFocused, setPwFocused] = useState(false);
-  const [happy, setHappy] = useState(false);
+  const [emailFocused, setEmailFocused] = useState(false);
+  const [passwordFocused, setPasswordFocused] = useState(false);
+  const [success, setSuccess] = useState(false);
+  const [showConfused, setShowConfused] = useState(false);
 
-  const gaze = Math.min(1, email.length / 24);
+  const gaze = catGazeFromEmail(email);
+  const mood: CatMood = catMoodFromAuth({
+    passwordFocused,
+    emailFocused: emailFocused || (!passwordFocused && email.length > 0 && !success),
+    error: showConfused ? error : null,
+    success,
+  });
+
+  // Keep confused mood for 2s after error, then drop back to idle/watching.
+  useEffect(() => {
+    if (!error) return;
+    setShowConfused(true);
+    const t = setTimeout(() => setShowConfused(false), 2000);
+    return () => clearTimeout(t);
+  }, [error]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError('');
     setNotice('');
+    setSuccess(false);
     setLoading(true);
     try {
       if (mode === 'signup') {
         const { error: err } = await signUpWithEmail(supabase, email, password, displayName);
         if (err) throw err;
-        setHappy(true);
+        setSuccess(true);
         setTimeout(() => {
           alert('Account created! Sign in to continue.');
           setMode('signin');
-          setHappy(false);
-        }, 700);
+          setSuccess(false);
+        }, 900);
       } else if (mode === 'forgot') {
         const { error: err } = await supabase.auth.resetPasswordForEmail(email, {
           redirectTo: resetRedirectUrl(),
@@ -62,10 +79,12 @@ export function AuthScreen() {
       } else {
         const { error: err } = await signInWithEmail(supabase, email, password);
         if (err) throw err;
-        setHappy(true);
+        setSuccess(true);
+        // Session listener navigates; keep celebrate until unmount.
       }
     } catch (err: any) {
       setError(err.message || 'Authentication failed');
+      setSuccess(false);
     } finally {
       setLoading(false);
     }
@@ -74,9 +93,9 @@ export function AuthScreen() {
   return (
     <div className="auth-screen">
       <div className="auth-aurora" aria-hidden />
-      <div className="auth-card glass auth-card-enter">
-        <div className="auth-mascot">
-          <Mascot gaze={gaze} coverEyes={pwFocused} happy={happy} />
+      <div className={`auth-card glass auth-card-enter ${success ? 'auth-card-success' : ''}`}>
+        <div className="auth-mascot" aria-hidden>
+          <LumixoCat mood={mood} gaze={gaze} size="hero" decorative />
         </div>
         <h1 className="auth-logo">Lumixo</h1>
         <p className="auth-tagline">Real-time messaging, reimagined</p>
@@ -89,7 +108,8 @@ export function AuthScreen() {
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
               required
-              disabled={loading}
+              disabled={loading || success}
+              autoComplete="name"
             />
           )}
           <input
@@ -97,9 +117,14 @@ export function AuthScreen() {
             placeholder="Email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            onFocus={() => setPwFocused(false)}
+            onFocus={() => {
+              setEmailFocused(true);
+              setPasswordFocused(false);
+            }}
+            onBlur={() => setEmailFocused(false)}
             required
-            disabled={loading}
+            disabled={loading || success}
+            autoComplete="email"
           />
           {mode !== 'forgot' && (
             <input
@@ -107,22 +132,32 @@ export function AuthScreen() {
               placeholder="Password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              onFocus={() => setPwFocused(true)}
-              onBlur={() => setPwFocused(false)}
+              onFocus={() => {
+                setPasswordFocused(true);
+                setEmailFocused(false);
+              }}
+              onBlur={() => setPasswordFocused(false)}
               required
               minLength={6}
-              disabled={loading}
+              disabled={loading || success}
+              autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
             />
           )}
-          {error && <div className="auth-error">{error}</div>}
+          {error && (
+            <div className="auth-error" role="alert">
+              {error}
+            </div>
+          )}
           {notice && (
-            <div className="auth-error" style={{ background: 'rgba(0, 168, 132, 0.15)', color: 'inherit' }}>
+            <div className="auth-error" role="status" style={{ background: 'rgba(0, 168, 132, 0.15)', color: 'inherit' }}>
               {notice}
             </div>
           )}
-          <button type="submit" disabled={loading} className="auth-submit">
+          <button type="submit" disabled={loading || success} className="auth-submit">
             {loading ? (
               <span className="fh-spinner" style={{ width: 20, height: 20, borderWidth: 2 }} />
+            ) : success ? (
+              'Welcome!'
             ) : mode === 'signin' ? (
               'Sign In'
             ) : mode === 'signup' ? (
@@ -136,21 +171,54 @@ export function AuthScreen() {
         <div className="auth-toggle">
           {mode === 'signin' && (
             <>
-              <a onClick={() => { setError(''); setNotice(''); setMode('forgot'); }}>Forgot password?</a>
+              <a
+                onClick={() => {
+                  setError('');
+                  setNotice('');
+                  setMode('forgot');
+                }}
+              >
+                Forgot password?
+              </a>
               <span style={{ margin: '0 8px', opacity: 0.5 }}>·</span>
-              New here? <a onClick={() => { setError(''); setNotice(''); setMode('signup'); }}>Create an account</a>
+              New here?{' '}
+              <a
+                onClick={() => {
+                  setError('');
+                  setNotice('');
+                  setMode('signup');
+                }}
+              >
+                Create an account
+              </a>
             </>
           )}
           {mode === 'signup' && (
             <>
               Already have an account?{' '}
-              <a onClick={() => { setError(''); setNotice(''); setMode('signin'); }}>Sign in</a>
+              <a
+                onClick={() => {
+                  setError('');
+                  setNotice('');
+                  setMode('signin');
+                }}
+              >
+                Sign in
+              </a>
             </>
           )}
           {mode === 'forgot' && (
             <>
               Remembered it?{' '}
-              <a onClick={() => { setError(''); setNotice(''); setMode('signin'); }}>Back to sign in</a>
+              <a
+                onClick={() => {
+                  setError('');
+                  setNotice('');
+                  setMode('signin');
+                }}
+              >
+                Back to sign in
+              </a>
             </>
           )}
         </div>

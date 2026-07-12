@@ -29,17 +29,51 @@
   position: relative;
   z-index: 1;
   width: 100%;
-  max-width: 380px;
-  padding: 36px 32px 28px;
+  max-width: 400px;
+  padding: 28px 32px 28px;
   border-radius: 28px;
   box-shadow: var(--fh-shadow);
   text-align: center;
+  transition: transform 0.45s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.45s ease;
+}
+
+.auth-card-success {
+  transform: scale(0.98);
+  opacity: 0.92;
+}
+
+.auth-card-enter {
+  animation: auth-card-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes auth-card-in {
+  from { opacity: 0; transform: translateY(16px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 .auth-mascot {
   display: flex;
   justify-content: center;
-  margin-bottom: 6px;
+  /* Sit the cat on top of the card edge */
+  margin: -88px auto 4px;
+  height: 180px;
+  position: relative;
+  z-index: 2;
+  filter: drop-shadow(0 12px 24px rgba(0, 0, 0, 0.28));
+}
+
+@media (max-width: 420px) {
+  .auth-mascot {
+    margin-top: -64px;
+    height: 150px;
+  }
+  .auth-mascot .lc-root {
+    transform: scale(0.85);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-card-enter { animation: none; }
+  .auth-card-success { transition: none; }
 }
 
 .auth-logo {

@@ -1,0 +1,223 @@
+/* Lumixo cat — GPU-friendly CSS animations (transform/opacity only). */
+
+.lc-root {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  user-select: none;
+  pointer-events: none;
+  -webkit-user-select: none;
+}
+
+.lc-svg {
+  display: block;
+  overflow: visible;
+  will-change: transform;
+}
+
+/* ── Breathing (idle / watching) ─────────────────────────────────────────── */
+.lc-mood-idle .lc-figure,
+.lc-mood-watching .lc-figure,
+.lc-mood-wave .lc-figure {
+  transform-origin: 100px 160px;
+  animation: lc-breathe 3.2s ease-in-out infinite;
+}
+
+@keyframes lc-breathe {
+  0%, 100% { transform: scale(1, 1); }
+  50% { transform: scale(1.02, 0.985); }
+}
+
+/* ── Tail ────────────────────────────────────────────────────────────────── */
+.lc-tail {
+  transform-origin: 138px 120px;
+  animation: lc-tail-slow 3.6s ease-in-out infinite;
+}
+.lc-mood-watching .lc-tail {
+  animation: lc-tail-active 1.8s ease-in-out infinite;
+}
+.lc-mood-celebrating .lc-tail {
+  animation: lc-tail-wag 0.45s ease-in-out infinite;
+}
+.lc-mood-hiding .lc-tail {
+  animation: lc-tail-slow 3.2s ease-in-out infinite;
+}
+
+@keyframes lc-tail-slow {
+  0%, 100% { transform: rotate(-4deg); }
+  50% { transform: rotate(8deg); }
+}
+@keyframes lc-tail-active {
+  0%, 100% { transform: rotate(-10deg); }
+  50% { transform: rotate(14deg); }
+}
+@keyframes lc-tail-wag {
+  0%, 100% { transform: rotate(-18deg); }
+  50% { transform: rotate(22deg); }
+}
+
+/* ── Ears ────────────────────────────────────────────────────────────────── */
+.lc-ear-l { transform-origin: 62px 52px; }
+.lc-ear-r { transform-origin: 138px 52px; }
+.lc-ear-twitch .lc-ear-l {
+  animation: lc-ear-l 0.32s ease-in-out;
+}
+.lc-ear-twitch .lc-ear-r {
+  animation: lc-ear-r 0.32s ease-in-out;
+}
+.lc-mood-watching .lc-ear-l,
+.lc-mood-watching .lc-ear-r {
+  animation: lc-ear-alert 2.4s ease-in-out infinite;
+}
+
+@keyframes lc-ear-l {
+  0%, 100% { transform: rotate(0); }
+  40% { transform: rotate(-12deg); }
+}
+@keyframes lc-ear-r {
+  0%, 100% { transform: rotate(0); }
+  40% { transform: rotate(12deg); }
+}
+@keyframes lc-ear-alert {
+  0%, 100% { transform: rotate(0); }
+  50% { transform: rotate(-4deg); }
+}
+
+/* ── Head ────────────────────────────────────────────────────────────────── */
+.lc-head {
+  transform-origin: 100px 90px;
+  transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.lc-mood-watching .lc-head {
+  animation: lc-head-watch 2.8s ease-in-out infinite;
+}
+.lc-mood-confused .lc-head {
+  animation: lc-head-confused 0.55s ease-in-out 3;
+}
+.lc-mood-celebrating .lc-head {
+  animation: lc-head-happy 0.7s ease-in-out infinite;
+}
+
+@keyframes lc-head-watch {
+  0%, 100% { transform: rotate(-2deg) translateY(0); }
+  50% { transform: rotate(3deg) translateY(-1px); }
+}
+@keyframes lc-head-confused {
+  0%, 100% { transform: rotate(0) translateX(0); }
+  25% { transform: rotate(-12deg) translateX(-3px); }
+  75% { transform: rotate(10deg) translateX(3px); }
+}
+@keyframes lc-head-happy {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-4px) scale(1.03); }
+}
+
+/* ── Eyes / blink ────────────────────────────────────────────────────────── */
+.lc-lids {
+  opacity: 0;
+  transition: opacity 0.08s linear;
+}
+.lc-blink .lc-lids { opacity: 1; }
+.lc-blink .lc-eye-white,
+.lc-blink .lc-pupil,
+.lc-blink .lc-glint { opacity: 0; }
+
+.lc-pupil {
+  transition: cx 0.12s ease-out, transform 0.12s ease-out;
+}
+
+/* ── Mouth moods ─────────────────────────────────────────────────────────── */
+.lc-mouth-happy,
+.lc-mouth-sad { transition: opacity 0.25s ease; }
+.lc-mood-celebrating .lc-mouth,
+.lc-mood-hiding .lc-mouth { opacity: 0; }
+.lc-mood-celebrating .lc-mouth-happy { opacity: 0.7; }
+.lc-mood-hiding .lc-mouth-happy { opacity: 0.45; }
+.lc-mood-confused .lc-mouth,
+.lc-mood-sad .lc-mouth { opacity: 0; }
+.lc-mood-confused .lc-mouth-sad,
+.lc-mood-sad .lc-mouth-sad { opacity: 0.65; }
+
+/* ── Covering paws ───────────────────────────────────────────────────────── */
+.lc-paws-cover {
+  opacity: 0;
+  pointer-events: none;
+  transform-origin: 100px 100px;
+  transform: translateY(28px) scale(0.85);
+  transition:
+    opacity 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.38s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.lc-mood-hiding .lc-paws-cover {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+/* Fully obscure eyes when hiding — never peek */
+.lc-mood-hiding .lc-eyes {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.lc-mood-hiding .lc-lids { opacity: 0; }
+
+/* ── Sleep ───────────────────────────────────────────────────────────────── */
+.lc-mood-sleeping .lc-eyes { opacity: 0; }
+.lc-mood-sleeping .lc-lids { opacity: 1; }
+.lc-mood-sleeping .lc-zzz {
+  opacity: 1;
+  animation: lc-zzz 2s ease-in-out infinite;
+}
+.lc-mood-sleeping .lc-figure {
+  animation: lc-breathe 4s ease-in-out infinite;
+}
+@keyframes lc-zzz {
+  0%, 100% { transform: translateY(0); opacity: 0.4; }
+  50% { transform: translateY(-6px); opacity: 1; }
+}
+
+/* ── Celebrate sparkle on tail tip ───────────────────────────────────────── */
+.lc-mood-celebrating .lc-tail-tip {
+  animation: lc-tip-pulse 0.6s ease-in-out infinite;
+}
+@keyframes lc-tip-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.35); }
+}
+.lc-tail-tip { transform-origin: 162px 58px; }
+
+/* ── Wave (slight lean) ──────────────────────────────────────────────────── */
+.lc-mood-wave .lc-figure {
+  animation: lc-wave 1.2s ease-in-out infinite;
+}
+@keyframes lc-wave {
+  0%, 100% { transform: rotate(0); }
+  30% { transform: rotate(-6deg); }
+  60% { transform: rotate(4deg); }
+}
+
+/* ── Reduce motion ───────────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .lc-root * {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .lc-paws-cover {
+    transition: opacity 0.01ms;
+  }
+  .lc-mood-hiding .lc-paws-cover {
+    transform: translateY(0) scale(1);
+  }
+}
+
+.lc-reduce * {
+  animation: none !important;
+  transition: none !important;
+}
+.lc-reduce.lc-mood-hiding .lc-paws-cover {
+  opacity: 1;
+  transform: none;
+}
+.lc-reduce.lc-mood-hiding .lc-eyes {
+  opacity: 0;
+}
