@@ -16,6 +16,7 @@ type MediaStreamT = MediaStream;
 import InCallManager from 'react-native-incall-manager';
 
 import { supabase } from '../lib/supabase';
+import { recordIcePath } from '../lib/deviceProofLog';
 import {
   createSignalingChannel,
   buildIceServers,
@@ -708,6 +709,10 @@ export class CallSession {
       if (resolved !== 'unknown' && resolved !== this.lastPath) {
         this.lastPath = resolved;
         this.cb.onConnectionPath?.(resolved);
+        // Field metrics for device-proof harness (ICE direct vs TURN relay).
+        void recordIcePath(
+          resolved === 'relay' ? 'relay' : resolved === 'direct' ? 'direct' : 'unknown',
+        );
       }
       loss = dRecv + dLost > 0 ? dLost / (dRecv + dLost) : 0;
       // Auto low-data when path is relay + high loss/RTT (smarter than static HD).

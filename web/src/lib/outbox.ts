@@ -1,11 +1,12 @@
-// Lumixo web — durable offline outbox (IndexedDB-free: localStorage JSON).
-// Parity with mobile sync.ts for text (+ optional media URL already uploaded).
+// Lumixo web — durable offline outbox.
+// Metadata in localStorage; media bytes in IndexedDB (mediaBlobStore).
 // Survives refresh; flushes on online / interval / manual flushOutbox().
 
 import { supabase } from '../supabase';
-import { sendMessage, editMessage } from '@shared/api';
+import { sendMessage, editMessage, uploadMedia } from '@shared/api';
 import { sendPush } from '@shared/pushApi';
 import type { Message, MessageType, UUID } from '@shared/types';
+import { deleteMediaBlob, getMediaBlob, putMediaBlob } from './mediaBlobStore';
 
 const KEY = 'lumixo_outbox_v1';
 const MAX_ATTEMPTS = 25;
@@ -17,6 +18,9 @@ export interface WebOutboxItem {
   content: string;
   type: MessageType;
   mediaUrl?: string | null;
+  /** IndexedDB key for offline blob upload on flush. */
+  blobKey?: string | null;
+  fileName?: string;
   replyTo?: UUID | null;
   messageId?: UUID; // for edit
   createdAt: string;
@@ -79,17 +83,35 @@ export async function enqueueSend(args: {
   content: string;
   type?: MessageType;
   mediaUrl?: string | null;
+  /** Local file/blob for offline-first upload on reconnect. */
+  file?: File | Blob | null;
+  fileName?: string;
   replyTo?: UUID | null;
   senderId?: string;
   id?: string;
 }): Promise<WebOutboxItem> {
+  const id = args.id ?? uuid();
+  let blobKey: string | undefined;
+  if (args.file && !args.mediaUrl) {
+    blobKey = `blob_${id}`;
+    try {
+      await putMediaBlob(blobKey, args.file, {
+        fileName: args.fileName ?? (args.file instanceof File ? args.file.name : 'file'),
+        mime: args.file.type || undefined,
+      });
+    } catch {
+      blobKey = undefined; // fall through — may fail offline without IDB
+    }
+  }
   const item: WebOutboxItem = {
-    id: args.id ?? uuid(),
+    id,
     conversationId: args.conversationId,
     kind: 'send',
     content: args.content,
     type: args.type ?? 'text',
     mediaUrl: args.mediaUrl,
+    blobKey,
+    fileName: args.fileName,
     replyTo: args.replyTo,
     createdAt: new Date().toISOString(),
     attempts: 0,
@@ -152,12 +174,43 @@ export async function flushOutbox(): Promise<void> {
             listeners.forEach((l) => l(item, message));
             continue;
           }
+
+          // Offline media: upload IndexedDB blob → remote URL before insert.
+          let mediaUrl = item.mediaUrl ?? undefined;
+          if (item.blobKey && !mediaUrl) {
+            const stored = await getMediaBlob(item.blobKey);
+            if (!stored) {
+              next.push({ ...item, attempts: item.attempts + 1 });
+              continue;
+            }
+            const { url, error: upErr } = await uploadMedia(
+              supabase,
+              item.conversationId,
+              stored.blob,
+              item.fileName || stored.fileName || `media_${item.id}`,
+              stored.mime,
+            );
+            if (upErr || !url) {
+              next.push({ ...item, attempts: item.attempts + 1 });
+              continue;
+            }
+            mediaUrl = url;
+            // Persist URL so a mid-flush crash does not re-upload forever.
+            const cur = read().map((x) =>
+              x.id === item.id ? { ...x, mediaUrl: url, blobKey: undefined } : x,
+            );
+            write(cur);
+            void deleteMediaBlob(item.blobKey).catch(() => {});
+            item.mediaUrl = url;
+            item.blobKey = undefined;
+          }
+
           const { message, error } = await sendMessage(
             supabase,
             item.conversationId,
             item.content,
             item.type,
-            item.mediaUrl ?? undefined,
+            mediaUrl,
             item.replyTo ?? undefined,
             item.id,
           );
@@ -167,6 +220,7 @@ export async function flushOutbox(): Promise<void> {
               /duplicate key|already exists/i.test(error.message ?? ''));
           if ((message && !error) || dupe) {
             const mid = message?.id ?? item.id;
+            if (item.blobKey) void deleteMediaBlob(item.blobKey).catch(() => {});
             listeners.forEach((l) => l(item, message));
             if (item.kind === 'send') {
               const preview =

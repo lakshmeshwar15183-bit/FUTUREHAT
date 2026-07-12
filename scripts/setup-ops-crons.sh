@@ -25,7 +25,14 @@ echo "   Method: POST"
 echo "   Headers:"
 echo "     Authorization: Bearer <SERVICE_ROLE_KEY>"
 echo "     Content-Type: application/json"
+echo "     x-cron-secret: <CRON_SECRET>   # REQUIRED — same value as Edge secret CRON_SECRET"
+echo "     # or: x-push-drain-secret: <PUSH_DRAIN_SECRET>"
 echo "   Body:   {\"drainOutbox\":true,\"limit\":100}"
+echo ""
+echo "   Edge secrets (Dashboard → Project Settings → Edge Functions → Secrets):"
+echo "     CRON_SECRET=...          # strong random; required for global outbox drain"
+echo "     PUSH_DRAIN_SECRET=...    # optional alias of CRON_SECRET"
+echo "     FCM_SERVICE_ACCOUNT=...  # already required for FCM"
 echo ""
 echo "2) ACCOUNT PURGE — every day at 03:00 UTC"
 echo "   URL:    ${BASE}/account-purge"
@@ -46,9 +53,16 @@ if [[ "${1:-}" == "--fire-now" ]]; then
   : "${SUPABASE_SERVICE_ROLE_KEY:?Set SUPABASE_SERVICE_ROLE_KEY to fire now}"
   echo ""
   echo "→ Firing push drain now…"
+  CRON_HDR=()
+  if [[ -n "${CRON_SECRET:-}" ]]; then
+    CRON_HDR=(-H "x-cron-secret: ${CRON_SECRET}" -H "x-push-drain-secret: ${CRON_SECRET}")
+  else
+    echo "⚠️  CRON_SECRET unset — drain may be rejected by Edge (set CRON_SECRET to match function secret)"
+  fi
   curl -sS -X POST "${BASE}/push" \
     -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
     -H "Content-Type: application/json" \
+    "${CRON_HDR[@]}" \
     -d '{"drainOutbox":true,"limit":100}'
   echo ""
   echo "→ Firing account-purge now…"

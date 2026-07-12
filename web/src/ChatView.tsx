@@ -525,16 +525,21 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
         if (file.size > limit) { if (!isPremium) { openUpgrade(); } else { setToast('File too large.'); } continue; }
         setUploading(true);
         try {
-          const { url, error } = await uploadMedia(supabase, convId, file, file.name);
-          if (error) throw error;
-          if (!url) throw new Error('No URL returned');
-          const { message } = await sendMessage(supabase, convId, file.name, 'file', url);
-          if (message) {
-            upsertMessage(message);
-            notifyPush('📎 Document', 'file', message.id);
+          // Durable: blob in IndexedDB when offline; upload on flush when online.
+          const item = await enqueueSend({
+            conversationId: convId,
+            content: file.name,
+            type: 'file',
+            file,
+            fileName: file.name,
+            senderId: profile?.id,
+          });
+          upsertMessage(optimisticFromOutbox(item, profile?.id ?? ''));
+          if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+            setToast('Document queued — will send when online');
           }
         } catch (err: any) {
-          setToast(err.message || 'Failed to upload file');
+          setToast(err.message || 'Failed to queue file');
         } finally {
           setUploading(false);
         }
@@ -544,12 +549,15 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
 
   async function sendSticker(url: string) {
     setStickersOpen(false);
-    const { message, error } = await sendMessage(supabase, convId, '', 'image', url);
-    if (error) setToast(error.message);
-    else if (message) {
-      upsertMessage(message);
-      notifyPush('📷 Photo', 'image', message.id);
-    }
+    // Data-URI stickers need no upload — durable outbox inserts mediaUrl as-is.
+    const item = await enqueueSend({
+      conversationId: convId,
+      content: '',
+      type: 'image',
+      mediaUrl: url,
+      senderId: profile?.id,
+    });
+    upsertMessage(optimisticFromOutbox(item, profile?.id ?? ''));
   }
 
   // ── AI ───────────────────────────────────────────────────────────────────────

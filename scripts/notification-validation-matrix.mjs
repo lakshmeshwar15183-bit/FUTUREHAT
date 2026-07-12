@@ -43,7 +43,12 @@ ok('message reply category', /identifier:\s*'reply'/.test(notif));
 
 const bridge = readFileSync(join(root, 'mobile/src/components/NotificationsBridge.tsx'), 'utf8');
 ok('cold-start last response', /getLastNotificationResponseAsync/.test(bridge));
-ok('drain on active', /drainOutbox/.test(bridge));
+// Global outbox drain is CRON_SECRET-only (user JWT must not claim push_outbox).
+// Bridge may no-op kickDrain; presence of old drainOutbox:true is a regression.
+ok(
+  'client does not user-drain global outbox',
+  !/drainOutbox:\s*true/.test(bridge) || /CRON|no-op|cannot drain/i.test(bridge),
+);
 
 const gate = join(root, 'mobile/src/components/NotificationSetupGate.tsx');
 ok('NotificationSetupGate present', existsSync(gate));

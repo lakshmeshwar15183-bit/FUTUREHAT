@@ -4,6 +4,7 @@
  * received / opened for diagnostics (Settings → Diagnostics & report).
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { recordFcmDisplayLatency } from './deviceProofLog';
 
 const KEY = 'fh:notifLatency:v1';
 const MAX = 40;
@@ -46,6 +47,8 @@ export async function recordDelivery(opts: {
     const sent = typeof opts.sentAt === 'number' ? opts.sentAt : Number(opts.sentAt);
     if (Number.isFinite(sent) && sent > 0 && now >= sent) {
       deliveryMs = now - sent;
+      // Also feed device-proof harness (exportable field metrics).
+      void recordFcmDisplayLatency(sent);
     }
   }
   const rows = await load();

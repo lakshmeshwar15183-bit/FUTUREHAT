@@ -107,7 +107,34 @@ if (existsSync(themeScript)) {
   results.push(['theme-contrast', run('Theme contrast', 'node scripts/theme-contrast.mjs', ROOT)]);
 }
 
-// 6) Optional DB verify
+// 6) Release gates (contract mode — not strict secrets)
+results.push([
+  'release-gates',
+  run('Release gates (contract)', 'node scripts/release-gates.mjs', ROOT),
+]);
+
+// 7) Device-proof instrumentation contracts
+results.push([
+  'device-proof-harness',
+  run('Device-proof harness', 'node scripts/device-proof-harness.mjs --write-template', ROOT),
+]);
+
+// 8) P0 adversarial static pen-test
+results.push([
+  'p0-adversarial',
+  run('P0 adversarial tests', 'node scripts/p0-adversarial-test.mjs', ROOT),
+]);
+
+// 9) Notification contracts
+const notifMatrix = join(ROOT, 'scripts', 'notification-validation-matrix.mjs');
+if (existsSync(notifMatrix)) {
+  results.push([
+    'notification-matrix',
+    run('Notification contracts', 'node scripts/notification-validation-matrix.mjs', ROOT),
+  ]);
+}
+
+// 10) Optional DB verify
 if (process.env.SUPABASE_DB_PASSWORD || process.env.DATABASE_URL) {
   const authz = join(ROOT, 'scripts', 'db-verify-authz.mjs');
   if (existsSync(authz)) {
