@@ -15,7 +15,7 @@ import {
   blockUser, unblockUser, getBlockedIds, submitReport,
   muteConversation, unmuteConversation, getMutedIds,
 } from '@shared/supportApi';
-import { getSharedMedia, getDisappearing, setConversationDisappearing } from '@shared/api';
+import { getSharedMedia, getDisappearing, setConversationDisappearing, isVideoMessage } from '@shared/api';
 import { getLockedIds, lockConversation, unlockConversation } from '@shared/chatLockApi';
 import { deviceAuth } from '../lib/deviceAuth';
 import type { Profile, Message } from '@shared/types';
@@ -98,9 +98,17 @@ export function ContactProfileModal({ profile, online, isPremium, conversationId
     else flash(secs > 0 ? 'Disappearing messages on' : 'Disappearing messages off');
   }
 
-  const photos = media.filter((m) => m.type === 'image');
-  const docs = media.filter((m) => m.type === 'file');
-  const galleryItems: MediaItem[] = photos.map((m) => ({ id: m.id, url: m.media_url!, kind: 'image' as const, caption: m.content || undefined }));
+  // Photos + videos in shared media; docs exclude first-class and legacy videos.
+  const photos = media.filter((m) => m.type === 'image' || isVideoMessage(m));
+  const docs = media.filter((m) => m.type === 'file' && !isVideoMessage(m));
+  const galleryItems: MediaItem[] = photos
+    .filter((m) => !!m.media_url)
+    .map((m) => ({
+      id: m.id,
+      url: m.media_url!,
+      kind: m.type === 'image' ? ('image' as const) : ('video' as const),
+      caption: m.content || undefined,
+    }));
   const lightboxIndex = lightbox ? galleryItems.findIndex((g) => g.url === lightbox) : -1;
 
   useEffect(() => {

@@ -23,7 +23,6 @@ import { useCalls } from '../calls/CallContext';
 import { useChatLock } from '../security/ChatLock';
 import Avatar from '../components/Avatar';
 import MediaViewer, { type ViewerItem } from '../components/MediaViewer';
-import { isVideoUrl } from '../components/MessageBubble';
 import type { RootStackParamList } from '../navigation/types';
 import { Alert } from '../ui/dialog';
 
@@ -86,7 +85,7 @@ export default function ProfileScreen() {
     () => photos.map((m) => ({
       id: m.id,
       url: m.media_url!,
-      kind: m.type === 'image' && !isVideoUrl(m.media_url) ? ('image' as const) : ('video' as const),
+      kind: isVideoMessage(m) ? ('video' as const) : ('image' as const),
       caption: m.content || null,
     })),
     [photos],
@@ -118,8 +117,9 @@ export default function ProfileScreen() {
         const mutedIds = await getMutedIds(supabase).catch(() => [] as string[]);
         setMuted(mutedIds.includes(convId));
         const media = await getSharedMedia(supabase, convId).catch(() => [] as Message[]);
-        setPhotos(media.filter((m) => m.type === 'image' && m.media_url));
-        setDocs(media.filter((m) => m.type === 'file'));
+        // Shared media gallery: photos + videos (type=video and legacy file videos).
+        setPhotos(media.filter((m) => m.media_url && (m.type === 'image' || isVideoMessage(m))));
+        setDocs(media.filter((m) => m.type === 'file' && !isVideoMessage(m)));
         setDisappearSecs(await getDisappearing(supabase, convId).catch(() => 0));
       }
     })();

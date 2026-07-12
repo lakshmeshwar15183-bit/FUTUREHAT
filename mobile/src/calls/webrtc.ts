@@ -654,16 +654,16 @@ export class CallSession {
           dRecv += Number(r.packetsReceived || 0);
         }
       });
-      if (path !== 'unknown' && path !== this.lastPath) {
-        this.lastPath = path;
-        this.cb.onConnectionPath?.(path);
-      } else if (this.lastPath === 'unknown' && path !== 'unknown') {
-        this.lastPath = path;
-        this.cb.onConnectionPath?.(path);
+      // forEach mutations are invisible to TS CFA (path stays 'unknown' literally).
+      // Assert so relay/direct adaptive bitrate is not dead-code-eliminated.
+      const resolved = path as ConnectionPath;
+      if (resolved !== 'unknown' && resolved !== this.lastPath) {
+        this.lastPath = resolved;
+        this.cb.onConnectionPath?.(resolved);
       }
       loss = dRecv + dLost > 0 ? dLost / (dRecv + dLost) : 0;
       // Auto low-data when path is relay + high loss/RTT (smarter than static HD).
-      if (!this.lowDataMode && (path === 'relay' && (loss > 0.05 || rtt > 0.35))) {
+      if (!this.lowDataMode && resolved === 'relay' && (loss > 0.05 || rtt > 0.35)) {
         void this.applySenderBitrate(350_000, 18);
       } else if (!this.lowDataMode && loss < 0.01 && rtt < 0.12) {
         void this.applySenderBitrate(1_500_000, 30);

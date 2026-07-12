@@ -305,6 +305,9 @@ function VideoPage({
   const { url, loading, error, retry } = useSignedUrl(isActive ? item.url : null);
   const [buffering, setBuffering] = useState(true);
   const [playError, setPlayError] = useState(false);
+  // When app backgrounds we unmount Video (no ghost audio). Remount on resume
+  // so expo-av reloads after unloadAsync — otherwise play stays dead.
+  const [appActive, setAppActive] = useState(() => AppState.currentState === 'active');
   const videoRef = useRef<Video | null>(null);
   const tap = Gesture.Tap().numberOfTaps(1).onEnd(() => {
     runOnJS(onSingleTap)();
@@ -327,7 +330,7 @@ function VideoPage({
       setBuffering(true);
       setPlayError(false);
       void releasePlayer();
-    } else {
+    } else if (appActive) {
       // Configure session so playback does not keep running in the background.
       void Audio.setAudioModeAsync({
         playsInSilentModeIOS: true,
@@ -336,12 +339,18 @@ function VideoPage({
         playThroughEarpieceAndroid: false,
       }).catch(() => {});
     }
-  }, [isActive, releasePlayer]);
+  }, [isActive, appActive, releasePlayer]);
 
-  // App backgrounded → pause (no ghost audio).
+  // App backgrounded → unmount player (no ghost audio); foreground → remount.
   useEffect(() => {
     const onApp = (state: AppStateStatus) => {
-      if (state !== 'active') void releasePlayer();
+      if (state !== 'active') {
+        setAppActive(false);
+        void releasePlayer();
+      } else {
+        setAppActive(true);
+        setBuffering(true);
+      }
     };
     const sub = AppState.addEventListener('change', onApp);
     return () => sub.remove();
@@ -359,8 +368,8 @@ function VideoPage({
     retry();
   };
 
-  // Inactive page: silent poster only — never instantiate expo-av Video.
-  if (!isActive) {
+  // Inactive page OR app backgrounded: silent poster only — never instantiate Video.
+  if (!isActive || !appActive) {
     return (
       <GestureDetector gesture={tap}>
         <View style={styles.page}>

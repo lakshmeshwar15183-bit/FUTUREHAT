@@ -20,7 +20,6 @@ import {
   sendMessage,
   markConversationRead,
   getNotificationSettings,
-  updateCallStatus,
   muteConversation,
   archiveConversation,
   clearRemoteChatNotification,
@@ -41,6 +40,7 @@ import {
   syncBadgeFromServer,
   messagePreviewText,
 } from '../lib/notifications';
+import { useCalls } from '../calls/CallContext';
 import type { RootStackParamList } from '../navigation/types';
 
 export default function NotificationsBridge({
@@ -48,6 +48,12 @@ export default function NotificationsBridge({
 }: {
   navRef: NavigationContainerRef<RootStackParamList>;
 }) {
+  const { acceptCallById, declineCallById } = useCalls();
+  const acceptCallByIdRef = useRef(acceptCallById);
+  const declineCallByIdRef = useRef(declineCallById);
+  useEffect(() => { acceptCallByIdRef.current = acceptCallById; }, [acceptCallById]);
+  useEffect(() => { declineCallByIdRef.current = declineCallById; }, [declineCallById]);
+
   const meRef = useRef<string | null>(null);
   const settingsRef = useRef<Awaited<ReturnType<typeof getNotificationSettings>> | null>(null);
   const seenMsgIds = useRef<Set<string>>(new Set());
@@ -375,18 +381,17 @@ export default function NotificationsBridge({
       if (data.type === 'call' || data.kind === 'call' || data.type === 'ongoing_call') {
         const callId = data.callId;
         if (action === 'accept' && callId) {
-          await updateCallStatus(supabase, callId, 'accepted').catch(() => {});
-          await clearCallNotification(callId);
+          // Must start WebRTC as callee — status-only flip left calls half-dead.
+          await acceptCallByIdRef.current(callId);
           navRef.navigate('Main' as any);
           return;
         }
         if (action === 'decline' && callId) {
-          await updateCallStatus(supabase, callId, 'declined').catch(() => {});
-          await clearCallNotification(callId);
+          await declineCallByIdRef.current(callId);
           return;
         }
         if (isDefault || action === 'open') {
-          if (callId) await clearCallNotification(callId);
+          // Bring app forward; keep ring UI / CallProvider as source of truth.
           navRef.navigate('Main' as any);
         }
         return;

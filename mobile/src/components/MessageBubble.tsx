@@ -193,20 +193,24 @@ function MessageBubble({
             );
           }
           return (
-            <Pressable onPress={() => onOpenImage?.(message.media_url!)}>
-              <SignedImage
-                source={message.media_url}
-                containerStyle={styles.image}
-                contentFit="cover"
-                tint={colors.primary}
-              />
-              {isVO && (
-                <View style={styles.viewOnceTag}>
-                  <Ionicons name="eye" size={12} color="#fff" />
-                  <Text style={styles.viewOnceText}>View once</Text>
-                </View>
-              )}
-            </Pressable>
+            <>
+              <Pressable onPress={() => onOpenImage?.(message.media_url!)}>
+                <SignedImage
+                  source={message.media_url}
+                  containerStyle={styles.image}
+                  contentFit="cover"
+                  tint={colors.primary}
+                />
+                {isVO && (
+                  <View style={styles.viewOnceTag}>
+                    <Ionicons name="eye" size={12} color="#fff" />
+                    <Text style={styles.viewOnceText}>View once</Text>
+                  </View>
+                )}
+              </Pressable>
+              {!!message.content?.trim() &&
+                renderHighlighted(message.content, highlight, [styles.text, { color: tint }], styles.highlightHit)}
+            </>
           );
         })()}
 
@@ -218,13 +222,17 @@ function MessageBubble({
         )}
 
         {message.media_url && isVideoMessage(message) && (
-          <Pressable
-            onPress={() => onOpenImage?.(message.media_url!)}
-            style={styles.videoTile}
-          >
-            <Ionicons name="play-circle" size={48} color="#fff" />
-            <Text style={styles.videoLabel} numberOfLines={1}>{message.content || 'Video'}</Text>
-          </Pressable>
+          <>
+            <Pressable
+              onPress={() => onOpenImage?.(message.media_url!)}
+              style={styles.videoTile}
+            >
+              <Ionicons name="play-circle" size={48} color="#fff" />
+              <Text style={styles.videoLabel} numberOfLines={1}>Video</Text>
+            </Pressable>
+            {!!message.content?.trim() &&
+              renderHighlighted(message.content, highlight, [styles.text, { color: tint }], styles.highlightHit)}
+          </>
         )}
 
         {message.type === 'file' && message.media_url && !isVideoUrl(message.media_url) && (

@@ -64,6 +64,10 @@ interface ActiveCall {
 
 interface CallContextValue {
   startCall: (conversationId: UUID, peer: Profile, type: CallType) => Promise<void>;
+  /** Accept from notification action / cold start (starts WebRTC as callee). */
+  acceptCallById: (callId: UUID) => Promise<void>;
+  /** Decline from notification action. */
+  declineCallById: (callId: UUID) => Promise<void>;
 }
 
 const Ctx = createContext<CallContextValue | null>(null);
@@ -300,6 +304,102 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     await updateCallStatus(supabase, id, 'declined');
   }, [incoming]);
 
+  /**
+   * Accept from tray action. Previously only flipped DB status → caller thought
+   * we answered but WebRTC never started (no ActiveCallView). Always promote to
+   * active callee session.
+   */
+  const acceptCallById = useCallback(async (callId: UUID) => {
+    if (!callId) return;
+    if (activeRef.current?.callId === callId) {
+      void clearCallNotification(callId);
+      return;
+    }
+    // Already showing the ring UI for this call — reuse acceptIncoming path.
+    const inc = incomingRef.current;
+    if (inc?.call.id === callId) {
+      if (ringTimeoutRef.current) {
+        clearTimeout(ringTimeoutRef.current);
+        ringTimeoutRef.current = null;
+      }
+      stopAllCallTones();
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      void clearCallNotification(callId);
+      setIncoming(null);
+      await updateCallStatus(supabase, callId, 'accepted').catch(() => {});
+      setActive({
+        callId: inc.call.id,
+        conversationId: inc.call.conversation_id,
+        peer: inc.peer,
+        type: inc.call.type,
+        isCaller: false,
+      });
+      return;
+    }
+    if (activeRef.current) {
+      // Busy on another call — decline this one so caller isn't stuck.
+      await updateCallStatus(supabase, callId, 'declined').catch(() => {});
+      void clearCallNotification(callId);
+      return;
+    }
+
+    try {
+      const { data: row } = await supabase
+        .from('calls')
+        .select('id, conversation_id, caller_id, type, status')
+        .eq('id', callId)
+        .maybeSingle();
+      if (!row) {
+        void clearCallNotification(callId);
+        return;
+      }
+      const call = row as Call;
+      if (['ended', 'declined', 'missed'].includes(call.status)) {
+        void clearCallNotification(callId);
+        return;
+      }
+      const me = uid ?? (await getCurrentUser(supabase))?.id ?? null;
+      if (!me || call.caller_id === me) {
+        void clearCallNotification(callId);
+        return;
+      }
+      if (ringTimeoutRef.current) {
+        clearTimeout(ringTimeoutRef.current);
+        ringTimeoutRef.current = null;
+      }
+      stopAllCallTones();
+      void clearCallNotification(callId);
+      setIncoming(null);
+      if (call.status === 'ringing') {
+        await updateCallStatus(supabase, callId, 'accepted').catch(() => {});
+      }
+      const peer = await getProfile(supabase, call.caller_id).catch(() => null);
+      setActive({
+        callId: call.id,
+        conversationId: call.conversation_id,
+        peer,
+        type: call.type,
+        isCaller: false,
+      });
+    } catch (e) {
+      console.warn('[call] acceptCallById failed', e);
+    }
+  }, [uid]);
+
+  const declineCallById = useCallback(async (callId: UUID) => {
+    if (!callId) return;
+    if (ringTimeoutRef.current) {
+      clearTimeout(ringTimeoutRef.current);
+      ringTimeoutRef.current = null;
+    }
+    stopAllCallTones();
+    void clearCallNotification(callId);
+    if (incomingRef.current?.call.id === callId) {
+      setIncoming(null);
+    }
+    await updateCallStatus(supabase, callId, 'declined').catch(() => {});
+  }, []);
+
   const endActive = useCallback(async (status: 'ended' | 'missed' = 'ended') => {
     const cur = activeRef.current;
     if (!cur) return;
@@ -322,7 +422,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <Ctx.Provider value={{ startCall }}>
+    <Ctx.Provider value={{ startCall, acceptCallById, declineCallById }}>
       {children}
       {incoming && !active && (
         <IncomingCallView

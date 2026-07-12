@@ -58,9 +58,11 @@ const LANGUAGES = ['English', 'Hindi', 'Spanish', 'French', 'Japanese', 'German'
 const TYPING_TIMEOUT = 2500;
 // AI assistant tools are hidden until the feature is finalized. Flip to true to restore.
 const AI_ENABLED = false;
-// Videos are stored as type 'file'; detect them by extension so the lightbox can play them.
+// Videos: first-class type='video' (migration 0031) + legacy type='file' with video extension.
 const VIDEO_RE = /\.(mp4|webm|mov|m4v|ogv|ogg)(\?|#|$)/i;
 const isVideoUrl = (url?: string | null) => !!url && VIDEO_RE.test(url);
+const isVideoMsg = (m: { type: string; media_url?: string | null }) =>
+  m.type === 'video' || (m.type === 'file' && isVideoUrl(m.media_url));
 // WhatsApp-style clock time on bubbles + day-separator labels.
 const clockTime = (d: string) => format(new Date(d), 'h:mm a');
 const daySepLabel = (d: string) => {
@@ -646,13 +648,14 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
   }, [search, searchKind, searchActive]);
 
   // Image/video messages in this conversation — backs the full-screen lightbox.
+  // Must include type='video' (new sends) AND legacy type='file' video rows.
   const mediaItems = useMemo<MediaItem[]>(() => messages
-    .filter((m) => !m.is_deleted && m.media_url && (m.type === 'image' || (m.type === 'file' && isVideoUrl(m.media_url))))
+    .filter((m) => !m.is_deleted && m.media_url && (m.type === 'image' || isVideoMsg(m)))
     .map((m) => ({
       id: m.id,
       url: m.media_url!,
       kind: m.type === 'image' ? ('image' as const) : ('video' as const),
-      caption: m.type === 'image' ? (m.content || undefined) : undefined,
+      caption: m.content || undefined,
       sender: m.sender_id === profile?.id ? 'You' : (conversation.participants.find((p) => p.id === m.sender_id)?.display_name || undefined),
       time: clockTime(m.created_at),
     })), [messages, profile?.id, conversation.participants]);
@@ -828,7 +831,7 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
                           </button>
                         )}
                         {msg.type === 'audio' && msg.media_url && <VoiceMessage url={msg.media_url} mine={isMine} />}
-                        {msg.type === 'file' && msg.media_url && isVideoUrl(msg.media_url) && (
+                        {msg.media_url && isVideoMsg(msg) && (
                           <button type="button" className="message-video-btn" onClick={() => setLightboxId(msg.id)} aria-label="Play video">
                             <SignedVideo source={msg.media_url} className="message-image" preload="metadata" muted />
                             <span className="message-video-play">▶</span>
@@ -837,7 +840,14 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
                         {msg.type === 'file' && msg.media_url && !isVideoUrl(msg.media_url) && safeHref(msg.media_url) && (
                           <SignedLink source={msg.media_url} className="message-file">📎 {msg.content || 'File'}</SignedLink>
                         )}
-                        {(msg.type === 'text' || (msg.content && msg.type !== 'audio')) && <div className="message-text">{highlight(msg.content ?? '')}</div>}
+                        {/* Captions for media + text body. Skip for pure audio (player owns UI)
+                            and for file docs where content is the filename already shown. */}
+                        {(msg.type === 'text' ||
+                          (msg.content &&
+                            msg.type !== 'audio' &&
+                            !(msg.type === 'file' && !isVideoUrl(msg.media_url)))) && (
+                          <div className="message-text">{highlight(msg.content ?? '')}</div>
+                        )}
                         <div className="message-time">
                           {starredIds.has(msg.id) && <StarIcon size={11} filled className="msg-star" />}
                           {msg.edited_at && <span className="edited-tag">edited</span>}
