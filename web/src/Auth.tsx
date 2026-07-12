@@ -5,7 +5,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { signInWithEmail, signUpWithEmail } from '@shared/api';
 import { supabase } from './supabase';
 import { LumixoCat } from './mascot/LumixoCat';
-import { catGazeFromEmail, catMoodFromAuth, type CatMood } from '@shared/lumixoCat';
+import { CAT_MOTION, catGazeFromEmail, catMoodFromAuth, type CatMood } from '@shared/lumixoCat';
 import './Auth.css';
 
 function resetRedirectUrl(): string {
@@ -45,11 +45,11 @@ export function AuthScreen() {
     success,
   });
 
-  // Keep confused mood for 2s after error, then drop back to idle/watching.
+  // Confused mood: brief shake + ~1s sad eyes, then back to idle/watching.
   useEffect(() => {
     if (!error) return;
     setShowConfused(true);
-    const t = setTimeout(() => setShowConfused(false), 2000);
+    const t = setTimeout(() => setShowConfused(false), CAT_MOTION.confuseHoldMs + 600);
     return () => clearTimeout(t);
   }, [error]);
 

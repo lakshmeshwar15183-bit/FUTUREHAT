@@ -21,6 +21,7 @@ import {
   signUpWithEmail,
   catMoodFromAuth,
   catGazeFromEmail,
+  CAT_MOTION,
   type CatMood,
 } from '../lib/shared';
 import { resetPasswordRedirectUrl } from '../lib/authLinks';
@@ -51,11 +52,11 @@ export default function AuthScreen() {
   const isSignup = mode === 'signup';
   const isForgot = mode === 'forgot';
 
-  // Confused mood for ~2s on wrong password / auth error.
+  // Confused mood: brief shake + ~1s sad eyes, then back to idle/watching.
   useEffect(() => {
     if (!error) return;
     setShowConfused(true);
-    const t = setTimeout(() => setShowConfused(false), 2000);
+    const t = setTimeout(() => setShowConfused(false), CAT_MOTION.confuseHoldMs + 600);
     return () => clearTimeout(t);
   }, [error]);
 

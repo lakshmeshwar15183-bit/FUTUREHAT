@@ -10,6 +10,7 @@ import { CallProvider } from './calls/CallContext';
 import { AppLockGate } from './premium/AppLockGate';
 import { AuthScreen } from './Auth';
 import { ResetPasswordScreen } from './ResetPassword';
+import { LumixoCat } from './mascot/LumixoCat';
 import { supabase } from './supabase';
 import { App } from './App';
 import { mark, measure, removeBootShell } from './lib/startupCache';
@@ -17,7 +18,10 @@ import { mark, measure, removeBootShell } from './lib/startupCache';
 function Splash() {
   return (
     <div className="fh-splash" role="status" aria-label="Loading">
-      <div className="fh-splash-logo">🎩</div>
+      <div className="fh-splash-mascot" aria-hidden>
+        <LumixoCat mood="idle" size="lg" decorative />
+      </div>
+      <div className="fh-splash-brand">Lumixo</div>
       <div className="fh-spinner" />
     </div>
   );

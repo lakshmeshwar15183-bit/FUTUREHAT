@@ -31,12 +31,25 @@ export function LumixoCat({
   size = 'lg',
   decorative = true,
   className = '',
-  reduceMotion,
+  reduceMotion: reduceMotionProp,
 }: LumixoCatProps) {
   const uid = useId().replace(/:/g, '');
   const px = CAT_SIZE_PX[size];
   const [blink, setBlink] = useState(false);
   const [earTwitch, setEarTwitch] = useState(false);
+  const [systemReduce, setSystemReduce] = useState(false);
+
+  // Honor OS prefers-reduced-motion unless parent forces a value.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const apply = () => setSystemReduce(!!mq.matches);
+    apply();
+    mq.addEventListener?.('change', apply);
+    return () => mq.removeEventListener?.('change', apply);
+  }, []);
+
+  const reduceMotion = reduceMotionProp ?? systemReduce;
 
   // Random blink + ear twitch — paused when reduced motion / hiding / sleeping.
   useEffect(() => {

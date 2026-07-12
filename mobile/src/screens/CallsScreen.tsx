@@ -33,6 +33,7 @@ import { getCache, setCache } from '../lib/localCache';
 import { formatListTimestamp } from '../lib/time';
 import { useColors, spacing, radius, font, listPerf, type Palette } from '../theme';
 import Avatar from '../components/Avatar';
+import { LumixoCat } from '../components/LumixoCat';
 import type { RootStackParamList } from '../navigation/types';
 import { Alert, showSheet } from '../ui/dialog';
 
@@ -277,7 +278,9 @@ export default function CallsScreen() {
         ListEmptyComponent={
           !loading ? (
             <View style={styles.empty}>
-              <View style={styles.emptyIllus}><Ionicons name="call-outline" size={48} color={colors.primary} /></View>
+              <View style={styles.emptyIllus}>
+                <LumixoCat mood="wave" size="md" decorative />
+              </View>
               <Text style={styles.emptyText}>No recent calls</Text>
               <Text style={styles.emptySub}>Start a voice or video call from any chat, or tap the button below.</Text>
             </View>

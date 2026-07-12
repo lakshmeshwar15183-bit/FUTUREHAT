@@ -13,6 +13,7 @@ import { getCachedProfile, cacheProfile, getCache, setCache } from '../lib/local
 import { unregisterForPush } from '../lib/notifications';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import { APP_NAME, APP_VERSION, CREDIT } from '../branding';
+import { LumixoCat } from '../components/LumixoCat';
 import Avatar from '../components/Avatar';
 import type { RootStackParamList } from '../navigation/types';
 import { Alert } from '../ui/dialog';
@@ -184,7 +185,11 @@ export default function SettingsScreen() {
         <Row icon="log-out-outline" label="Sign out" danger onPress={doSignOut} />
       </Group>
 
+      <View style={styles.aboutMascot} pointerEvents="none">
+        <LumixoCat mood="wave" size="sm" decorative />
+      </View>
       <Text style={styles.credit}>{CREDIT}</Text>
+      <Text style={styles.mascotCredit}>Mascot: Lumi</Text>
       <Pressable
         onPress={() => {
           const next = diagTaps + 1;
@@ -366,12 +371,23 @@ const makeStyles = (colors: Palette) =>
     },
     premiumTitle: { color: colors.text, fontSize: font.heading, fontWeight: '700', letterSpacing: -0.15 },
     premiumSub: { color: colors.textMuted, fontSize: font.small, marginTop: 2, lineHeight: 17 },
+    aboutMascot: {
+      alignItems: 'center',
+      marginTop: spacing(5),
+      marginBottom: spacing(1),
+    },
     credit: {
       color: colors.textMuted,
       textAlign: 'center',
-      marginTop: spacing(6),
+      marginTop: spacing(2),
       fontSize: font.small,
       fontWeight: '600',
+    },
+    mascotCredit: {
+      color: colors.textFaint,
+      textAlign: 'center',
+      marginTop: 2,
+      fontSize: font.tiny,
     },
     version: {
       color: colors.textFaint,

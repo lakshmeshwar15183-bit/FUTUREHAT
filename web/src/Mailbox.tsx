@@ -11,6 +11,7 @@ import { getMyMailbox, markAllMailboxSeen } from '@shared/adminApi';
 import { WARNING_REASONS } from '@shared/types';
 import type { MailboxItem } from '@shared/types';
 import { modalBackdrop, modalPanel } from './motion';
+import { LumixoCat } from './mascot/LumixoCat';
 import './admin/AdminDashboard.css';
 import './moderator/ModeratorDashboard.css';
 
@@ -61,7 +62,12 @@ export function Mailbox({ onClose, onSeen }: { onClose: () => void; onSeen?: () 
         ) : error ? (
           <div className="admin-warn">{error}</div>
         ) : items.length === 0 ? (
-          <div className="admin-empty">No messages yet. Official Lumixo notices appear here.</div>
+          <div className="admin-empty">
+            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 8 }} aria-hidden>
+              <LumixoCat mood="sleeping" size="sm" decorative />
+            </div>
+            No messages yet. Official Lumixo notices appear here.
+          </div>
         ) : (
           <div className="mailbox-list">
             {items.map((m) => (

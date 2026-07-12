@@ -9,6 +9,7 @@ import { getStarredMessages } from '@shared/messageExtras';
 import type { StarredMessage } from '@shared/types';
 import { modalBackdrop, modalPanel } from './motion';
 import { StarIcon } from './Icons';
+import { LumixoCat } from './mascot/LumixoCat';
 import './StarredMessagesModal.css';
 
 function preview(m: StarredMessage): string {
@@ -53,7 +54,7 @@ export function StarredMessagesModal({
           <div className="starred-empty">Loading…</div>
         ) : items.length === 0 ? (
           <div className="starred-empty">
-            <StarIcon size={44} />
+            <LumixoCat mood="sleeping" size="md" decorative />
             <p>No starred messages yet</p>
             <span>Tap ⭐ on any message to save it here for quick access.</span>
           </div>

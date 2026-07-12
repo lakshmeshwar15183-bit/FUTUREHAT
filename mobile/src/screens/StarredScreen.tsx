@@ -14,6 +14,7 @@ import type { StarredMessage } from '../lib/shared';
 import { getCache, setCache } from '../lib/localCache';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import Avatar from '../components/Avatar';
+import { LumixoCat } from '../components/LumixoCat';
 import type { RootStackParamList } from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -67,7 +68,7 @@ export default function StarredScreen() {
   if (items.length === 0) {
     return (
       <View style={styles.center}>
-        <Ionicons name="star-outline" size={54} color={colors.textFaint} />
+        <LumixoCat mood="sleeping" size="md" decorative />
         <Text style={styles.emptyTitle}>No starred messages yet</Text>
         <Text style={styles.emptySub}>Tap ⭐ on any message to save it here for quick access.</Text>
       </View>
