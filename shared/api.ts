@@ -85,12 +85,43 @@ export async function getMyProfile(client: SupabaseClient): Promise<Profile | nu
   return data;
 }
 
+/** Safe profile columns for peer display (no phone / moderation). Prefer
+ *  public_profiles so discovery works under 0050 RLS; fall back to profiles. */
+const PROFILE_PUBLIC_COLS =
+  'id, username, display_name, about, avatar_url, last_seen, created_at';
+
 export async function getProfile(
   client: SupabaseClient,
   userId: UUID,
 ): Promise<Profile | null> {
-  const { data } = await client.from('profiles').select('*').eq('id', userId).single();
-  return data;
+  // public_profiles omits phone / ban fields (0050).
+  const { data, error } = await client
+    .from('public_profiles')
+    .select(PROFILE_PUBLIC_COLS)
+    .eq('id', userId)
+    .maybeSingle();
+  if (!error && data) return data as Profile;
+  // Self or admin path / pre-0050: limited columns on base table (never select *).
+  const { data: row } = await client
+    .from('profiles')
+    .select(PROFILE_PUBLIC_COLS)
+    .eq('id', userId)
+    .maybeSingle();
+  return (row as Profile | null) ?? null;
+}
+
+/** Full own profile including phone (account settings). RLS: own row only. */
+export async function getMyFullProfile(
+  client: SupabaseClient,
+): Promise<(Profile & { phone?: string | null }) | null> {
+  const user = await getCurrentUser(client);
+  if (!user) return null;
+  const { data } = await client
+    .from('profiles')
+    .select('id, phone, username, display_name, about, avatar_url, last_seen, created_at')
+    .eq('id', user.id)
+    .maybeSingle();
+  return data as Profile | null;
 }
 
 export async function updateMyProfile(

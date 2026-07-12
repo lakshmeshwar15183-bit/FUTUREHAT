@@ -132,7 +132,7 @@ Deno.serve(async (req) => {
       return json(req, { error: 'Payment verification failed' }, 400);
     }
 
-    // Fetch payment from Razorpay — amount is the source of truth for plan.
+    // Fetch payment + order from Razorpay — never trust client plan/amount alone.
     const authBasic = btoa(`${KEY_ID}:${KEY_SECRET}`);
     const payResp = await fetch(`https://api.razorpay.com/v1/payments/${paymentId}`, {
       headers: { authorization: `Basic ${authBasic}` },
@@ -145,18 +145,49 @@ Deno.serve(async (req) => {
       return json(req, { error: `Payment not successful (${payment.status})` }, 400);
     }
 
+    // Bind payment to the order we created for THIS user (notes.user_id + order id).
+    // Prevents replay: attacker pays once, then verifies under another JWT with same paymentId.
+    if (String(payment.order_id || '') !== orderId) {
+      console.warn('[payments] payment/order mismatch', paymentId, orderId, 'user', user.id);
+      return json(req, { error: 'Payment does not match order' }, 400);
+    }
+    const orderResp = await fetch(`https://api.razorpay.com/v1/orders/${orderId}`, {
+      headers: { authorization: `Basic ${authBasic}` },
+    });
+    if (!orderResp.ok) {
+      return json(req, { error: 'Could not fetch order from provider' }, 502);
+    }
+    const order = await orderResp.json();
+    const orderUser = String(order?.notes?.user_id || '');
+    if (orderUser !== user.id) {
+      console.warn('[payments] order user mismatch', orderUser, 'auth', user.id);
+      return json(req, { error: 'Order does not belong to this account' }, 403);
+    }
+
     // Bind plan to captured amount only (must match create_order amounts).
     const amountPaise = Number(payment.amount || 0);
+    const orderAmount = Number(order.amount || 0);
+    if (amountPaise !== orderAmount) {
+      console.warn('[payments] amount vs order mismatch', amountPaise, orderAmount);
+      return json(req, { error: 'Payment amount does not match order' }, 400);
+    }
     const plan: 'monthly' | 'yearly' | null =
       amountPaise === 24900 ? 'yearly' : amountPaise === 2500 ? 'monthly' : null;
     if (!plan) {
       console.warn('[payments] amount mismatch', amountPaise, 'user', user.id);
       return json(req, { error: 'Payment amount does not match a plan' }, 400);
     }
+    // Prefer order notes.plan when present and consistent with amount.
+    const notesPlan = order?.notes?.plan === 'yearly' ? 'yearly' : order?.notes?.plan === 'monthly' ? 'monthly' : null;
+    if (notesPlan && notesPlan !== plan) {
+      return json(req, { error: 'Order plan does not match payment amount' }, 400);
+    }
 
     const periodDays = plan === 'yearly' ? 365 : 30;
     const amountInr = Math.round(amountPaise / 100);
 
+    // Idempotent activation: admin_activate_subscription no-ops if this paymentId
+    // already activated an active subscription for this user (0049).
     const { error: actErr } = await admin.rpc('admin_activate_subscription', {
       p_user_id: user.id,
       p_plan: plan,
@@ -169,7 +200,10 @@ Deno.serve(async (req) => {
 
     if (actErr) {
       console.error('[payments] activate failed', actErr.message);
-      return json(req, { error: actErr.message }, 500);
+      // Cross-account replay / already bound → 409 not 500.
+      const msg = actErr.message ?? '';
+      const status = /already bound|forbidden/i.test(msg) ? 409 : 500;
+      return json(req, { error: actErr.message }, status);
     }
 
     return json(req, { ok: true, plan, paymentId });

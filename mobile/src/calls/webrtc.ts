@@ -86,6 +86,10 @@ export class CallSession {
   private iceRestartAttempts = 0;
   private facing: 'user' | 'environment' = 'user';
   private offerRetryTimer: ReturnType<typeof setInterval> | null = null;
+  /** Serialize makeOffer so concurrent ready signals cannot glare-create offers. */
+  private offerInFlight: Promise<void> | null = null;
+  /** Serialize ICE restart so failed+disconnected dual edges cannot double-offer. */
+  private iceRestartInFlight = false;
 
   muted = false;
   videoEnabled: boolean;
@@ -109,33 +113,51 @@ export class CallSession {
 
   async start() {
     clog(this.isCaller ? 'CALLER' : 'CALLEE', 'start()', this.type, 'call', this.callId);
+    if (this.ended) return;
 
     // 1) Local media — use ideal constraints (not rigid) so mid/low-end devices
     //    still open a camera; HD when the device can deliver it.
     // Prefer hardware AEC/NS/AGC (Chrome/WebRTC flags still honored on many RN builds).
-    this.localStream = (await mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-        channelCount: 1,
-        // Android WebRTC extras (ignored if unsupported).
-        googEchoCancellation: true,
-        googNoiseSuppression: true,
-        googAutoGainControl: true,
-        googHighpassFilter: true,
-        googTypingNoiseDetection: true,
-      } as any,
-      video:
-        this.type === 'video'
-          ? ({
-              facingMode: 'user',
-              width: { min: 320, ideal: 1280, max: 1920 },
-              height: { min: 240, ideal: 720, max: 1080 },
-              frameRate: { min: 15, ideal: 30, max: 30 },
-            } as any)
-          : false,
-    })) as unknown as MediaStreamT;
+    let gumStream: MediaStreamT;
+    try {
+      gumStream = (await mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 1,
+          // Android WebRTC extras (ignored if unsupported).
+          googEchoCancellation: true,
+          googNoiseSuppression: true,
+          googAutoGainControl: true,
+          googHighpassFilter: true,
+          googTypingNoiseDetection: true,
+        } as any,
+        video:
+          this.type === 'video'
+            ? ({
+                facingMode: 'user',
+                width: { min: 320, ideal: 1280, max: 1920 },
+                height: { min: 240, ideal: 720, max: 1080 },
+                frameRate: { min: 15, ideal: 30, max: 30 },
+              } as any)
+            : false,
+      })) as unknown as MediaStreamT;
+    } catch (e) {
+      clog('getUserMedia failed', e);
+      this.end(false);
+      throw e;
+    }
+
+    // Hangup while permission dialog / gUM was open — release tracks, no PC.
+    if (this.ended) {
+      try {
+        gumStream.getTracks().forEach((t) => t.stop());
+      } catch { /* noop */ }
+      return;
+    }
+
+    this.localStream = gumStream;
 
     // Ensure audio tracks start enabled (some OEMs start muted).
     this.localStream.getAudioTracks().forEach((t) => {
@@ -369,27 +391,34 @@ export class CallSession {
 
   private async tryIceRestart(reason: string) {
     if (this.ended || !this.pc) return;
+    // Callee must NEVER create restart offers — both sides on "stable" caused
+    // glare (two simultaneous restart offers → stuck renegotiation).
+    if (!this.isCaller) {
+      clog('ICE blip on callee — wait for caller restart (', reason, ')');
+      return;
+    }
+    if (this.iceRestartInFlight) return;
     if (this.iceRestartAttempts >= MAX_ICE_RESTARTS) {
       clog('❌ ICE restart exhausted (', reason, ') → ending');
       this.end(false);
       return;
     }
+    this.iceRestartInFlight = true;
     this.iceRestartAttempts += 1;
     clog('🔄 ICE restart #', this.iceRestartAttempts, reason);
     try {
-      // Only the original offerer (caller) should create a restart offer, unless
-      // we already have a local offer state from a previous restart.
-      if (this.isCaller || (this.pc as any).signalingState === 'stable') {
-        this.cachedOffer = null;
-        this.answered = false;
-        const offer = await this.pc.createOffer({ iceRestart: true } as any);
-        await this.pc.setLocalDescription(offer);
-        this.cachedOffer = offer;
-        this.signaling?.send({ kind: 'offer', from: this.selfId, data: offer });
-      }
+      this.cachedOffer = null;
+      this.answered = false;
+      const offer = await this.pc.createOffer({ iceRestart: true } as any);
+      if (this.ended || !this.pc) return;
+      await this.pc.setLocalDescription(offer);
+      this.cachedOffer = offer;
+      this.signaling?.send({ kind: 'offer', from: this.selfId, data: offer });
     } catch (e: any) {
       clog('ICE restart failed', e?.message ?? e);
       this.end(false);
+    } finally {
+      this.iceRestartInFlight = false;
     }
   }
 
@@ -455,31 +484,50 @@ export class CallSession {
   }
 
   private async makeOffer(iceRestart = false) {
-    if (!this.pc || (this.answered && !iceRestart)) return;
-    if (!this.cachedOffer || iceRestart) {
-      const offer = await this.pc.createOffer({
-        iceRestart: !!iceRestart,
-        offerToReceiveAudio: true,
-        offerToReceiveVideo: this.type === 'video',
-      } as any);
-      await this.pc.setLocalDescription(offer);
-      this.cachedOffer = offer;
+    if (!this.pc || this.ended || !this.isCaller) return;
+    if (this.answered && !iceRestart) return;
+    // Mutex: multiple "ready" pings must not createOffer in parallel (glare / InvalidState).
+    if (this.offerInFlight) {
+      await this.offerInFlight;
+      // After wait, retransmit cached offer if still unanswered.
+      if (!this.ended && !this.answered && this.cachedOffer && !iceRestart) {
+        this.signaling?.send({ kind: 'offer', from: this.selfId, data: this.cachedOffer });
+      }
+      return;
     }
-    clog('CALLER → offer', iceRestart ? '(ICE restart)' : '');
-    this.signaling?.send({ kind: 'offer', from: this.selfId, data: this.cachedOffer });
-    // Retransmit offer until answer (broadcast has no store-and-forward).
-    if (!iceRestart && !this.offerRetryTimer) {
-      let n = 0;
-      this.offerRetryTimer = setInterval(() => {
-        if (this.ended || this.answered || n++ > 12) {
-          if (this.offerRetryTimer) clearInterval(this.offerRetryTimer);
-          this.offerRetryTimer = null;
-          return;
-        }
-        if (this.cachedOffer) {
-          this.signaling?.send({ kind: 'offer', from: this.selfId, data: this.cachedOffer });
-        }
-      }, 900);
+    this.offerInFlight = (async () => {
+      if (!this.pc || this.ended) return;
+      if (!this.cachedOffer || iceRestart) {
+        const offer = await this.pc.createOffer({
+          iceRestart: !!iceRestart,
+          offerToReceiveAudio: true,
+          offerToReceiveVideo: this.type === 'video',
+        } as any);
+        if (this.ended || !this.pc) return;
+        await this.pc.setLocalDescription(offer);
+        this.cachedOffer = offer;
+      }
+      clog('CALLER → offer', iceRestart ? '(ICE restart)' : '');
+      this.signaling?.send({ kind: 'offer', from: this.selfId, data: this.cachedOffer });
+      // Retransmit offer until answer (broadcast has no store-and-forward).
+      if (!iceRestart && !this.offerRetryTimer) {
+        let n = 0;
+        this.offerRetryTimer = setInterval(() => {
+          if (this.ended || this.answered || n++ > 12) {
+            if (this.offerRetryTimer) clearInterval(this.offerRetryTimer);
+            this.offerRetryTimer = null;
+            return;
+          }
+          if (this.cachedOffer) {
+            this.signaling?.send({ kind: 'offer', from: this.selfId, data: this.cachedOffer });
+          }
+        }, 900);
+      }
+    })();
+    try {
+      await this.offerInFlight;
+    } finally {
+      this.offerInFlight = null;
     }
   }
 

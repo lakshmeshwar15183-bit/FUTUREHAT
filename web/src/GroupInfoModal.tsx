@@ -1,5 +1,5 @@
 // Lumixo web — WhatsApp-class Group Info modal (full management).
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { supabase } from './supabase';
 import {
   getGroupConversation,
@@ -54,6 +54,7 @@ import type {
   UUID,
 } from '@shared/types';
 import { useEscapeToClose } from './useEscapeToClose';
+import { safeHref } from './util/safeUrl';
 import './GroupInfoModal.css';
 import './GroupModal.css';
 
@@ -104,6 +105,16 @@ export function GroupInfoModal({ conversationId, onClose, onLeft, onUpdated }: P
   const [editName, setEditName] = useState('');
   const [editDesc, setEditDesc] = useState('');
   const [iconFile, setIconFile] = useState<File | null>(null);
+  // Memoized blob URL — createObjectURL on every render leaked memory.
+  const iconPreviewUrl = useMemo(
+    () => (iconFile ? URL.createObjectURL(iconFile) : null),
+    [iconFile],
+  );
+  useEffect(() => {
+    return () => {
+      if (iconPreviewUrl) URL.revokeObjectURL(iconPreviewUrl);
+    };
+  }, [iconPreviewUrl]);
 
   const [addQuery, setAddQuery] = useState('');
   const [addResults, setAddResults] = useState<Profile[]>([]);
@@ -553,10 +564,10 @@ export function GroupInfoModal({ conversationId, onClose, onLeft, onUpdated }: P
           <form className="gi-body gi-form" onSubmit={saveEdit}>
             <label className="group-icon-picker">
               <div className="group-icon-preview">
-                {iconFile ? (
-                  <img src={URL.createObjectURL(iconFile)} alt="" />
-                ) : conversation.avatar_url ? (
-                  <img src={conversation.avatar_url} alt="" />
+                {iconPreviewUrl ? (
+                  <img src={iconPreviewUrl} alt="" />
+                ) : conversation.avatar_url && safeHref(conversation.avatar_url) ? (
+                  <img src={safeHref(conversation.avatar_url)} alt="" />
                 ) : (
                   <span>📷</span>
                 )}
@@ -777,33 +788,45 @@ export function GroupInfoModal({ conversationId, onClose, onLeft, onUpdated }: P
               <div className="gi-loading">Nothing here yet</div>
             ) : (
               <div className={panel === 'media' ? 'gi-media-grid' : 'gi-docs'}>
-                {(panel === 'media' ? media : docs).map((m) =>
-                  panel === 'media' ? (
-                    <a
-                      key={m.id}
-                      href={m.media_url || '#'}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="gi-media-cell"
-                    >
-                      {m.media_url && m.type === 'image' ? (
-                        <img src={m.media_url} alt="" />
-                      ) : (
+                {(panel === 'media' ? media : docs).map((m) => {
+                  // XSS: media_url is user-controlled; never put javascript: in href/src.
+                  const href = safeHref(m.media_url);
+                  return panel === 'media' ? (
+                    href ? (
+                      <a
+                        key={m.id}
+                        href={href}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="gi-media-cell"
+                      >
+                        {m.type === 'image' ? (
+                          <img src={href} alt="" />
+                        ) : (
+                          <span>🎬</span>
+                        )}
+                      </a>
+                    ) : (
+                      <div key={m.id} className="gi-media-cell" aria-hidden>
                         <span>🎬</span>
-                      )}
-                    </a>
-                  ) : (
+                      </div>
+                    )
+                  ) : href ? (
                     <a
                       key={m.id}
-                      href={m.media_url || '#'}
+                      href={href}
                       target="_blank"
                       rel="noreferrer"
                       className="gi-row"
                     >
                       📄 {m.content || m.media_url?.split('/').pop() || 'File'}
                     </a>
-                  ),
-                )}
+                  ) : (
+                    <div key={m.id} className="gi-row">
+                      📄 {m.content || 'File'}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>

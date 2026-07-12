@@ -114,7 +114,7 @@ import {
   setDraft,
   uuidv4,
 } from '../lib/localCache';
-import { flushOutbox, onOutboxSent, queueAction } from '../lib/sync';
+import { flushOutbox, onOutboxSent, onOutboxDeadLetter, queueAction } from '../lib/sync';
 import { guessMime } from '../lib/media';
 import { registerMediaHandler, type MediaSubmission } from '../media/mediaSendBridge';
 import { formatLastSeen, formatDaySeparator, formatTime } from '../lib/time';
@@ -659,7 +659,22 @@ function ChatScreenInner() {
       // clear the pending flag so the clock disappears.
       setMsgs((prev) => prev.map((m) => (m.id === sentId ? { ...m, pending: false } : m)));
     });
-    return off;
+    // Permanently failed after MAX_OUTBOX_ATTEMPTS — surface failed state (no silent drop).
+    const offDead = onOutboxDeadLetter((item) => {
+      if (item.conversationId !== conversationId) return;
+      setReceipts((prev) => {
+        const next = new Map(prev);
+        next.set(item.tempId, 'failed' as TickStatus);
+        return next;
+      });
+      setMsgs((prev) =>
+        prev.map((m) => (m.id === item.tempId ? { ...m, pending: false, failed: true } as typeof m : m)),
+      );
+    });
+    return () => {
+      off();
+      offDead();
+    };
   }, [conversationId]);
 
   // ── Header (title + presence / typing subtitle) ───────────────────────────
@@ -1019,16 +1034,42 @@ function ChatScreenInner() {
     return off;
   }, [conversationId, sendMediaSubmission]);
 
-  // Premium stickers — sent as an image message carrying the SVG data URI
-  // (web parity: ChatView.sendSticker). No upload needed.
+  // Premium stickers — durable outbox (same offline path as text/media).
+  // Data-URI mediaUrl needs no upload; flush inserts the row on reconnect.
   async function sendSticker(url: string) {
     setStickersOpen(false);
-    const { message } = await sendMessage(supabase, conversationId, '', 'image', url);
-    if (message) {
-      setMsgs((prev) => (prev.some((m) => m.id === message.id) ? prev : [...prev, message]));
-      setReceipts((prev) => new Map(prev).set(message.id, 'sent'));
-      upsertCachedMessage(conversationId, message).catch(() => {});
+    if (groupSendBlocked) {
+      Alert.alert('Only admins', 'Only admins can send messages in this group.');
+      return;
     }
+    const tempId = uuidv4();
+    const optimistic: Message = {
+      id: tempId,
+      conversation_id: conversationId,
+      sender_id: uid ?? '',
+      type: 'image',
+      content: '',
+      media_url: url,
+      reply_to: null,
+      is_deleted: false,
+      created_at: new Date().toISOString(),
+      edited_at: null,
+      pending: true,
+    };
+    setMsgs((prev) => [...prev, optimistic]);
+    setReceipts((prev) => new Map(prev).set(tempId, 'sending'));
+    upsertCachedMessage(conversationId, optimistic).catch(() => {});
+    await enqueueOutbox({
+      tempId,
+      conversationId,
+      senderId: uid ?? '',
+      content: '',
+      type: 'image',
+      mediaUrl: url,
+      createdAt: optimistic.created_at,
+      attempts: 0,
+    });
+    flushOutbox().catch(() => {});
   }
 
   // Open a media message, enforcing View Once (0030). For a View-Once item the

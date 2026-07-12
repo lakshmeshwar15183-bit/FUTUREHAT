@@ -11,6 +11,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { invalidateSignedMediaUrl, mediaPathFromUrl, signedMediaUrl } from '@shared/api';
 import { supabase } from '../supabase';
+import { safeHref } from '../util/safeUrl';
 
 export interface SignedUrlState {
   /** Resolved, displayable url (signed for private media). Null while first
@@ -48,12 +49,29 @@ export function useSignedUrl(source: string | null | undefined): SignedUrlState 
     setLoading(true);
     setError(false);
 
-    // Non-media paths (data-uri, sticker, external http, blob:, file:) resolve
+    // XSS defense-in-depth: never pass javascript:/data: HTML payloads to <img>/<a>.
+    // data: image/svg stickers are intentional; allow data:image/* only.
+    const isDataImage = /^data:image\//i.test(source);
+    if (!isDataImage && !mediaPathFromUrl(source)) {
+      const safe = safeHref(source);
+      if (!safe && !source.startsWith('blob:') && !source.startsWith('file:')) {
+        setUrl(null);
+        setLoading(false);
+        setError(true);
+        return;
+      }
+    }
+
+    // Non-media paths (data-uri stickers, external http, blob:, file:) resolve
     // synchronously — signedMediaUrl would pass them through, but doing it here
     // avoids a needless await and its render flicker.
     const isPrivateMedia = !!mediaPathFromUrl(source);
     if (!isPrivateMedia) {
-      setUrl(source);
+      if (isDataImage || source.startsWith('blob:') || source.startsWith('file:')) {
+        setUrl(source);
+      } else {
+        setUrl(safeHref(source) ?? null);
+      }
       setLoading(false);
       return;
     }

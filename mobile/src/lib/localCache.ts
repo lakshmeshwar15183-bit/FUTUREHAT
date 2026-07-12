@@ -28,9 +28,23 @@ const K = {
 /** Exported for tests — keep in sync with offline-test suite. */
 export const MSG_CACHE_LIMIT = 800;
 
-// RFC-4122 v4 id, generated client-side. Not cryptographically strong (fine for
-// message ids); lets us render optimistically and dedupe the realtime echo by id.
+// RFC-4122 v4 id from CSPRNG when available (message PKs via outbox — collisions
+// are catastrophic for that row). Falls back to Math.random only if crypto is missing.
 export function uuidv4(): string {
+  const g = globalThis as { crypto?: { getRandomValues?: (a: Uint8Array) => Uint8Array; randomUUID?: () => string } };
+  if (g.crypto?.randomUUID) {
+    try {
+      return g.crypto.randomUUID();
+    } catch { /* fall through */ }
+  }
+  if (g.crypto?.getRandomValues) {
+    const bytes = new Uint8Array(16);
+    g.crypto.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  }
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
     const r = (Math.random() * 16) | 0;
     const v = c === 'x' ? r : (r & 0x3) | 0x8;
@@ -92,20 +106,63 @@ export async function getCachedMessages(convId: string): Promise<Message[]> {
   return readJSON<Message[]>(K.msgs(convId), []);
 }
 
+// Serialize per-conversation message cache RMW so concurrent realtime + send +
+// full rewrite cannot drop optimistic or historical rows (last-writer-wins race).
+const msgCacheChains = new Map<string, Promise<unknown>>();
+function withMsgCacheLock<T>(convId: string, fn: () => Promise<T>): Promise<T> {
+  const prev = msgCacheChains.get(convId) ?? Promise.resolve();
+  const run = prev.then(fn, fn);
+  msgCacheChains.set(
+    convId,
+    run.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return run;
+}
+
 export async function cacheMessages(convId: string, messages: Message[]): Promise<void> {
-  // Keep chronological (oldest→newest) and bounded to the most recent slice.
-  const trimmed = messages.slice(-MSG_CACHE_LIMIT);
-  await writeJSON(K.msgs(convId), trimmed);
+  return withMsgCacheLock(convId, async () => {
+    // Authoritative network slice wins, but keep local-only optimistic rows
+    // (pending/failed outbox) that are not yet on the server — so a concurrent
+    // full rewrite cannot erase in-flight sends. Do NOT keep all prior cache
+    // rows (that would resurrect deletes).
+    const existing = await getCachedMessages(convId);
+    const networkIds = new Set(messages.map((m) => m.id));
+    const localOnly = existing.filter((m) => {
+      if (networkIds.has(m.id)) return false;
+      const flags = m as Message & { pending?: boolean; failed?: boolean };
+      return !!(flags.pending || flags.failed);
+    });
+    const map = new Map<string, Message>();
+    for (const m of messages) map.set(m.id, m);
+    for (const m of localOnly) map.set(m.id, m);
+    const merged = [...map.values()].sort((a, b) =>
+      a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0,
+    );
+    const trimmed = merged.slice(-MSG_CACHE_LIMIT);
+    await writeJSON(K.msgs(convId), trimmed);
+  });
 }
 
 /** Merge a single new/updated message into the cached thread (used by realtime
  *  and optimistic sends) without a full refetch. */
 export async function upsertCachedMessage(convId: string, message: Message): Promise<void> {
-  const cur = await getCachedMessages(convId);
-  const idx = cur.findIndex((m) => m.id === message.id);
-  if (idx >= 0) cur[idx] = message;
-  else cur.push(message);
-  await cacheMessages(convId, cur);
+  return withMsgCacheLock(convId, async () => {
+    const cur = await getCachedMessages(convId);
+    const idx = cur.findIndex((m) => m.id === message.id);
+    if (idx >= 0) cur[idx] = message;
+    else cur.push(message);
+    // Direct write inside lock (avoid nested withMsgCacheLock deadlock).
+    const trimmed = cur
+      .slice()
+      .sort((a, b) =>
+        a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0,
+      )
+      .slice(-MSG_CACHE_LIMIT);
+    await writeJSON(K.msgs(convId), trimmed);
+  });
 }
 
 // ── Profiles ──────────────────────────────────────────────────────────────────

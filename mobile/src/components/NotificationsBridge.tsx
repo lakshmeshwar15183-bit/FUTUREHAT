@@ -341,17 +341,37 @@ export default function NotificationsBridge({
         if (!convId) return;
 
         if (action === 'reply' && userText?.trim()) {
-          await sendMessage(supabase, convId, userText.trim(), 'text').catch(() => {});
-          void sendPush(supabase, {
-            conversationId: convId,
-            kind: 'message',
-            title: 'New message',
-            body: userText.trim().slice(0, 180),
-            data: { type: 'message' },
-          });
-          await clearConversationNotification(convId);
-          void clearRemoteChatNotification(supabase, convId);
-          refreshBadge();
+          // Only clear tray + push on confirmed send. Silent catch previously
+          // made users believe the reply went through when it failed.
+          try {
+            const { message, error } = await sendMessage(
+              supabase, convId, userText.trim(), 'text',
+            );
+            if (error || !message) {
+              if (typeof __DEV__ !== 'undefined' && __DEV__) {
+                console.warn('[notif] reply failed', error?.message);
+              }
+              return;
+            }
+            void sendPush(supabase, {
+              conversationId: convId,
+              kind: 'message',
+              title: '',
+              body: userText.trim().slice(0, 180),
+              data: {
+                type: 'message',
+                messageId: message.id,
+                messageType: 'text',
+              },
+            });
+            await clearConversationNotification(convId);
+            void clearRemoteChatNotification(supabase, convId);
+            refreshBadge();
+          } catch (e) {
+            if (typeof __DEV__ !== 'undefined' && __DEV__) {
+              console.warn('[notif] reply exception', e);
+            }
+          }
           return;
         }
         if (action === 'mark_read') {

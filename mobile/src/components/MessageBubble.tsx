@@ -11,7 +11,7 @@ import { useColors, radius, font, type Palette } from '../theme';
 import AudioMessage from './AudioMessage';
 import SignedImage from './SignedImage';
 
-export type TickStatus = 'sending' | 'sent' | 'delivered' | 'read';
+export type TickStatus = 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
 
 // Long-press is handled ONCE, natively, by the SwipeToReply wrapper's RNGH
 // Gesture.LongPress covering the whole bubble subtree — so no child here needs
@@ -266,9 +266,23 @@ function MessageBubble({
           </Text>
           {mine && tick && (
             <Ionicons
-              name={tick === 'sending' ? 'time-outline' : tick === 'sent' ? 'checkmark' : 'checkmark-done'}
+              name={
+                tick === 'failed'
+                  ? 'alert-circle'
+                  : tick === 'sending'
+                    ? 'time-outline'
+                    : tick === 'sent'
+                      ? 'checkmark'
+                      : 'checkmark-done'
+              }
               size={15}
-              color={tick === 'read' ? '#53BDEB' : colors.bubbleOutMuted}
+              color={
+                tick === 'failed'
+                  ? '#EF4444'
+                  : tick === 'read'
+                    ? '#53BDEB'
+                    : colors.bubbleOutMuted
+              }
               style={{ marginLeft: 3 }}
             />
           )}

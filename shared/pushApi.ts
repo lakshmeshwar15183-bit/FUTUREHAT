@@ -50,15 +50,20 @@ export async function sendPush(client: SupabaseClient, args: SendPushArgs): Prom
         title: args.title ?? '',
         body: args.body ?? '',
         data: args.data ?? {},
-        // Drain sibling outbox rows (other chats / call cancels) after each send.
-        drainOutbox: true,
-        limit: 50,
+        // Clients only fan out their own event. Global outbox drain is reserved
+        // for service-role cron (drainPushOutbox) to prevent authenticated abuse.
+        drainOutbox: false,
+        limit: 1,
       },
     });
   } catch { /* Edge Function not deployed / FCM not configured — ignore */ }
 }
 
-/** Kick the server push outbox without sending a new notification. */
+/**
+ * Kick the server push outbox without sending a new notification.
+ * Prefer service-role / scheduled cron. Client calls are best-effort and may be
+ * rate-limited server-side; do not rely on every client for global drain.
+ */
 export async function drainPushOutbox(client: SupabaseClient, limit = 40): Promise<void> {
   try {
     await client.functions.invoke('push', { body: { drainOutbox: true, limit } });

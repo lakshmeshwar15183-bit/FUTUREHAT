@@ -95,13 +95,37 @@ async function loadIndex(): Promise<Index> {
   return indexLoad;
 }
 
+// Serialize index RMW so concurrent ensureMediaCached/registerLocalMedia cannot
+// last-writer-win and drop entries (orphan files + "missing" offline media).
+let indexChain: Promise<unknown> = Promise.resolve();
+function withIndexLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = indexChain.then(fn, fn);
+  indexChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
 async function saveIndex(idx: Index): Promise<void> {
-  indexCache = idx;
-  try {
-    await AsyncStorage.setItem(INDEX_KEY, JSON.stringify(idx));
-  } catch {
-    /* ignore */
-  }
+  return withIndexLock(async () => {
+    // Merge into latest index (another writer may have landed mid-download).
+    const latest = await loadIndex();
+    const merged: Index = { ...latest, ...idx };
+    // Prefer newer `at` when both have the same key.
+    for (const k of Object.keys(idx)) {
+      const a = latest[k];
+      const b = idx[k];
+      if (a && b && (a.at ?? 0) > (b.at ?? 0)) merged[k] = a;
+      else if (b) merged[k] = b;
+    }
+    indexCache = merged;
+    try {
+      await AsyncStorage.setItem(INDEX_KEY, JSON.stringify(merged));
+    } catch {
+      /* ignore */
+    }
+  });
 }
 
 function extFromUrl(url: string, fallback = 'bin'): string {

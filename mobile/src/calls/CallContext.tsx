@@ -204,8 +204,9 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       }
     });
 
-    // Poll once after subscribe attaches — catches hangup that raced the channel.
-    const checkTimer = setTimeout(async () => {
+    // Poll periodically — Realtime can drop events under poor networks / OEM
+    // battery killers; a one-shot 400ms poll missed hangups after that window.
+    const pollStatus = async () => {
       if (!alive) return;
       try {
         const { data: call } = await supabase
@@ -218,60 +219,77 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
           clearIncomingRing();
         }
       } catch { /* subscription remains primary */ }
-    }, 400);
+    };
+    const checkTimer = setTimeout(pollStatus, 350);
+    const pollInterval = setInterval(pollStatus, 2500);
 
     return () => {
       alive = false;
       clearTimeout(checkTimer);
+      clearInterval(pollInterval);
       supabase.removeChannel(ch);
     };
   }, [incoming?.call.id]);
 
+  // Prevents double-tap / concurrent startCall while createCall is in flight.
+  const startingRef = useRef(false);
+
   const startCall = useCallback(
     async (conversationId: UUID, peer: Profile, type: CallType) => {
-      if (activeRef.current) return;
-      // Pre-flight: warn if TURN missing (cross-network will fail) — better than silent hang.
-      const ice = buildIceServers(
-        process.env.EXPO_PUBLIC_TURN_URL
-          ? {
-              urls: process.env.EXPO_PUBLIC_TURN_URL,
-              username: process.env.EXPO_PUBLIC_TURN_USERNAME,
-              credential: process.env.EXPO_PUBLIC_TURN_CREDENTIAL,
-            }
-          : null,
-      );
-      if (!hasTurn(ice)) {
-        const proceed = await showConfirm({
-          title: 'Weak call network setup',
-          message: 'No TURN relay is configured. Calls may only work on the same Wi‑Fi. Continue anyway?',
-          confirmText: 'Call anyway',
-          cancelText: 'Cancel',
+      if (activeRef.current || startingRef.current || incomingRef.current) return;
+      // Atomic claim before any await — second tap cannot race past the check.
+      startingRef.current = true;
+      try {
+        // Pre-flight: warn if TURN missing (cross-network will fail) — better than silent hang.
+        const ice = buildIceServers(
+          process.env.EXPO_PUBLIC_TURN_URL
+            ? {
+                urls: process.env.EXPO_PUBLIC_TURN_URL,
+                username: process.env.EXPO_PUBLIC_TURN_USERNAME,
+                credential: process.env.EXPO_PUBLIC_TURN_CREDENTIAL,
+              }
+            : null,
+        );
+        if (!hasTurn(ice)) {
+          const proceed = await showConfirm({
+            title: 'Weak call network setup',
+            message: 'No TURN relay is configured. Calls may only work on the same Wi‑Fi. Continue anyway?',
+            confirmText: 'Call anyway',
+            cancelText: 'Cancel',
+          });
+          if (!proceed) return;
+        }
+        // Re-check after dialog (user may have accepted another call).
+        if (activeRef.current || incomingRef.current) return;
+        const me = uid ?? (await getCurrentUser(supabase))?.id ?? null;
+        if (!me) return;
+        if (!uid) setUid(me);
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+        const { call, error } = await createCall(supabase, conversationId, me, type);
+        if (!call) {
+          console.warn('[call] createCall failed:', error?.message);
+          Alert.alert('Could not start call', error?.message ?? 'Try again.');
+          return;
+        }
+        // Claim active before push so a second start cannot create another call.
+        const next: ActiveCall = { callId: call.id, conversationId, peer, type, isCaller: true };
+        activeRef.current = next;
+        setActive(next);
+        const meProfile = await getProfile(supabase, me).catch(() => null);
+        void sendPush(supabase, {
+          conversationId,
+          kind: 'call',
+          title: meProfile?.display_name ?? 'Lumixo',
+          body: type === 'video' ? 'Incoming video call' : 'Incoming voice call',
+          data: {
+            callId: call.id,
+            video: String(type === 'video'),
+            type: 'call',
+          },
         });
-        if (!proceed) return;
+      } finally {
+        startingRef.current = false;
       }
-      const me = uid ?? (await getCurrentUser(supabase))?.id ?? null;
-      if (!me) return;
-      if (!uid) setUid(me);
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-      const { call, error } = await createCall(supabase, conversationId, me, type);
-      if (!call) {
-        console.warn('[call] createCall failed:', error?.message);
-        Alert.alert('Could not start call', error?.message ?? 'Try again.');
-        return;
-      }
-      setActive({ callId: call.id, conversationId, peer, type, isCaller: true });
-      const meProfile = await getProfile(supabase, me).catch(() => null);
-      void sendPush(supabase, {
-        conversationId,
-        kind: 'call',
-        title: meProfile?.display_name ?? 'Lumixo',
-        body: type === 'video' ? 'Incoming video call' : 'Incoming voice call',
-        data: {
-          callId: call.id,
-          video: String(type === 'video'),
-          type: 'call',
-        },
-      });
     },
     [uid],
   );
@@ -955,11 +973,13 @@ function ActiveCallView({
         <RoundCtl
           icon={muted ? 'mic-off' : 'mic'}
           active={muted}
+          label={muted ? 'Unmute microphone' : 'Mute microphone'}
           onPress={() => setMuted(sessionRef.current!.toggleMute())}
         />
         <RoundCtl
           icon={speaker ? 'volume-high' : 'volume-low'}
           active={speaker}
+          label={speaker ? 'Speaker on' : 'Earpiece'}
           onPress={() => setSpeaker(sessionRef.current!.toggleSpeaker())}
         />
         {showVideo && (
@@ -967,10 +987,12 @@ function ActiveCallView({
             <RoundCtl
               icon={videoOn ? 'videocam' : 'videocam-off'}
               active={!videoOn}
+              label={videoOn ? 'Turn camera off' : 'Turn camera on'}
               onPress={() => setVideoOn(sessionRef.current!.toggleVideo())}
             />
             <RoundCtl
               icon="camera-reverse"
+              label="Switch camera"
               onPress={() => {
                 void sessionRef.current?.switchCamera();
               }}
@@ -978,6 +1000,7 @@ function ActiveCallView({
             <RoundCtl
               icon="speedometer-outline"
               active={lowData}
+              label={lowData ? 'Data saver on' : 'Data saver off'}
               onPress={() => {
                 const next = sessionRef.current!.setLowDataMode(!lowData);
                 setLowData(next);
@@ -988,6 +1011,8 @@ function ActiveCallView({
         )}
         <Pressable
           style={styles.hangup}
+          accessibilityRole="button"
+          accessibilityLabel="Hang up"
           onPress={() => {
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {});
             sessionRef.current!.end(true);
@@ -1031,17 +1056,40 @@ function NetBars({ q, size = 4 }: { q: number; size?: number }) {
 function CircleButton({ icon, color, label, onPress }: { icon: keyof typeof Ionicons.glyphMap; color: string; label: string; onPress: () => void }) {
   return (
     <View style={{ alignItems: 'center' }}>
-      <Pressable style={[styles.circle, { backgroundColor: color }]} onPress={onPress}>
+      <Pressable
+        style={[styles.circle, { backgroundColor: color }]}
+        onPress={onPress}
+        accessibilityRole="button"
+        accessibilityLabel={label}
+      >
         <Ionicons name={icon} size={32} color="#fff" />
       </Pressable>
-      <Text style={styles.circleLabel}>{label}</Text>
+      <Text style={styles.circleLabel} importantForAccessibility="no">
+        {label}
+      </Text>
     </View>
   );
 }
 
-function RoundCtl({ icon, active, onPress }: { icon: keyof typeof Ionicons.glyphMap; active?: boolean; onPress: () => void }) {
+function RoundCtl({
+  icon,
+  active,
+  onPress,
+  label,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  active?: boolean;
+  onPress: () => void;
+  label?: string;
+}) {
   return (
-    <Pressable style={[styles.ctl, active && styles.ctlActive]} onPress={onPress}>
+    <Pressable
+      style={[styles.ctl, active && styles.ctlActive]}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label ?? icon}
+      accessibilityState={{ selected: !!active }}
+    >
       <Ionicons name={icon} size={26} color={active ? '#000' : '#fff'} />
     </Pressable>
   );

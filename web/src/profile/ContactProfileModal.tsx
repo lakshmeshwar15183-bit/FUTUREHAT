@@ -264,25 +264,33 @@ export function ContactProfileModal({ profile, online, isPremium, conversationId
             </div>
             {photos.length > 0 && (
               <div className="contact-media-grid">
-                {photos.slice(0, 12).map((m) => (
-                  <button
-                    key={m.id}
-                    className="contact-media-thumb"
-                    style={{ backgroundImage: `url(${m.media_url})` }}
-                    onClick={() => setLightbox(m.media_url!)}
-                    aria-label="View photo"
-                  />
-                ))}
+                {photos.slice(0, 12).map((m) => {
+                  const href = safeHref(m.media_url);
+                  if (!href) return null;
+                  return (
+                    <button
+                      key={m.id}
+                      className="contact-media-thumb"
+                      style={{ backgroundImage: `url(${JSON.stringify(href).slice(1, -1)})` }}
+                      onClick={() => setLightbox(href)}
+                      aria-label="View photo"
+                    />
+                  );
+                })}
               </div>
             )}
             {docs.length > 0 && (
               <div className="contact-doc-list">
-                {docs.slice(0, 8).map((m) => (
-                  <a key={m.id} href={safeHref(m.media_url)} target="_blank" rel="noreferrer" className="contact-doc">
-                    <span className="contact-doc-icon">📎</span>
-                    <span className="contact-doc-name">{m.content || 'Attachment'}</span>
-                  </a>
-                ))}
+                {docs.slice(0, 8).map((m) => {
+                  const href = safeHref(m.media_url);
+                  if (!href) return null;
+                  return (
+                    <a key={m.id} href={href} target="_blank" rel="noreferrer" className="contact-doc">
+                      <span className="contact-doc-icon">📎</span>
+                      <span className="contact-doc-name">{m.content || 'Attachment'}</span>
+                    </a>
+                  );
+                })}
               </div>
             )}
           </div>

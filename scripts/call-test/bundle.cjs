@@ -84,6 +84,10 @@ var CallSession = class {
   iceRestartAttempts = 0;
   facing = "user";
   offerRetryTimer = null;
+  /** Serialize makeOffer so concurrent ready signals cannot glare-create offers. */
+  offerInFlight = null;
+  /** Serialize ICE restart so failed+disconnected dual edges cannot double-offer. */
+  iceRestartInFlight = false;
   muted = false;
   videoEnabled;
   speakerOn;
@@ -93,26 +97,42 @@ var CallSession = class {
   lastPath = "unknown";
   async start() {
     clog(this.isCaller ? "CALLER" : "CALLEE", "start()", this.type, "call", this.callId);
-    this.localStream = await import_react_native_webrtc.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-        channelCount: 1,
-        // Android WebRTC extras (ignored if unsupported).
-        googEchoCancellation: true,
-        googNoiseSuppression: true,
-        googAutoGainControl: true,
-        googHighpassFilter: true,
-        googTypingNoiseDetection: true
-      },
-      video: this.type === "video" ? {
-        facingMode: "user",
-        width: { min: 320, ideal: 1280, max: 1920 },
-        height: { min: 240, ideal: 720, max: 1080 },
-        frameRate: { min: 15, ideal: 30, max: 30 }
-      } : false
-    });
+    if (this.ended) return;
+    let gumStream;
+    try {
+      gumStream = await import_react_native_webrtc.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 1,
+          // Android WebRTC extras (ignored if unsupported).
+          googEchoCancellation: true,
+          googNoiseSuppression: true,
+          googAutoGainControl: true,
+          googHighpassFilter: true,
+          googTypingNoiseDetection: true
+        },
+        video: this.type === "video" ? {
+          facingMode: "user",
+          width: { min: 320, ideal: 1280, max: 1920 },
+          height: { min: 240, ideal: 720, max: 1080 },
+          frameRate: { min: 15, ideal: 30, max: 30 }
+        } : false
+      });
+    } catch (e) {
+      clog("getUserMedia failed", e);
+      this.end(false);
+      throw e;
+    }
+    if (this.ended) {
+      try {
+        gumStream.getTracks().forEach((t) => t.stop());
+      } catch {
+      }
+      return;
+    }
+    this.localStream = gumStream;
     this.localStream.getAudioTracks().forEach((t) => {
       t.enabled = true;
     });
@@ -303,25 +323,32 @@ var CallSession = class {
   }
   async tryIceRestart(reason) {
     if (this.ended || !this.pc) return;
+    if (!this.isCaller) {
+      clog("ICE blip on callee \u2014 wait for caller restart (", reason, ")");
+      return;
+    }
+    if (this.iceRestartInFlight) return;
     if (this.iceRestartAttempts >= MAX_ICE_RESTARTS) {
       clog("\u274C ICE restart exhausted (", reason, ") \u2192 ending");
       this.end(false);
       return;
     }
+    this.iceRestartInFlight = true;
     this.iceRestartAttempts += 1;
     clog("\u{1F504} ICE restart #", this.iceRestartAttempts, reason);
     try {
-      if (this.isCaller || this.pc.signalingState === "stable") {
-        this.cachedOffer = null;
-        this.answered = false;
-        const offer = await this.pc.createOffer({ iceRestart: true });
-        await this.pc.setLocalDescription(offer);
-        this.cachedOffer = offer;
-        this.signaling?.send({ kind: "offer", from: this.selfId, data: offer });
-      }
+      this.cachedOffer = null;
+      this.answered = false;
+      const offer = await this.pc.createOffer({ iceRestart: true });
+      if (this.ended || !this.pc) return;
+      await this.pc.setLocalDescription(offer);
+      this.cachedOffer = offer;
+      this.signaling?.send({ kind: "offer", from: this.selfId, data: offer });
     } catch (e) {
       clog("ICE restart failed", e?.message ?? e);
       this.end(false);
+    } finally {
+      this.iceRestartInFlight = false;
     }
   }
   scheduleReconnectTeardown() {
@@ -380,30 +407,47 @@ var CallSession = class {
     }
   }
   async makeOffer(iceRestart = false) {
-    if (!this.pc || this.answered && !iceRestart) return;
-    if (!this.cachedOffer || iceRestart) {
-      const offer = await this.pc.createOffer({
-        iceRestart: !!iceRestart,
-        offerToReceiveAudio: true,
-        offerToReceiveVideo: this.type === "video"
-      });
-      await this.pc.setLocalDescription(offer);
-      this.cachedOffer = offer;
+    if (!this.pc || this.ended || !this.isCaller) return;
+    if (this.answered && !iceRestart) return;
+    if (this.offerInFlight) {
+      await this.offerInFlight;
+      if (!this.ended && !this.answered && this.cachedOffer && !iceRestart) {
+        this.signaling?.send({ kind: "offer", from: this.selfId, data: this.cachedOffer });
+      }
+      return;
     }
-    clog("CALLER \u2192 offer", iceRestart ? "(ICE restart)" : "");
-    this.signaling?.send({ kind: "offer", from: this.selfId, data: this.cachedOffer });
-    if (!iceRestart && !this.offerRetryTimer) {
-      let n = 0;
-      this.offerRetryTimer = setInterval(() => {
-        if (this.ended || this.answered || n++ > 12) {
-          if (this.offerRetryTimer) clearInterval(this.offerRetryTimer);
-          this.offerRetryTimer = null;
-          return;
-        }
-        if (this.cachedOffer) {
-          this.signaling?.send({ kind: "offer", from: this.selfId, data: this.cachedOffer });
-        }
-      }, 900);
+    this.offerInFlight = (async () => {
+      if (!this.pc || this.ended) return;
+      if (!this.cachedOffer || iceRestart) {
+        const offer = await this.pc.createOffer({
+          iceRestart: !!iceRestart,
+          offerToReceiveAudio: true,
+          offerToReceiveVideo: this.type === "video"
+        });
+        if (this.ended || !this.pc) return;
+        await this.pc.setLocalDescription(offer);
+        this.cachedOffer = offer;
+      }
+      clog("CALLER \u2192 offer", iceRestart ? "(ICE restart)" : "");
+      this.signaling?.send({ kind: "offer", from: this.selfId, data: this.cachedOffer });
+      if (!iceRestart && !this.offerRetryTimer) {
+        let n = 0;
+        this.offerRetryTimer = setInterval(() => {
+          if (this.ended || this.answered || n++ > 12) {
+            if (this.offerRetryTimer) clearInterval(this.offerRetryTimer);
+            this.offerRetryTimer = null;
+            return;
+          }
+          if (this.cachedOffer) {
+            this.signaling?.send({ kind: "offer", from: this.selfId, data: this.cachedOffer });
+          }
+        }, 900);
+      }
+    })();
+    try {
+      await this.offerInFlight;
+    } finally {
+      this.offerInFlight = null;
     }
   }
   async onSignal(msg) {
