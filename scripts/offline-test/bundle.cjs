@@ -37,6 +37,7 @@ module.exports = __toCommonJS(entry_exports);
 // ../../mobile/src/lib/localCache.ts
 var localCache_exports = {};
 __export(localCache_exports, {
+  MSG_CACHE_LIMIT: () => MSG_CACHE_LIMIT,
   cacheConversations: () => cacheConversations,
   cacheMessages: () => cacheMessages,
   cacheProfile: () => cacheProfile,
@@ -64,7 +65,7 @@ __export(localCache_exports, {
   upsertCachedMessage: () => upsertCachedMessage,
   uuidv4: () => uuidv4
 });
-var import_async_storage = __toESM(require("/Users/lakshmeshwarpandey/FUTUREHAT/scripts/offline-test/mocks/async-storage.js"));
+var import_async_storage = __toESM(require("/Users/lakshmeshwarpandey/Lumixo/scripts/offline-test/mocks/async-storage.js"));
 var K = {
   convs: (uid) => `fh:cache:convs:${uid}`,
   msgs: (convId) => `fh:cache:msgs:${convId}`,
@@ -74,7 +75,7 @@ var K = {
   outbox: "fh:outbox:v1",
   actions: "fh:actions:v1"
 };
-var MSG_CACHE_LIMIT = 200;
+var MSG_CACHE_LIMIT = 800;
 function uuidv4() {
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
     const r = Math.random() * 16 | 0;
@@ -157,35 +158,65 @@ async function setDraft(convId, text) {
 async function getOutbox() {
   return readJSON(K.outbox, []);
 }
+var outboxChain = Promise.resolve();
+function withOutboxLock(fn) {
+  const run = outboxChain.then(fn, fn);
+  outboxChain = run.then(
+    () => void 0,
+    () => void 0
+  );
+  return run;
+}
 async function enqueueOutbox(item) {
-  const cur = await getOutbox();
-  cur.push(item);
-  await writeJSON(K.outbox, cur);
+  return withOutboxLock(async () => {
+    const cur = await getOutbox();
+    cur.push(item);
+    await writeJSON(K.outbox, cur);
+  });
 }
 async function removeFromOutbox(tempId) {
-  const cur = await getOutbox();
-  await writeJSON(K.outbox, cur.filter((i) => i.tempId !== tempId));
+  return withOutboxLock(async () => {
+    const cur = await getOutbox();
+    await writeJSON(K.outbox, cur.filter((i) => i.tempId !== tempId));
+  });
 }
 async function updateOutboxItem(tempId, patch) {
-  const cur = await getOutbox();
-  const next = cur.map((i) => i.tempId === tempId ? { ...i, ...patch } : i);
-  await writeJSON(K.outbox, next);
+  return withOutboxLock(async () => {
+    const cur = await getOutbox();
+    const next = cur.map((i) => i.tempId === tempId ? { ...i, ...patch } : i);
+    await writeJSON(K.outbox, next);
+  });
 }
 async function getActionQueue() {
   return readJSON(K.actions, []);
 }
+var actionChain = Promise.resolve();
+function withActionLock(fn) {
+  const run = actionChain.then(fn, fn);
+  actionChain = run.then(
+    () => void 0,
+    () => void 0
+  );
+  return run;
+}
 async function enqueueAction(action) {
-  const cur = await getActionQueue();
-  cur.push(action);
-  await writeJSON(K.actions, cur);
+  return withActionLock(async () => {
+    const cur = await getActionQueue();
+    cur.push(action);
+    await writeJSON(K.actions, cur);
+  });
 }
 async function removeAction(id) {
-  const cur = await getActionQueue();
-  await writeJSON(K.actions, cur.filter((a) => a.id !== id));
+  return withActionLock(async () => {
+    const cur = await getActionQueue();
+    await writeJSON(K.actions, cur.filter((a) => a.id !== id));
+  });
 }
 async function updateAction(id, patch) {
-  const cur = await getActionQueue();
-  await writeJSON(K.actions, cur.map((a) => a.id === id ? { ...a, ...patch } : a));
+  return withActionLock(async () => {
+    const cur = await getActionQueue();
+    await writeJSON(K.actions, cur.map((a) => a.id === id ? { ...a, ...patch } : a));
+  });
 }
 async function pendingConversationEffects(addKinds, removeKinds) {
   const adds = /* @__PURE__ */ new Set();
@@ -234,12 +265,14 @@ async function getPendingMessages(convId) {
     sender_id: i.senderId,
     type: i.type,
     content: i.content,
-    media_url: i.mediaUrl ?? null,
+    // Show the local file while it's still uploading (localUri), else the remote url.
+    media_url: i.mediaUrl ?? i.localUri ?? null,
     reply_to: i.replyTo ?? null,
     is_deleted: false,
     created_at: i.createdAt,
     edited_at: null,
-    pending: true
+    pending: true,
+    media_meta: i.mediaMeta ?? null
   }));
 }
 
@@ -254,9 +287,11 @@ __export(sync_exports, {
   queueAction: () => queueAction,
   startSync: () => startSync
 });
-var import_netinfo = __toESM(require("/Users/lakshmeshwarpandey/FUTUREHAT/scripts/offline-test/mocks/netinfo.js"));
-var import_supabase = require("/Users/lakshmeshwarpandey/FUTUREHAT/scripts/offline-test/mocks/supabase.js");
-var import_shared = require("/Users/lakshmeshwarpandey/FUTUREHAT/scripts/offline-test/mocks/shared.js");
+var import_netinfo = __toESM(require("/Users/lakshmeshwarpandey/Lumixo/scripts/offline-test/mocks/netinfo.js"));
+var import_supabase = require("/Users/lakshmeshwarpandey/Lumixo/scripts/offline-test/mocks/supabase.js");
+var import_media = require("/Users/lakshmeshwarpandey/Lumixo/scripts/offline-test/mocks/media.js");
+var import_mediaCache = require("/Users/lakshmeshwarpandey/Lumixo/scripts/offline-test/mocks/mediaCache.js");
+var import_shared = require("/Users/lakshmeshwarpandey/Lumixo/scripts/offline-test/mocks/shared.js");
 var online = true;
 var flushing = false;
 var onlineListeners = /* @__PURE__ */ new Set();
@@ -273,6 +308,7 @@ function onOutboxSent(fn) {
   sentListeners.add(fn);
   return () => sentListeners.delete(fn);
 }
+var MAX_OUTBOX_ATTEMPTS = 30;
 async function flushOutbox() {
   if (flushing) return;
   flushing = true;
@@ -280,22 +316,61 @@ async function flushOutbox() {
     const box = await getOutbox();
     for (const item of box) {
       if (!online) break;
+      if ((item.attempts ?? 0) >= MAX_OUTBOX_ATTEMPTS) {
+        await removeFromOutbox(item.tempId);
+        continue;
+      }
       try {
+        let mediaUrl = item.mediaUrl;
+        if (item.localUri && !mediaUrl) {
+          const { url, error: upErr } = await (0, import_media.uploadMediaFromUri)(
+            item.conversationId,
+            item.localUri,
+            item.fileName ?? `media_${item.tempId}`
+          );
+          if (upErr || !url) {
+            await updateOutboxItem(item.tempId, { attempts: (item.attempts ?? 0) + 1 });
+            continue;
+          }
+          mediaUrl = url;
+          if (item.localUri) void (0, import_mediaCache.registerLocalMedia)(url, item.localUri);
+          await updateOutboxItem(item.tempId, { mediaUrl: url, localUri: void 0 });
+        }
         const { message, error } = await (0, import_shared.sendMessage)(
           import_supabase.supabase,
           item.conversationId,
           item.content,
           item.type,
-          item.mediaUrl,
+          mediaUrl,
           item.replyTo,
-          item.tempId
+          item.tempId,
           // reuse the optimistic id as the real row id
+          item.mediaMeta
         );
         const dupe = !!error && (error.code === "23505" || /duplicate key|already exists/i.test(error.message ?? ""));
         if (message && !error || dupe) {
           if (message) await upsertCachedMessage(item.conversationId, message);
           await removeFromOutbox(item.tempId);
           sentListeners.forEach((l) => l(item, message?.id ?? item.tempId));
+          (0, import_shared.recordStreakActivity)(import_supabase.supabase, item.conversationId).catch(() => {
+          });
+          try {
+            const mid = message?.id ?? item.tempId;
+            const preview = item.type === "text" ? (item.content || "Message").slice(0, 180) : item.type === "image" ? /\.gif(\?|#|$)/i.test(item.mediaUrl ?? item.localUri ?? "") ? "\u{1F39E}\uFE0F GIF" : "\u{1F4F7} Photo" : item.type === "video" ? "\u{1F3A5} Video" : item.type === "audio" ? "\u{1F3A4} Voice message" : item.type === "file" ? item.content?.trim() ? `\u{1F4C4} ${item.content}` : "\u{1F4C4} Document" : "New message";
+            void (0, import_shared.sendPush)(import_supabase.supabase, {
+              conversationId: item.conversationId,
+              kind: "message",
+              title: "New message",
+              body: preview,
+              data: {
+                messageId: mid,
+                messageType: item.type,
+                type: "message",
+                senderId: item.senderId
+              }
+            });
+          } catch {
+          }
         } else {
           await updateOutboxItem(item.tempId, { attempts: (item.attempts ?? 0) + 1 });
         }
@@ -324,6 +399,8 @@ async function mergeExtra(payload) {
 var actionHandlers = {
   pin: (p) => (0, import_shared.pinConversation)(import_supabase.supabase, p.conversationId),
   unpin: (p) => (0, import_shared.unpinConversation)(import_supabase.supabase, p.conversationId),
+  favorite: (p) => (0, import_shared.favoriteConversation)(import_supabase.supabase, p.conversationId),
+  unfavorite: (p) => (0, import_shared.unfavoriteConversation)(import_supabase.supabase, p.conversationId),
   mute: (p) => (0, import_shared.muteConversation)(import_supabase.supabase, p.conversationId),
   unmute: (p) => (0, import_shared.unmuteConversation)(import_supabase.supabase, p.conversationId),
   archive: (p) => (0, import_shared.archiveConversation)(import_supabase.supabase, p.conversationId),

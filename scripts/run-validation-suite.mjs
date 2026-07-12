@@ -67,14 +67,13 @@ results.push([
   run('Jest unit tests', 'npm test -- --passWithNoTests --watchAll=false', join(ROOT, 'mobile')),
 ]);
 
-// 3) Offline suite
+// 3) Offline suite — always rebuild bundle so tests hit CURRENT localCache/sync
 if (!args.has('--skip-offline')) {
   const offlineDir = join(ROOT, 'scripts', 'offline-test');
   if (existsSync(join(offlineDir, 'offline.test.mjs'))) {
-    // Prefer prebuilt bundle if present; else build then run
-    const hasBundle = existsSync(join(offlineDir, 'bundle.cjs'));
-    if (!hasBundle && existsSync(join(offlineDir, 'build.mjs'))) {
-      run('Build offline-test bundle', 'node build.mjs', offlineDir);
+    if (existsSync(join(offlineDir, 'build.mjs'))) {
+      const built = run('Build offline-test bundle', 'node build.mjs', offlineDir);
+      if (!built) results.push(['offline-build', false]);
     }
     results.push([
       'offline-test',
@@ -85,13 +84,13 @@ if (!args.has('--skip-offline')) {
   }
 }
 
-// 4) Call suite
+// 4) Call suite — always rebuild webrtc bundle
 if (!args.has('--skip-calls')) {
   const callDir = join(ROOT, 'scripts', 'call-test');
   if (existsSync(join(callDir, 'call.test.mjs'))) {
-    const hasBundle = existsSync(join(callDir, 'bundle.cjs'));
-    if (!hasBundle && existsSync(join(callDir, 'build.mjs'))) {
-      run('Build call-test bundle', 'node build.mjs', callDir);
+    if (existsSync(join(callDir, 'build.mjs'))) {
+      const built = run('Build call-test bundle', 'node build.mjs', callDir);
+      if (!built) results.push(['call-build', false]);
     }
     results.push([
       'call-test',
