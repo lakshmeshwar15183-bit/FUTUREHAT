@@ -291,7 +291,7 @@ function RootNavigator() {
   }
 
   return (
-    <>
+    <View style={{ flex: 1 }}>
       <StatusBar style={colors.isLight ? 'dark' : 'light'} />
       <NavigationContainer theme={navTheme} ref={navRef} linking={linkingConfig}>
         <Stack.Navigator screenOptions={screenOptions}>
@@ -357,9 +357,11 @@ function RootNavigator() {
           <LockScreen />
         </View>
       )}
-      {/* Global premium dialogs / sheets — always mounted so Alert.alert works. */}
+      {/* Global premium dialogs / sheets — always mounted (overlay, not Modal)
+          so action sheets open in the same frame as long-press without native
+          window cold-start latency. Parent flex:1 gives absoluteFill a real box. */}
       <DialogHost />
-    </>
+    </View>
   );
 }
 

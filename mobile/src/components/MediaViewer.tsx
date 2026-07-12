@@ -14,6 +14,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  AppState,
+  type AppStateStatus,
   FlatList,
   Modal,
   Pressable,
@@ -27,7 +29,7 @@ import {
   type NativeSyntheticEvent,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { ResizeMode, Video } from 'expo-av';
+import { Audio, ResizeMode, Video } from 'expo-av';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import * as MediaLibrary from 'expo-media-library';
@@ -281,28 +283,115 @@ function ZoomableImage({
   );
 }
 
-// ── Video page (signed url + loading spinner + retry) ─────────────────────────
-function VideoPage({ item, onSingleTap }: { item: ViewerItem; onSingleTap: () => void }) {
-  const { url, loading, error, retry } = useSignedUrl(item.url);
+// ── Video page ────────────────────────────────────────────────────────────────
+// CRITICAL: FlatList keeps adjacent pages mounted. A video must NEVER mount or
+// autoplay unless it is the *active* page — otherwise opening a photo starts
+// audio from a neighbouring video (the reported WhatsApp-parity bug).
+//
+// Contract:
+//  • isActive=false → no <Video> instance, no audio, no buffering.
+//  • isActive=true  → create player; autoplay like WhatsApp when user lands on it.
+//  • leaving page / background / unmount → pause + unload immediately.
+function VideoPage({
+  item,
+  isActive,
+  onSingleTap,
+}: {
+  item: ViewerItem;
+  isActive: boolean;
+  onSingleTap: () => void;
+}) {
+  // Only resolve signed/local URL while active — inactive pages stay inert.
+  const { url, loading, error, retry } = useSignedUrl(isActive ? item.url : null);
   const [buffering, setBuffering] = useState(true);
   const [playError, setPlayError] = useState(false);
-  const tap = Gesture.Tap().numberOfTaps(1).onEnd(() => { runOnJS(onSingleTap)(); });
+  const videoRef = useRef<Video | null>(null);
+  const tap = Gesture.Tap().numberOfTaps(1).onEnd(() => {
+    runOnJS(onSingleTap)();
+  });
+
+  const releasePlayer = useCallback(async () => {
+    const v = videoRef.current;
+    if (!v) return;
+    try {
+      await v.pauseAsync();
+    } catch { /* ignore */ }
+    try {
+      await v.unloadAsync();
+    } catch { /* ignore */ }
+  }, []);
+
+  // Become inactive → tear down player immediately (swipe video → photo).
+  useEffect(() => {
+    if (!isActive) {
+      setBuffering(true);
+      setPlayError(false);
+      void releasePlayer();
+    } else {
+      // Configure session so playback does not keep running in the background.
+      void Audio.setAudioModeAsync({
+        playsInSilentModeIOS: true,
+        staysActiveInBackground: false,
+        shouldDuckAndroid: true,
+        playThroughEarpieceAndroid: false,
+      }).catch(() => {});
+    }
+  }, [isActive, releasePlayer]);
+
+  // App backgrounded → pause (no ghost audio).
+  useEffect(() => {
+    const onApp = (state: AppStateStatus) => {
+      if (state !== 'active') void releasePlayer();
+    };
+    const sub = AppState.addEventListener('change', onApp);
+    return () => sub.remove();
+  }, [releasePlayer]);
+
+  // Unmount cleanup.
+  useEffect(() => () => {
+    void releasePlayer();
+  }, [releasePlayer]);
 
   const failed = error || playError;
-  const onRetry = () => { setPlayError(false); setBuffering(true); retry(); };
+  const onRetry = () => {
+    setPlayError(false);
+    setBuffering(true);
+    retry();
+  };
+
+  // Inactive page: silent poster only — never instantiate expo-av Video.
+  if (!isActive) {
+    return (
+      <GestureDetector gesture={tap}>
+        <View style={styles.page}>
+          <View style={styles.centerOverlay} pointerEvents="none">
+            <Ionicons name="play-circle" size={72} color="rgba(255,255,255,0.92)" />
+          </View>
+        </View>
+      </GestureDetector>
+    );
+  }
 
   return (
     <GestureDetector gesture={tap}>
       <View style={styles.page}>
         {!!url && !failed && (
           <Video
+            ref={videoRef}
+            key={`vid-${item.id}-${url}`}
             source={{ uri: url }}
             style={styles.fill}
             useNativeControls
             resizeMode={ResizeMode.CONTAIN}
+            // Autoplay only for the active page (user explicitly opened/swiped to this video).
             shouldPlay
+            isLooping={false}
+            isMuted={false}
             onLoad={() => setBuffering(false)}
-            onError={() => { setBuffering(false); setPlayError(true); }}
+            onError={() => {
+              setBuffering(false);
+              setPlayError(true);
+            }}
           />
         )}
         {(loading || (buffering && !failed)) && (
@@ -364,15 +453,26 @@ export default function MediaViewer({ items, index, onClose, onForward, onDelete
   }));
   const chromeStyle = useAnimatedStyle(() => ({ opacity: chromeOpacity.value }));
 
-  const onScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const i = Math.round(e.nativeEvent.contentOffset.x / Math.max(1, screenW));
-    if (i !== current) {
-      setCurrent(i);
-      // Small tactile beat when swiping between items — matches the counter update.
-      Haptics.selectionAsync().catch(() => {});
+  // Update active index during the swipe (not only at momentum end) so video
+  // audio stops as soon as the page is no longer the nearest centre page.
+  const applyPageIndex = useCallback((offsetX: number, haptic: boolean) => {
+    const i = Math.round(offsetX / Math.max(1, screenW));
+    if (i < 0 || i >= items.length) return;
+    setCurrent((prev) => {
+      if (prev === i) return prev;
+      if (haptic) Haptics.selectionAsync().catch(() => {});
       if (!chrome) setChrome(true);
-    }
-  }, [current, chrome, screenW]);
+      return i;
+    });
+  }, [screenW, items.length, chrome]);
+
+  const onScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    applyPageIndex(e.nativeEvent.contentOffset.x, false);
+  }, [applyPageIndex]);
+
+  const onMomentumEnd = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    applyPageIndex(e.nativeEvent.contentOffset.x, true);
+  }, [applyPageIndex]);
 
   const jumpTo = useCallback((i: number) => {
     setCurrent(i);
@@ -479,11 +579,13 @@ export default function MediaViewer({ items, index, onClose, onForward, onDelete
   // exit. The chrome state itself is left alone so an intentional tap-to-hide
   // survives a subsequent pinch.
 
-  const renderItem = useCallback(({ item: it }: ListRenderItemInfo<ViewerItem>) => {
+  const renderItem = useCallback(({ item: it, index: i }: ListRenderItemInfo<ViewerItem>) => {
     const pageStyle = { width: screenW, height: screenH };
+    // Only the *current* page is active — adjacent FlatList windows must not play.
+    const isActive = i === current;
     return it.kind === 'video' ? (
       <View style={pageStyle}>
-        <VideoPage item={it} onSingleTap={toggleChrome} />
+        <VideoPage item={it} isActive={isActive} onSingleTap={toggleChrome} />
       </View>
     ) : (
       <View style={pageStyle}>
@@ -498,7 +600,7 @@ export default function MediaViewer({ items, index, onClose, onForward, onDelete
         />
       </View>
     );
-  }, [screenW, screenH, toggleChrome, requestClose]);
+  }, [screenW, screenH, toggleChrome, requestClose, current]);
 
   const canDownload = !!item && !item.viewOnce;
   const canShare = !!item && !item.viewOnce;
@@ -521,10 +623,14 @@ export default function MediaViewer({ items, index, onClose, onForward, onDelete
             showsHorizontalScrollIndicator={false}
             initialScrollIndex={index}
             getItemLayout={(_, i) => ({ length: screenW, offset: screenW * i, index: i })}
-            onMomentumScrollEnd={onScroll}
+            onScroll={onScroll}
+            scrollEventThrottle={16}
+            onMomentumScrollEnd={onMomentumEnd}
+            // Keep neighbours mounted for swipe feel, but VideoPage only plays when active.
             windowSize={3}
-            maxToRenderPerBatch={3}
+            maxToRenderPerBatch={2}
             initialNumToRender={1}
+            extraData={current}
             removeClippedSubviews
           />
         </Animated.View>

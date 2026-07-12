@@ -105,6 +105,19 @@ export async function runProdHealthChecks(): Promise<HealthReport> {
     message: `Push platform: ${Platform.OS} (FCM requires google-services.json + Edge secret FCM_SERVICE_ACCOUNT)`,
   });
 
+  // Crash remote ingest (defaults to Edge Function crash-report)
+  const crashUrl =
+    process.env.EXPO_PUBLIC_CRASH_WEBHOOK_URL?.trim() ||
+    (url ? `${url.replace(/\/+$/, '')}/functions/v1/crash-report` : '');
+  items.push({
+    id: 'crash_ingest',
+    ok: !!crashUrl && !!url,
+    severity: crashUrl ? 'info' : 'warn',
+    message: crashUrl
+      ? `Crash ingest: ${crashUrl.replace(/^https?:\/\//, '').slice(0, 48)}…`
+      : 'Crash ingest URL unresolved — set EXPO_PUBLIC_SUPABASE_URL',
+  });
+
   // App ownership
   const ownership = (Constants as any).appOwnership as string | undefined;
   items.push({

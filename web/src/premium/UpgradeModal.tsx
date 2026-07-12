@@ -5,7 +5,7 @@ import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../AuthContext';
 import { usePremium } from '../PremiumContext';
-import { activateSubscription, cancelSubscription } from '@shared/premiumApi';
+import { cancelSubscription } from '@shared/premiumApi';
 import { supabase } from '../supabase';
 import { PLAN_LIST, PLANS, formatInr } from '@shared/premium/plans';
 import {
@@ -61,8 +61,8 @@ export function UpgradeModal({ onClose }: { onClose: () => void }) {
         setError('Secure payments are not available. Manual activation is disabled.');
         return;
       }
-      const { error: actErr } = await activateSubscription(supabase, plan, result);
-      if (actErr) throw actErr;
+      // Activation is performed server-side inside payments-razorpay (HMAC verify
+      // + admin_activate_subscription). Client must not write subscriptions.
       await refresh();
       setDone(true);
     } catch (e: any) {

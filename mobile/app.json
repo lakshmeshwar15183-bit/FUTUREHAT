@@ -24,7 +24,9 @@
         "ITSAppUsesNonExemptEncryption": false,
         "NSPhotoLibraryAddUsageDescription": "Lumixo saves photos and media you download to your photo library.",
         "UIBackgroundModes": [
-          "audio"
+          "audio",
+          "remote-notification",
+          "voip"
         ]
       }
     },
@@ -109,7 +111,9 @@
         "expo-notifications",
         {
           "icon": "./assets/notification-icon.png",
-          "color": "#7C3AED"
+          "color": "#00A884",
+          "defaultChannel": "messages",
+          "sounds": []
         }
       ],
       [

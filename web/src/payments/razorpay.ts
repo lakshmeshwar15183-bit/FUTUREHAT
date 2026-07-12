@@ -1,12 +1,13 @@
-// Lumixo+ — Razorpay checkout (web). Implements the shared PaymentProvider.
-// Activates only when VITE_RAZORPAY_KEY_ID is set; otherwise the app falls back
-// to the ManualProvider so the upgrade flow stays fully functional in dev.
+// Lumixo+ — Razorpay checkout (web).
 //
-// Production note: for signed verification, create an Order on a server/edge
-// function and pass its id here. Without it, this opens checkout in capture mode.
-
+// CRITICAL production path:
+//   1) Edge Function creates a Razorpay Order (server-side amount).
+//   2) Checkout opens with that order_id.
+//   3) On success, Edge Function verifies HMAC signature + activates subscription
+//      via service-role admin_activate_subscription.
+// Client never writes to `subscriptions` directly.
+import { supabase } from '../supabase';
 import type { PaymentProvider, PaymentResult, CheckoutContext } from '@shared/payments/provider';
-import { PLANS } from '@shared/premium/plans';
 
 declare global {
   interface Window {
@@ -34,32 +35,75 @@ export class RazorpayWebProvider implements PaymentProvider {
     if (!ok || !window.Razorpay) {
       return { ok: false, provider: 'razorpay', error: 'Could not load Razorpay' };
     }
-    const plan = PLANS[ctx.plan];
+
+    // Server-created order (amount cannot be spoofed by the client).
+    const { data: orderData, error: orderErr } = await supabase.functions.invoke('payments-razorpay', {
+      body: { action: 'create_order', plan: ctx.plan },
+    });
+    if (orderErr || !orderData?.orderId) {
+      return {
+        ok: false,
+        provider: 'razorpay',
+        error: orderErr?.message || orderData?.error || 'Could not start secure checkout',
+      };
+    }
+
+    const keyId = orderData.keyId || this.keyId;
+    const orderId = orderData.orderId as string;
 
     return new Promise<PaymentResult>((resolve) => {
+      let settled = false;
+      const settle = (r: PaymentResult) => {
+        if (settled) return;
+        settled = true;
+        resolve(r);
+      };
+
       const rzp = new window.Razorpay({
-        key: this.keyId,
-        amount: plan.amountPaise,
-        currency: 'INR',
+        key: keyId,
+        order_id: orderId,
         name: 'Lumixo+',
-        description: `${plan.label} subscription`,
+        description: `${ctx.plan === 'yearly' ? 'Yearly' : 'Monthly'} subscription`,
         prefill: { name: ctx.displayName, email: ctx.email },
         theme: { color: '#00a884' },
-        handler: (resp: any) => {
-          resolve({
-            ok: true,
-            provider: 'razorpay',
-            providerSubscriptionId: resp.razorpay_payment_id,
-          });
+        handler: async (resp: any) => {
+          try {
+            const { data, error } = await supabase.functions.invoke('payments-razorpay', {
+              body: {
+                action: 'verify',
+                plan: ctx.plan,
+                razorpay_order_id: resp.razorpay_order_id || orderId,
+                razorpay_payment_id: resp.razorpay_payment_id,
+                razorpay_signature: resp.razorpay_signature,
+              },
+            });
+            if (error || !data?.ok) {
+              settle({
+                ok: false,
+                provider: 'razorpay',
+                error: error?.message || data?.error || 'Payment verification failed',
+              });
+              return;
+            }
+            settle({
+              ok: true,
+              provider: 'razorpay',
+              providerSubscriptionId: resp.razorpay_payment_id,
+            });
+          } catch (e: any) {
+            settle({
+              ok: false,
+              provider: 'razorpay',
+              error: e?.message || 'Payment verification failed',
+            });
+          }
         },
         modal: {
-          ondismiss: () => resolve({ ok: false, provider: 'razorpay', error: 'Payment cancelled' }),
+          ondismiss: () => settle({ ok: false, provider: 'razorpay', error: 'Payment cancelled' }),
         },
       });
-      // A reported payment failure must settle the promise too — otherwise the
-      // upgrade button stays stuck on the spinner when the user doesn't dismiss.
       rzp.on('payment.failed', (resp: any) => {
-        resolve({
+        settle({
           ok: false,
           provider: 'razorpay',
           error: resp?.error?.description || 'Payment failed',

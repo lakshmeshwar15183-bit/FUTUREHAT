@@ -1,10 +1,16 @@
 // Lumixo — global premium dialog / sheet host (Telegram-level polish).
 // Mount once near the app root. Imperative API lives in `controller.ts`.
+//
+// Performance contract for action sheets (WhatsApp parity):
+//  • Sheet shell is always mounted (never cold-start a Modal).
+//  • Open is a Reanimated translate/opacity only — target <100 ms to first paint.
+//  • enqueue() presents on the same JS turn (no requestAnimationFrame deferral).
+//  • No network / no list work here — content is already in the request payload.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  BackHandler,
   KeyboardAvoidingView,
-  Modal,
   Platform,
   Pressable,
   StyleSheet,
@@ -16,12 +22,10 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import Animated, {
   Easing,
-  FadeIn,
-  FadeOut,
-  SlideInDown,
-  SlideOutDown,
-  ZoomIn,
-  ZoomOut,
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -38,55 +42,126 @@ import type {
 } from './types';
 
 const RADIUS = 26;
+// Snappy open/close — WhatsApp-class, not a slow spring from off-screen.
+const OPEN_MS = 160;
+const CLOSE_MS = 130;
+const OPEN_EASING = Easing.out(Easing.cubic);
+const CLOSE_EASING = Easing.in(Easing.cubic);
 
 export default function DialogHost() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
   const styles = useMemo(() => makeStyles(colors, width), [colors, width]);
+
   const [req, setReq] = useState<HostRequest | null>(null);
   const [busy, setBusy] = useState(false);
   const queue = useRef<HostRequest[]>([]);
+  const reqRef = useRef<HostRequest | null>(null);
   const promptValues = useRef<Record<string, string>>({});
   const [, bump] = useState(0);
+  // Last sheet payload kept so the pre-mounted shell can re-render content
+  // without waiting for a cold mount of action rows.
+  const [sheetOpts, setSheetOpts] = useState<SheetOptions | null>(null);
+  const [alertOpts, setAlertOpts] = useState<DialogOptions | null>(null);
+  const [promptOpts, setPromptOpts] = useState<PromptOptions | null>(null);
+
+  // Separate progress so the pre-mounted sheet never slides up for alerts/prompts.
+  const sheetProgress = useSharedValue(0);
+  const cardProgress = useSharedValue(0);
+  const backdropProgress = useSharedValue(0);
+  // Full-screen travel so a tall action list never peeks while closed.
+  const sheetTravel = height;
+
+  const clearAfterClose = useCallback(() => {
+    const finished = reqRef.current;
+    reqRef.current = null;
+    setReq(null);
+    setBusy(false);
+    setAlertOpts(null);
+    setPromptOpts(null);
+    // Keep sheetOpts so the next open only swaps labels (no empty flash).
+    finished?.resolve();
+    // Drain queue on next tick of the JS loop (not rAF — lower latency).
+    queueMicrotask(() => {
+      if (!reqRef.current) presentNextRef.current();
+    });
+  }, []);
+
+  const presentNextRef = useRef<() => void>(() => {});
 
   const presentNext = useCallback(() => {
-    if (req) return;
+    if (reqRef.current) return;
     const next = queue.current.shift();
-    if (next) {
-      if (next.kind === 'prompt') {
-        const init: Record<string, string> = {};
-        next.opts.fields.forEach((f) => {
-          init[f.key] = f.initial ?? '';
-        });
-        promptValues.current = init;
-      }
-      setReq(next);
+    if (!next) return;
+
+    reqRef.current = next;
+    if (next.kind === 'prompt') {
+      const init: Record<string, string> = {};
+      next.opts.fields.forEach((f) => {
+        init[f.key] = f.initial ?? '';
+      });
+      promptValues.current = init;
+      setPromptOpts(next.opts);
+      setAlertOpts(null);
+    } else if (next.kind === 'sheet') {
+      // Stage content before animation so first paint already has the right rows.
+      setSheetOpts(next.opts);
+      setAlertOpts(null);
+      setPromptOpts(null);
+    } else {
+      setAlertOpts(next.opts);
+      setPromptOpts(null);
     }
-  }, [req]);
+
+    setReq(next);
+    backdropProgress.value = withTiming(1, { duration: OPEN_MS, easing: OPEN_EASING });
+    if (next.kind === 'sheet') {
+      sheetProgress.value = withTiming(1, { duration: OPEN_MS, easing: OPEN_EASING });
+      cardProgress.value = 0;
+    } else {
+      cardProgress.value = withTiming(1, { duration: OPEN_MS, easing: OPEN_EASING });
+      sheetProgress.value = 0;
+    }
+  }, [backdropProgress, sheetProgress, cardProgress]);
+
+  presentNextRef.current = presentNext;
 
   useEffect(() => {
     bindDialogHost({
       enqueue: (r) => {
         queue.current.push(r);
-        // Defer so we don't setState during another component's render.
-        requestAnimationFrame(() => presentNext());
+        // Same JS turn when idle — critical for <100 ms menu open.
+        presentNextRef.current();
       },
     });
     return () => bindDialogHost(null);
-  }, [presentNext]);
-
-  useEffect(() => {
-    if (!req) presentNext();
-  }, [req, presentNext]);
+  }, []);
 
   const dismiss = useCallback(() => {
-    const current = req;
-    setReq(null);
-    setBusy(false);
-    current?.resolve();
-    requestAnimationFrame(() => presentNext());
-  }, [req, presentNext]);
+    if (!reqRef.current) return;
+    const kind = reqRef.current.kind;
+    backdropProgress.value = withTiming(0, { duration: CLOSE_MS, easing: CLOSE_EASING });
+    if (kind === 'sheet') {
+      sheetProgress.value = withTiming(0, { duration: CLOSE_MS, easing: CLOSE_EASING }, (finished) => {
+        if (finished) runOnJS(clearAfterClose)();
+      });
+    } else {
+      cardProgress.value = withTiming(0, { duration: CLOSE_MS, easing: CLOSE_EASING }, (finished) => {
+        if (finished) runOnJS(clearAfterClose)();
+      });
+    }
+  }, [backdropProgress, sheetProgress, cardProgress, clearAfterClose]);
+
+  // Android hardware back closes the active dialog/sheet.
+  useEffect(() => {
+    if (!req) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      dismiss();
+      return true;
+    });
+    return () => sub.remove();
+  }, [req, dismiss]);
 
   const runButton = async (btn?: DialogButton | { onPress?: () => void | Promise<void> }) => {
     if (busy) return;
@@ -100,219 +175,295 @@ export default function DialogHost() {
     }
   };
 
-  if (!req) return null;
+  const sheetStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: (1 - sheetProgress.value) * sheetTravel }],
+    // Fully hide when closed so it never intercepts layout/compositing cost on lists.
+    opacity: sheetProgress.value === 0 ? 0 : 1,
+  }));
 
-  const backdrop = (
-    <Pressable
-      style={styles.backdrop}
-      onPress={() => {
-        if (req.kind === 'alert' && req.opts.dismissible !== false) {
-          const cancel = req.opts.buttons?.find(
-            (b) => b.style === 'cancel' || b.role === 'cancel',
-          );
-          void runButton(cancel ?? { onPress: undefined });
-        } else if (req.kind === 'sheet') {
-          dismiss();
-        } else if (req.kind === 'prompt') {
-          req.opts.onCancel?.();
-          dismiss();
-        }
-      }}
-    />
-  );
+  const backdropStyle = useAnimatedStyle(() => ({
+    opacity: backdropProgress.value * (colors.isLight ? 0.45 : 0.62),
+  }));
 
-  if (req.kind === 'sheet') {
-    return (
-      <Modal visible transparent animationType="none" statusBarTranslucent onRequestClose={dismiss}>
-        <View style={styles.root}>
-          <Animated.View entering={FadeIn.duration(180)} exiting={FadeOut.duration(140)} style={StyleSheet.absoluteFill}>
-            {backdrop}
-          </Animated.View>
-          <Animated.View
-            entering={SlideInDown.springify().damping(18).stiffness(180)}
-            exiting={SlideOutDown.duration(180)}
-            style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 16) + 8 }]}
-          >
-            <View style={styles.handle} />
-            {!!req.opts.title && <Text style={styles.sheetTitle}>{req.opts.title}</Text>}
-            {!!req.opts.message && <Text style={styles.sheetMsg}>{req.opts.message}</Text>}
-            <View style={styles.sheetActions}>
-              {req.opts.actions.map((a, i) => {
-                const role = a.style ?? 'default';
-                const icon = ioniconFor(a.icon);
-                const color =
-                  role === 'destructive'
-                    ? colors.danger
-                    : role === 'primary'
-                      ? colors.primary
-                      : colors.text;
-                return (
-                  <Pressable
-                    key={`${a.text}-${i}`}
-                    style={({ pressed }) => [styles.sheetRow, pressed && styles.pressed]}
-                    onPress={() => void runButton(a)}
-                    disabled={busy}
+  const cardStyle = useAnimatedStyle(() => ({
+    opacity: cardProgress.value,
+    transform: [{ scale: 0.94 + cardProgress.value * 0.06 }],
+  }));
+
+  const open = !!req;
+  const kind = req?.kind ?? null;
+
+  // Always-mounted host: pointer-events off when idle so the list stays fully interactive.
+  return (
+    <View
+      style={styles.host}
+      pointerEvents={open ? 'auto' : 'none'}
+      collapsable={false}
+    >
+      <Animated.View
+        style={[styles.backdropFill, backdropStyle]}
+        pointerEvents={open ? 'auto' : 'none'}
+      >
+        <Pressable
+          style={StyleSheet.absoluteFill}
+          onPress={() => {
+            if (!req) return;
+            if (req.kind === 'alert' && req.opts.dismissible !== false) {
+              const cancel = req.opts.buttons?.find(
+                (b) => b.style === 'cancel' || b.role === 'cancel',
+              );
+              void runButton(cancel ?? { onPress: undefined });
+            } else if (req.kind === 'sheet') {
+              dismiss();
+            } else if (req.kind === 'prompt') {
+              req.opts.onCancel?.();
+              dismiss();
+            }
+          }}
+        />
+      </Animated.View>
+
+      {/* ── Pre-mounted action sheet (chat long-press path) ───────────────── */}
+      <Animated.View
+        style={[
+          styles.sheet,
+          { paddingBottom: Math.max(insets.bottom, 16) + 8 },
+          sheetStyle,
+        ]}
+        pointerEvents={kind === 'sheet' && open ? 'auto' : 'none'}
+      >
+        <View style={styles.handle} />
+        {!!sheetOpts?.title && <Text style={styles.sheetTitle}>{sheetOpts.title}</Text>}
+        {!!sheetOpts?.message && <Text style={styles.sheetMsg}>{sheetOpts.message}</Text>}
+        <View style={styles.sheetActions}>
+          {(sheetOpts?.actions ?? []).map((a, i) => {
+            const role = a.style ?? 'default';
+            const icon = ioniconFor(a.icon);
+            const color =
+              role === 'destructive'
+                ? colors.danger
+                : role === 'primary'
+                  ? colors.primary
+                  : colors.text;
+            return (
+              <Pressable
+                key={`${a.text}-${i}`}
+                style={({ pressed }) => [styles.sheetRow, pressed && styles.pressed]}
+                onPress={() => void runButton(a)}
+                disabled={busy || kind !== 'sheet'}
+              >
+                {icon && (
+                  <View
+                    style={[
+                      styles.sheetIconWrap,
+                      role === 'destructive' && { backgroundColor: colors.danger + '22' },
+                    ]}
                   >
-                    {icon && (
-                      <View style={[styles.sheetIconWrap, role === 'destructive' && { backgroundColor: colors.danger + '22' }]}>
-                        <Ionicons name={icon} size={20} color={color} />
-                      </View>
-                    )}
-                    <View style={{ flex: 1 }}>
-                      <Text style={[styles.sheetActionText, { color }]}>{a.text}</Text>
-                      {!!a.subtitle && <Text style={styles.sheetSub}>{a.subtitle}</Text>}
-                    </View>
-                    <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
-                  </Pressable>
-                );
-              })}
-            </View>
-            <Pressable
-              style={({ pressed }) => [styles.sheetCancel, pressed && styles.pressed]}
-              onPress={dismiss}
-            >
-              <Text style={styles.sheetCancelText}>{req.opts.cancelText ?? 'Cancel'}</Text>
-            </Pressable>
-          </Animated.View>
+                    <Ionicons name={icon} size={20} color={color} />
+                  </View>
+                )}
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.sheetActionText, { color }]}>{a.text}</Text>
+                  {!!a.subtitle && <Text style={styles.sheetSub}>{a.subtitle}</Text>}
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
+              </Pressable>
+            );
+          })}
         </View>
-      </Modal>
-    );
-  }
-
-  if (req.kind === 'prompt') {
-    const opts = req.opts;
-    const iconName = ioniconFor(opts.icon ?? inferIcon(opts.title, opts.tone));
-    return (
-      <Modal visible transparent animationType="none" statusBarTranslucent onRequestClose={() => { opts.onCancel?.(); dismiss(); }}>
-        <KeyboardAvoidingView
-          style={styles.root}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        <Pressable
+          style={({ pressed }) => [styles.sheetCancel, pressed && styles.pressed]}
+          onPress={dismiss}
+          disabled={kind !== 'sheet'}
         >
-          <Animated.View entering={FadeIn.duration(180)} style={StyleSheet.absoluteFill}>
-            {backdrop}
-          </Animated.View>
-          <Animated.View
-            entering={ZoomIn.duration(220).easing(Easing.out(Easing.cubic))}
-            exiting={ZoomOut.duration(140)}
-            style={styles.card}
-          >
-            <DialogHeader
+          <Text style={styles.sheetCancelText}>{sheetOpts?.cancelText ?? 'Cancel'}</Text>
+        </Pressable>
+      </Animated.View>
+
+      {/* ── Alert / confirm card ──────────────────────────────────────────── */}
+      {kind === 'alert' && alertOpts && (
+        <View style={styles.centerWrap} pointerEvents="box-none">
+          <Animated.View style={[styles.card, cardStyle]}>
+            <AlertBody
               styles={styles}
               colors={colors}
-              title={opts.title}
-              message={opts.message}
-              tone={opts.tone}
-              iconName={iconName}
+              opts={alertOpts}
+              busy={busy}
+              onPress={(b) => void runButton(b)}
             />
-            {opts.fields.map((f) => (
-              <TextInput
-                key={f.key}
-                style={[styles.input, f.multiline && styles.inputMulti]}
-                placeholder={f.placeholder}
-                placeholderTextColor={colors.textFaint}
-                defaultValue={f.initial ?? ''}
-                secureTextEntry={f.secure}
-                keyboardType={f.keyboardType}
-                multiline={f.multiline}
-                onChangeText={(t) => {
-                  promptValues.current[f.key] = t;
-                  bump((n) => n + 1);
-                }}
-              />
-            ))}
-            <View style={styles.btnCol}>
-              <DialogBtn
-                styles={styles}
-                colors={colors}
-                label={opts.submitLabel ?? 'Save'}
-                role="primary"
-                busy={busy}
-                onPress={async () => {
-                  setBusy(true);
-                  try {
-                    await opts.onSubmit({ ...promptValues.current });
-                  } finally {
-                    dismiss();
-                  }
-                }}
-              />
-              <DialogBtn
-                styles={styles}
-                colors={colors}
-                label={opts.cancelLabel ?? 'Cancel'}
-                role="cancel"
-                onPress={() => {
-                  opts.onCancel?.();
+          </Animated.View>
+        </View>
+      )}
+
+      {/* ── Prompt card ───────────────────────────────────────────────────── */}
+      {kind === 'prompt' && promptOpts && (
+        <KeyboardAvoidingView
+          style={styles.centerWrap}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          pointerEvents="box-none"
+        >
+          <Animated.View style={[styles.card, cardStyle]}>
+            <PromptBody
+              styles={styles}
+              colors={colors}
+              opts={promptOpts}
+              busy={busy}
+              promptValues={promptValues}
+              bump={() => bump((n) => n + 1)}
+              onSubmit={async () => {
+                setBusy(true);
+                try {
+                  await promptOpts.onSubmit({ ...promptValues.current });
+                } finally {
                   dismiss();
-                }}
-              />
-            </View>
+                }
+              }}
+              onCancel={() => {
+                promptOpts.onCancel?.();
+                dismiss();
+              }}
+            />
           </Animated.View>
         </KeyboardAvoidingView>
-      </Modal>
-    );
-  }
+      )}
+    </View>
+  );
+}
 
-  // alert / confirm
-  const opts = req.opts;
+function AlertBody({
+  styles,
+  colors,
+  opts,
+  busy,
+  onPress,
+}: {
+  styles: ReturnType<typeof makeStyles>;
+  colors: Palette;
+  opts: DialogOptions;
+  busy: boolean;
+  onPress: (b: DialogButton) => void;
+}) {
   const buttons =
     opts.buttons && opts.buttons.length
       ? opts.buttons
       : [{ text: 'OK', style: 'primary' as const }];
-  const tone = opts.tone ?? (buttons.some((b) => b.style === 'destructive' || b.role === 'destructive') ? 'danger' : 'default');
+  const tone =
+    opts.tone ??
+    (buttons.some((b) => b.style === 'destructive' || b.role === 'destructive')
+      ? 'danger'
+      : 'default');
   const iconName = ioniconFor(opts.icon ?? inferIcon(opts.title, tone));
 
-  // Order: primary/destructive first (Telegram-style stacked), cancel last
   const ordered = [...buttons].sort((a, b) => {
     const rank = (x: DialogButton) => {
       const r = x.role ?? x.style ?? 'default';
       if (r === 'destructive' || r === 'primary') return 0;
       if (r === 'default') return 1;
-      return 2; // cancel
+      return 2;
     };
     return rank(a) - rank(b);
   });
 
   return (
-    <Modal visible transparent animationType="none" statusBarTranslucent onRequestClose={() => void runButton(buttons.find((b) => b.style === 'cancel' || b.role === 'cancel'))}>
-      <View style={styles.root}>
-        <Animated.View entering={FadeIn.duration(180)} exiting={FadeOut.duration(120)} style={StyleSheet.absoluteFill}>
-          {backdrop}
-        </Animated.View>
-        <Animated.View
-          entering={ZoomIn.duration(240).easing(Easing.out(Easing.cubic))}
-          exiting={ZoomOut.duration(140)}
-          style={styles.card}
-        >
-          <DialogHeader
+    <>
+      <DialogHeader
+        styles={styles}
+        colors={colors}
+        title={opts.title}
+        message={opts.message}
+        tone={tone}
+        iconName={iconName}
+      />
+      <View style={styles.btnCol}>
+        {ordered.map((b, i) => (
+          <DialogBtn
+            key={`${b.text}-${i}`}
             styles={styles}
             colors={colors}
-            title={opts.title}
-            message={opts.message}
-            tone={tone}
-            iconName={iconName}
+            label={b.text}
+            role={
+              (b.role ??
+                b.style ??
+                (i === 0 && ordered.length === 1 ? 'primary' : 'default')) as any
+            }
+            busy={busy}
+            onPress={() => onPress(b)}
           />
-          <View style={styles.btnCol}>
-            {ordered.map((b, i) => (
-              <DialogBtn
-                key={`${b.text}-${i}`}
-                styles={styles}
-                colors={colors}
-                label={b.text}
-                role={(b.role ?? b.style ?? (i === 0 && ordered.length === 1 ? 'primary' : 'default')) as any}
-                busy={busy}
-                onPress={() => void runButton(b)}
-              />
-            ))}
-          </View>
-          {busy && (
-            <View style={styles.busyOverlay}>
-              <ActivityIndicator color={colors.primary} />
-            </View>
-          )}
-        </Animated.View>
+        ))}
       </View>
-    </Modal>
+      {busy && (
+        <View style={styles.busyOverlay}>
+          <ActivityIndicator color={colors.primary} />
+        </View>
+      )}
+    </>
+  );
+}
+
+function PromptBody({
+  styles,
+  colors,
+  opts,
+  busy,
+  promptValues,
+  bump,
+  onSubmit,
+  onCancel,
+}: {
+  styles: ReturnType<typeof makeStyles>;
+  colors: Palette;
+  opts: PromptOptions;
+  busy: boolean;
+  promptValues: React.MutableRefObject<Record<string, string>>;
+  bump: () => void;
+  onSubmit: () => void;
+  onCancel: () => void;
+}) {
+  const iconName = ioniconFor(opts.icon ?? inferIcon(opts.title, opts.tone));
+  return (
+    <>
+      <DialogHeader
+        styles={styles}
+        colors={colors}
+        title={opts.title}
+        message={opts.message}
+        tone={opts.tone}
+        iconName={iconName}
+      />
+      {opts.fields.map((f) => (
+        <TextInput
+          key={f.key}
+          style={[styles.input, f.multiline && styles.inputMulti]}
+          placeholder={f.placeholder}
+          placeholderTextColor={colors.textFaint}
+          defaultValue={f.initial ?? ''}
+          secureTextEntry={f.secure}
+          keyboardType={f.keyboardType}
+          multiline={f.multiline}
+          onChangeText={(t) => {
+            promptValues.current[f.key] = t;
+            bump();
+          }}
+        />
+      ))}
+      <View style={styles.btnCol}>
+        <DialogBtn
+          styles={styles}
+          colors={colors}
+          label={opts.submitLabel ?? 'Save'}
+          role="primary"
+          busy={busy}
+          onPress={onSubmit}
+        />
+        <DialogBtn
+          styles={styles}
+          colors={colors}
+          label={opts.cancelLabel ?? 'Cancel'}
+          role="cancel"
+          onPress={onCancel}
+        />
+      </View>
+    </>
   );
 }
 
@@ -408,15 +559,20 @@ function DialogBtn({
 
 const makeStyles = (colors: Palette, width: number) =>
   StyleSheet.create({
-    root: {
-      flex: 1,
+    host: {
+      ...StyleSheet.absoluteFillObject,
+      zIndex: 100000,
+      elevation: 100000,
+    },
+    backdropFill: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: colors.isLight ? 'rgb(15, 23, 28)' : 'rgb(0, 0, 0)',
+    },
+    centerWrap: {
+      ...StyleSheet.absoluteFillObject,
       justifyContent: 'center',
       alignItems: 'center',
       paddingHorizontal: spacing(5),
-    },
-    backdrop: {
-      ...StyleSheet.absoluteFillObject,
-      backgroundColor: colors.isLight ? 'rgba(15, 23, 28, 0.45)' : 'rgba(0, 0, 0, 0.62)',
     },
     card: {
       width: Math.min(width - 40, 360),
@@ -425,7 +581,6 @@ const makeStyles = (colors: Palette, width: number) =>
       paddingTop: spacing(6),
       paddingBottom: spacing(4),
       paddingHorizontal: spacing(4),
-      // Premium elevation
       shadowColor: '#000',
       shadowOpacity: colors.isLight ? 0.18 : 0.45,
       shadowRadius: 28,
@@ -496,7 +651,6 @@ const makeStyles = (colors: Palette, width: number) =>
       alignItems: 'center',
       justifyContent: 'center',
     },
-    // Sheet
     sheet: {
       position: 'absolute',
       left: 0,

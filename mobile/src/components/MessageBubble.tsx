@@ -18,7 +18,7 @@ export type TickStatus = 'sending' | 'sent' | 'delivered' | 'read';
 // its own onLongPress/delayLongPress. Taps (open image, jump to reply, toggle
 // select) stay on these Pressables; the native long-press arbiter sits above.
 
-// Videos are stored as type 'file'; detect them by extension.
+// Legacy videos may still be type 'file'; detect by extension. New sends use type='video'.
 const VIDEO_RE = /\.(mp4|webm|mov|m4v|ogv|ogg)(\?|#|$)/i;
 export const isVideoUrl = (url?: string | null) => !!url && VIDEO_RE.test(url);
 
@@ -48,6 +48,8 @@ interface Props {
   /** Continuation of a run from the same sender — hides the tail + sender name. */
   grouped?: boolean;
   onOpenImage?: (url: string) => void;
+  /** Open a document attachment (download + share / OS open). */
+  onOpenDocument?: (message: Message) => void;
   /** Tapping an existing reaction pill toggles the current user's reaction for
    *  that emoji (WhatsApp/web parity). */
   onReactionPress?: (emoji: string) => void;
@@ -107,6 +109,7 @@ function MessageBubble({
   selected,
   grouped: groupedRun,
   onOpenImage,
+  onOpenDocument,
   onReactionPress,
   highlight = '',
   activeMatch = false,
@@ -225,12 +228,20 @@ function MessageBubble({
         )}
 
         {message.type === 'file' && message.media_url && !isVideoUrl(message.media_url) && (
-          <View style={styles.file}>
+          <Pressable
+            style={styles.file}
+            onPress={() =>
+              selectionMode
+                ? onPress?.()
+                : onOpenDocument?.(message) ?? onOpenImage?.(message.media_url!)
+            }
+          >
             <Ionicons name="document-outline" size={28} color={tint} />
             <Text style={[styles.fileName, { color: tint }]} numberOfLines={1}>
               {message.content || 'Attachment'}
             </Text>
-          </View>
+            <Ionicons name="download-outline" size={18} color={tint} style={{ marginLeft: 6 }} />
+          </Pressable>
         )}
 
         {message.type === 'text' && !!message.content && (

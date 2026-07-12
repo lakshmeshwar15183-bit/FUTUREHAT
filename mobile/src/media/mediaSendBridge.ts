@@ -10,7 +10,8 @@ import type { MediaMeta } from '../lib/shared';
 export interface OutgoingMedia {
   uri: string;
   fileName: string;
-  type: 'image' | 'file';   // 'file' carries video (schema has no 'video' type)
+  /** First-class types (migration 0031). 'file' is documents only — never video. */
+  type: 'image' | 'video' | 'file' | 'audio';
   caption?: string;
   mediaMeta?: MediaMeta;
 }

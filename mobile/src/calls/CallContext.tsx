@@ -385,7 +385,9 @@ function ActiveCallView({
     });
     sessionRef.current = session;
     session.start().catch((e) => {
-      console.log('[call] start() FAILED:', e?.message ?? String(e));
+      if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        console.warn('[call] start() FAILED:', e?.message ?? String(e));
+      }
       session.end(false);
     });
 

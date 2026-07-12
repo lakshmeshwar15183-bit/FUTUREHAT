@@ -59,21 +59,37 @@ export interface DeletionRequest {
 export async function requestAccountDeletion(client: SupabaseClient, reason?: string) {
   const user = await getCurrentUser(client);
   if (!user) return { request: null, error: new Error('not authenticated') };
+  // Prefer SECURITY DEFINER RPC (resets 30-day purge window). Fallback to table
+  // upsert if migration 0044 is not applied yet.
+  const { data: rpcData, error: rpcErr } = await client.rpc('request_account_deletion', {
+    p_reason: reason ?? null,
+  });
+  if (!rpcErr && rpcData) {
+    return { request: rpcData as DeletionRequest, error: null };
+  }
   const { data, error } = await client
     .from('account_deletion_requests')
-    .upsert({ user_id: user.id, reason: reason ?? null, status: 'pending', requested_at: new Date().toISOString() })
+    .upsert({
+      user_id: user.id,
+      reason: reason ?? null,
+      status: 'pending',
+      requested_at: new Date().toISOString(),
+      purge_after: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+    })
     .select()
     .single();
-  return { request: data as DeletionRequest | null, error };
+  return { request: data as DeletionRequest | null, error: error ?? rpcErr };
 }
 export async function cancelAccountDeletion(client: SupabaseClient) {
   const user = await getCurrentUser(client);
   if (!user) return { error: new Error('not authenticated') };
+  const { error: rpcErr } = await client.rpc('cancel_account_deletion');
+  if (!rpcErr) return { error: null };
   const { error } = await client
     .from('account_deletion_requests')
     .update({ status: 'cancelled' })
     .eq('user_id', user.id);
-  return { error };
+  return { error: error ?? rpcErr };
 }
 export async function getDeletionRequest(client: SupabaseClient): Promise<DeletionRequest | null> {
   const { data } = await client

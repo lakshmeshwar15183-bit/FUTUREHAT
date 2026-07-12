@@ -363,7 +363,7 @@ export interface NotificationSettings {
   groupMute: boolean;
 }
 
-export type PushKind = 'message' | 'group' | 'call' | 'missed_call' | 'status' | 'system';
+export type PushKind = 'message' | 'group' | 'call' | 'missed_call' | 'status' | 'system' | 'mention';
 
 // ── Chat Lock (0027) ────────────────────────────────────────────────────────────
 // Per-chat lock secured entirely by the DEVICE's own authentication (Android

@@ -1,6 +1,11 @@
 // Lumixo mobile — Chats tab. Loads getMyConversations on focus, shows
 // title/avatar/last-message/unread, and routes into a thread.
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+//
+// Long-press performance contract (WhatsApp parity):
+//  • openChatMenu never awaits network / Supabase / list rebuilds.
+//  • Haptics + showSheet fire on the same JS turn as the gesture.
+//  • ChatRow is React.memo'd so opening the menu does not re-render the list.
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BackHandler,
   FlatList,
@@ -95,6 +100,186 @@ const ALL_CHIP_LABELS: Record<ChatFilter, string> = {
   all: 'All', unread: 'Unread', groups: 'Groups', favorites: 'Favourites',
   pinned: 'Pinned', streaks: 'Streaks', locked: 'Locked',
 };
+
+// Pure helpers — kept outside the screen so row renders never capture unstable closures.
+function lastPreviewBody(c: ConversationSummary): string {
+  const m = c.lastMessage;
+  if (!m) return 'Tap to start chatting';
+  if (m.is_deleted) return 'This message was deleted';
+  if (m.type === 'system') return m.content ?? '';
+  if (m.type === 'image') return /\.gif(\?|#|$)/i.test(m.media_url ?? '') ? '🎞️ GIF' : '📷 Photo';
+  if (m.type === 'audio') return '🎤 Voice message';
+  if (m.type === 'video' || isVideoMessage(m)) return '🎥 Video';
+  if (m.type === 'file') return m.content?.trim() ? `📄 ${m.content}` : '📄 Document';
+  if (m.content?.startsWith('📊')) return m.content;
+  return m.content ?? '';
+}
+
+function lastPreviewMine(c: ConversationSummary, uid: string | null): boolean {
+  return (
+    !!uid &&
+    !!c.lastMessage &&
+    !c.lastMessage.is_deleted &&
+    c.lastMessage.sender_id === uid &&
+    c.lastMessage.type !== 'system'
+  );
+}
+
+function previewLine(item: ConversationSummary, uid: string | null, isGroup: boolean): string {
+  const body = lastPreviewBody(item);
+  if (lastPreviewMine(item, uid)) return body;
+  if (!item.lastMessage || item.lastMessage.is_deleted || item.lastMessage.type === 'system') {
+    return body;
+  }
+  if (isGroup) {
+    const name = item.participants.find((p) => p.id === item.lastMessage?.sender_id)?.display_name;
+    return name ? `${name.split(' ')[0]}: ${body}` : body;
+  }
+  return body;
+}
+
+type ChatRowStyles = ReturnType<typeof makeStyles>;
+
+type ChatRowProps = {
+  item: ConversationSummary;
+  uid: string | null;
+  selected: boolean;
+  selectionGen: number;
+  isFav: boolean;
+  isMuted: boolean;
+  isPinned: boolean;
+  peerOnline: boolean;
+  peerPremium: boolean;
+  locked: boolean;
+  streakEmoji: string;
+  streakScore: number | string;
+  colors: Palette;
+  styles: ChatRowStyles;
+  selectionMode: boolean;
+  onPressChat: (item: ConversationSummary) => void;
+  onLongPressChat: (id: string) => void;
+  onToggleSelect: (id: string) => void;
+};
+
+/** Memoized conversation row — long-press must not re-render the whole list. */
+const ChatRow = React.memo(function ChatRow({
+  item,
+  uid,
+  selected,
+  selectionGen,
+  isFav,
+  isMuted,
+  isPinned,
+  peerOnline,
+  peerPremium,
+  locked,
+  streakEmoji,
+  streakScore,
+  colors,
+  styles,
+  selectionMode,
+  onPressChat,
+  onLongPressChat,
+  onToggleSelect,
+}: ChatRowProps) {
+  const id = item.conversation.id;
+  const isGroup = item.conversation.type === 'group';
+  const disappearing = (item.conversation.disappear_seconds ?? 0) > 0;
+  const mine = lastPreviewMine(item, uid);
+
+  return (
+    <Pressable
+      style={({ pressed }) => [styles.row, selected && styles.rowSelected, pressed && styles.rowPressed]}
+      onPress={() => (selectionMode ? onToggleSelect(id) : onPressChat(item))}
+      onLongPress={() => (selectionMode ? onToggleSelect(id) : onLongPressChat(id))}
+      delayLongPress={280}
+    >
+      <View>
+        <Avatar uri={item.avatarUrl} name={item.title} size={48} />
+        {peerOnline && !selected && <View style={styles.onlineDot} />}
+        {disappearing && !selected && (
+          <View style={styles.disappearBadge}>
+            <Ionicons name="timer-outline" size={11} color="#fff" />
+          </View>
+        )}
+        {selected ? (
+          <View style={styles.checkOverlay} key={`sel-on-${id}-${selectionGen}`}>
+            <Ionicons name="checkmark" size={16} color="#fff" />
+          </View>
+        ) : null}
+      </View>
+      <View style={styles.rowBody}>
+        <View style={styles.rowTop}>
+          <View style={styles.titleWrap}>
+            {isGroup && (
+              <Ionicons name="people" size={14} color={colors.textMuted} style={{ marginRight: 4 }} />
+            )}
+            <Text
+              style={[styles.title, item.unreadCount > 0 && styles.titleUnread]}
+              numberOfLines={1}
+            >
+              {item.title}
+            </Text>
+            {isFav && (
+              <Ionicons name="star" size={13} color="#f5b800" style={{ marginLeft: 4 }} />
+            )}
+            {peerPremium && !isFav && (
+              <Ionicons name="sparkles" size={12} color={colors.primary} style={{ marginLeft: 4 }} />
+            )}
+          </View>
+          <Text style={[styles.time, item.unreadCount > 0 && styles.timeUnread]}>
+            {formatListTimestamp(item.lastMessage?.created_at)}
+          </Text>
+        </View>
+        <View style={styles.rowBottom}>
+          <View style={styles.previewWrap}>
+            {mine && (
+              <Ionicons
+                name="checkmark-done"
+                size={16}
+                color={colors.textFaint}
+                style={styles.previewTick}
+              />
+            )}
+            <Text
+              style={[styles.preview, item.unreadCount > 0 && styles.previewUnread]}
+              numberOfLines={1}
+            >
+              {mine ? lastPreviewBody(item) : previewLine(item, uid, isGroup)}
+            </Text>
+          </View>
+          <View style={styles.rowIcons}>
+            {streakEmoji !== '' && (
+              <Text
+                style={styles.streakEmoji}
+                allowFontScaling={false}
+                accessibilityLabel={`Streak ${streakScore}`}
+              >
+                {streakEmoji}
+              </Text>
+            )}
+            {locked && (
+              <Ionicons name="lock-closed" size={13} color={colors.textFaint} style={{ marginLeft: spacing(1) }} />
+            )}
+            {isMuted && (
+              <Ionicons name="notifications-off" size={14} color={colors.textFaint} style={{ marginLeft: spacing(1) }} />
+            )}
+            {isPinned && (
+              <Ionicons name="pin" size={14} color={colors.textFaint} style={{ marginLeft: spacing(1) }} />
+            )}
+            {item.unreadCount > 0 && (
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>
+                  {item.unreadCount > 99 ? '99+' : item.unreadCount}
+                </Text>
+              </View>
+            )}
+          </View>
+        </View>
+      </View>
+    </Pressable>
+  );
+});
 
 export default function ConversationsScreen() {
   const navigation = useNavigation<Nav>();
@@ -420,25 +605,6 @@ export default function ConversationsScreen() {
     return () => sub.unsubscribe();
   }, [uid]);
 
-  const lastPreviewBody = (c: ConversationSummary): string => {
-    const m = c.lastMessage;
-    if (!m) return 'Tap to start chatting';
-    if (m.is_deleted) return 'This message was deleted';
-    // System notices (disappearing-messages on/off) show verbatim, no "You:" prefix.
-    if (m.type === 'system') return m.content ?? '';
-    if (m.type === 'image') return /\.gif(\?|#|$)/i.test(m.media_url ?? '') ? '🎞️ GIF' : '📷 Photo';
-    if (m.type === 'audio') return '🎤 Voice message';
-    if (m.type === 'video' || isVideoMessage(m)) return '🎥 Video';
-    if (m.type === 'file') return m.content?.trim() ? `📄 ${m.content}` : '📄 Document';
-    // Polls ship as text with a distinctive prefix from the poll composer.
-    if (m.content?.startsWith('📊')) return m.content;
-    return m.content ?? '';
-  };
-
-  const lastPreviewMine = (c: ConversationSummary): boolean =>
-    !!uid && !!c.lastMessage && !c.lastMessage.is_deleted && c.lastMessage.sender_id === uid
-    && c.lastMessage.type !== 'system';
-
   // ── Multi-select mode (WhatsApp-style) ──────────────────────────────────────
   // Selection is a set of conversation ids. Always return a NEW Set instance so
   // React + FlatList (extraData) re-render every affected row immediately — this
@@ -520,8 +686,8 @@ export default function ConversationsScreen() {
     ids.forEach((id) => queueAction(remove ? 'unfavorite' : 'favorite', { conversationId: id }));
   }
 
-  /** Single-chat pin/unpin (long-press menu). */
-  function togglePinOne(id: string) {
+  /** Single-chat pin/unpin (long-press menu). Runs only after the sheet is already open. */
+  const togglePinOne = useCallback((id: string) => {
     const was = pinnedIds.has(id);
     if (!was && !isPremium && pinnedOrder.length >= FREE_LIMITS.pinnedChats) {
       Alert.alert(
@@ -533,32 +699,58 @@ export default function ConversationsScreen() {
     }
     setPinnedFlags([id], !was);
     queueAction(was ? 'unpin' : 'pin', { conversationId: id });
-  }
+  }, [pinnedIds, isPremium, pinnedOrder.length, navigation]);
 
-  function toggleFavoriteOne(id: string) {
+  const toggleFavoriteOne = useCallback((id: string) => {
     const was = favIds.has(id);
     setFlagSet(setFavIds, FLAG_KEY.favorites, [id], !was);
     queueAction(was ? 'unfavorite' : 'favorite', { conversationId: id });
-  }
+  }, [favIds]);
 
-  /** Long-press opens a WhatsApp-style action sheet (pin / favourites / select…). */
-  function openChatMenu(id: string) {
-    Haptics.selectionAsync().catch(() => {});
-    const isPinned = pinnedIds.has(id);
-    const isFav = favIds.has(id);
-    const isMuted = mutedIds.has(id);
+  // Live menu metadata via ref so openChatMenu stays identity-stable and never
+  // re-renders every chat row when pins/favs/mutes change.
+  const menuMetaRef = useRef({
+    pinnedIds,
+    favIds,
+    mutedIds,
+    convById,
+    togglePinOne,
+    toggleFavoriteOne,
+    enterSelection,
+    deleteOneChat: (_id: string) => {},
+  });
+  menuMetaRef.current.pinnedIds = pinnedIds;
+  menuMetaRef.current.favIds = favIds;
+  menuMetaRef.current.mutedIds = mutedIds;
+  menuMetaRef.current.convById = convById;
+  menuMetaRef.current.togglePinOne = togglePinOne;
+  menuMetaRef.current.toggleFavoriteOne = toggleFavoriteOne;
+  menuMetaRef.current.enterSelection = enterSelection;
+
+  /**
+   * Long-press → haptic + sheet. Must be synchronous, zero network, zero list work.
+   * showSheet stages content on the pre-mounted host and animates in the same frame.
+   */
+  const openChatMenu = useCallback((id: string) => {
+    // Fire haptic first (native, non-blocking) then open the pre-mounted sheet.
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    const m = menuMetaRef.current;
+    const isPinned = m.pinnedIds.has(id);
+    const isFav = m.favIds.has(id);
+    const isMuted = m.mutedIds.has(id);
+    const title = m.convById.get(id)?.title ?? 'Chat';
     showSheet({
-      title: convById.get(id)?.title ?? 'Chat',
+      title,
       actions: [
         {
           text: isPinned ? 'Unpin chat' : 'Pin chat',
           icon: 'info',
-          onPress: () => togglePinOne(id),
+          onPress: () => m.togglePinOne(id),
         },
         {
           text: isFav ? 'Remove from favourites' : 'Add to favourites',
           icon: 'success',
-          onPress: () => toggleFavoriteOne(id),
+          onPress: () => m.toggleFavoriteOne(id),
         },
         {
           text: isMuted ? 'Unmute' : 'Mute',
@@ -579,17 +771,17 @@ export default function ConversationsScreen() {
         {
           text: 'Select',
           icon: 'check',
-          onPress: () => enterSelection(id),
+          onPress: () => m.enterSelection(id),
         },
         {
           text: 'Delete chat',
           icon: 'trash',
           style: 'destructive',
-          onPress: () => deleteOneChat(id),
+          onPress: () => m.deleteOneChat(id),
         },
       ],
     });
-  }
+  }, []);
 
   function deleteOneChat(id: string) {
     const conv = convById.get(id);
@@ -625,6 +817,7 @@ export default function ConversationsScreen() {
       buttons,
     );
   }
+  menuMetaRef.current.deleteOneChat = deleteOneChat;
 
   async function batchMute() {
     const ids = selConvs.map((c) => c.conversation.id);
@@ -802,137 +995,69 @@ export default function ConversationsScreen() {
   // Stable separator so the list doesn't rebuild every separator each render.
   const Separator = useCallback(() => <View style={styles.sep} />, [styles]);
 
-  const renderItem = ({ item }: { item: ConversationSummary }) => {
-    const peer = peerOf(item);
-    const peerOnline = !!peer && onlineIds.has(peer.id);
-    const peerPremium = !!peer && premiumIds.has(peer.id);
-    const isGroup = item.conversation.type === 'group';
-    const id = item.conversation.id;
-    // Read selection from the live Set — selectionGen in FlatList.extraData forces
-    // this callback to re-run when ticks change so the checkmark never goes stale.
-    const selected = selectedIds.has(id);
-    const isFav = favIds.has(id);
-    const disappearing = (item.conversation.disappear_seconds ?? 0) > 0;
-    const locked = chatLock.isLocked(id);
-    const streakEmoji = !isGroup ? (streaks[id]?.tier ?? '') : '';
-    return (
-    <Pressable
-      style={({ pressed }) => [styles.row, selected && styles.rowSelected, pressed && styles.rowPressed]}
-      onPress={() => {
-        if (selectionMode) {
-          toggleSelect(id);
-          return;
-        }
-        // Opening a chat marks it read optimistically so Unread filter updates instantly.
-        if (item.unreadCount > 0) {
-          setItems((prev) =>
-            prev.map((c) => (c.conversation.id === id ? { ...c, unreadCount: 0 } : c)),
-          );
-          queueAction('markRead', { conversationId: id });
-        }
-        navigation.navigate('Chat', { conversationId: id, title: item.title });
-      }}
-      onLongPress={() => (selectionMode ? toggleSelect(id) : openChatMenu(id))}
-      delayLongPress={280}
-    >
-      <View>
-        <Avatar uri={item.avatarUrl} name={item.title} size={48} />
-        {peerOnline && !selected && <View style={styles.onlineDot} />}
-        {disappearing && !selected && (
-          <View style={styles.disappearBadge}>
-            <Ionicons name="timer-outline" size={11} color="#fff" />
-          </View>
-        )}
-        {selected ? (
-          <View style={styles.checkOverlay} key={`sel-on-${id}-${selectionGen}`}>
-            <Ionicons name="checkmark" size={16} color="#fff" />
-          </View>
-        ) : null}
-      </View>
-      <View style={styles.rowBody}>
-        <View style={styles.rowTop}>
-          <View style={styles.titleWrap}>
-            {isGroup && (
-              <Ionicons name="people" size={14} color={colors.textMuted} style={{ marginRight: 4 }} />
-            )}
-            <Text
-              style={[styles.title, item.unreadCount > 0 && styles.titleUnread]}
-              numberOfLines={1}
-            >
-              {item.title}
-            </Text>
-            {isFav && (
-              <Ionicons name="star" size={13} color="#f5b800" style={{ marginLeft: 4 }} />
-            )}
-            {peerPremium && !isFav && (
-              <Ionicons name="sparkles" size={12} color={colors.primary} style={{ marginLeft: 4 }} />
-            )}
-          </View>
-          <Text style={[styles.time, item.unreadCount > 0 && styles.timeUnread]}>
-            {formatListTimestamp(item.lastMessage?.created_at)}
-          </Text>
-        </View>
-        <View style={styles.rowBottom}>
-          <View style={styles.previewWrap}>
-            {lastPreviewMine(item) && (
-              <Ionicons
-                name="checkmark-done"
-                size={16}
-                color={colors.textFaint}
-                style={styles.previewTick}
-              />
-            )}
-            <Text
-              style={[styles.preview, item.unreadCount > 0 && styles.previewUnread]}
-              numberOfLines={1}
-            >
-              {lastPreviewMine(item)
-                ? lastPreviewBody(item)
-                : (() => {
-                    const body = lastPreviewBody(item);
-                    if (!item.lastMessage || item.lastMessage.is_deleted || item.lastMessage.type === 'system') {
-                      return body;
-                    }
-                    if (isGroup) {
-                      const name = item.participants.find((p) => p.id === item.lastMessage?.sender_id)?.display_name;
-                      return name ? `${name.split(' ')[0]}: ${body}` : body;
-                    }
-                    return body;
-                  })()}
-            </Text>
-          </View>
-          <View style={styles.rowIcons}>
-            {streakEmoji !== '' && (
-              <Text
-                style={styles.streakEmoji}
-                allowFontScaling={false}
-                accessibilityLabel={`Streak ${streaks[id]?.score ?? ''}`}
-              >
-                {streakEmoji}
-              </Text>
-            )}
-            {locked && (
-              <Ionicons name="lock-closed" size={13} color={colors.textFaint} style={{ marginLeft: spacing(1) }} />
-            )}
-            {mutedIds.has(item.conversation.id) && (
-              <Ionicons name="notifications-off" size={14} color={colors.textFaint} style={{ marginLeft: spacing(1) }} />
-            )}
-            {pinnedIds.has(item.conversation.id) && (
-              <Ionicons name="pin" size={14} color={colors.textFaint} style={{ marginLeft: spacing(1) }} />
-            )}
-            {item.unreadCount > 0 && (
-              <View style={styles.badge}>
-                <Text style={styles.badgeText}>
-                  {item.unreadCount > 99 ? '99+' : item.unreadCount}
-                </Text>
-              </View>
-            )}
-          </View>
-        </View>
-      </View>
-    </Pressable>
-    );
-  };
+  // Open chat — mark-read is optimistic and deferred; navigation is immediate.
+  const onPressChat = useCallback(
+    (item: ConversationSummary) => {
+      const id = item.conversation.id;
+      if (item.unreadCount > 0) {
+        setItems((prev) =>
+          prev.map((c) => (c.conversation.id === id ? { ...c, unreadCount: 0 } : c)),
+        );
+        queueAction('markRead', { conversationId: id });
+      }
+      navigation.navigate('Chat', { conversationId: id, title: item.title });
+    },
+    [navigation],
+  );
+
+  const renderItem = useCallback(
+    ({ item }: { item: ConversationSummary }) => {
+      const id = item.conversation.id;
+      const peer = peerOf(item);
+      const isGroup = item.conversation.type === 'group';
+      return (
+        <ChatRow
+          item={item}
+          uid={uid}
+          selected={selectedIds.has(id)}
+          selectionGen={selectionGen}
+          selectionMode={selectionMode}
+          isFav={favIds.has(id)}
+          isMuted={mutedIds.has(id)}
+          isPinned={pinnedIds.has(id)}
+          peerOnline={!!peer && onlineIds.has(peer.id)}
+          peerPremium={!!peer && premiumIds.has(peer.id)}
+          locked={chatLock.isLocked(id)}
+          streakEmoji={!isGroup ? (streaks[id]?.tier ?? '') : ''}
+          streakScore={!isGroup ? (streaks[id]?.score ?? '') : ''}
+          colors={colors}
+          styles={styles}
+          onPressChat={onPressChat}
+          onLongPressChat={openChatMenu}
+          onToggleSelect={toggleSelect}
+        />
+      );
+    },
+    [
+      peerOf,
+      uid,
+      selectedIds,
+      selectionGen,
+      selectionMode,
+      favIds,
+      mutedIds,
+      pinnedIds,
+      onlineIds,
+      premiumIds,
+      chatLock,
+      streaks,
+      colors,
+      styles,
+      onPressChat,
+      openChatMenu,
+      toggleSelect,
+    ],
+  );
 
   const allFav = selCount > 0 && selConvs.every((c) => favIds.has(c.conversation.id));
 
@@ -968,7 +1093,8 @@ export default function ConversationsScreen() {
         data={filteredItems}
         keyExtractor={(c) => c.conversation.id}
         renderItem={renderItem}
-        extraData={`${selectionGen}:${selectedIds.size}:${filter}:${pinnedOrder.join(',')}:${[...favIds].join(',')}`}
+        // Cheap identity for external row state — avoid joining every fav/pin id (jank).
+        extraData={`${selectionGen}:${filter}:${pinnedOrder.length}:${favIds.size}:${mutedIds.size}:${onlineIds.size}`}
         keyboardShouldPersistTaps="handled"
         initialNumToRender={14}
         maxToRenderPerBatch={12}

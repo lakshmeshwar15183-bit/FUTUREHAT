@@ -142,26 +142,33 @@ export async function flushOutbox(): Promise<void> {
           // score, it only keeps the "waiting on peer / done today" UI fresh. The
           // authoritative +1 is finalised by the daily job regardless of this call.
           recordStreakActivity(supabase, item.conversationId).catch(() => {});
-          // Push notify after offline flush (DB outbox also enqueues; this kicks drain).
+          // Push notify after offline flush. messageId enables Edge Function dedupe
+          // against the DB outbox trigger (one FCM delivery, not two).
           try {
+            const mid = message?.id ?? item.tempId;
             const preview =
               item.type === 'text'
-                ? item.content
+                ? (item.content || 'Message').slice(0, 180)
                 : item.type === 'image'
-                  ? '📷 Photo'
+                  ? (/\.gif(\?|#|$)/i.test(item.mediaUrl ?? item.localUri ?? '') ? '🎞️ GIF' : '📷 Photo')
                   : item.type === 'video'
                     ? '🎥 Video'
                     : item.type === 'audio'
                       ? '🎤 Voice message'
                       : item.type === 'file'
-                        ? '📎 Document'
+                        ? (item.content?.trim() ? `📄 ${item.content}` : '📄 Document')
                         : 'New message';
             void sendPush(supabase, {
               conversationId: item.conversationId,
               kind: 'message',
               title: 'New message',
               body: preview,
-              data: { messageId: message?.id ?? item.tempId, messageType: item.type },
+              data: {
+                messageId: mid,
+                messageType: item.type,
+                type: 'message',
+                senderId: item.senderId,
+              },
             });
           } catch { /* ignore */ }
         } else {

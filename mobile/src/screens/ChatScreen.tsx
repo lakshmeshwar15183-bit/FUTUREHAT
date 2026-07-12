@@ -11,11 +11,13 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import * as Sharing from 'expo-sharing';
 import Animated, { useAnimatedKeyboard, useAnimatedStyle } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -26,7 +28,11 @@ import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import { Audio } from 'expo-av';
 import { useNavigation, useRoute, useFocusEffect, type RouteProp } from '@react-navigation/native';
-import { setOpenConversation, clearConversationNotification } from '../lib/notifications';
+import {
+  setOpenConversation,
+  clearConversationNotification,
+  syncBadgeFromServer,
+} from '../lib/notifications';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { supabase } from '../lib/supabase';
@@ -77,6 +83,7 @@ import {
   markViewOnceSeen,
   getViewOnceState,
   isVideoMessage,
+  signedMediaUrl,
   getMyGroupRole,
   getPinnedMessageIds,
   pinGroupMessage,
@@ -100,14 +107,14 @@ import {
   uuidv4,
 } from '../lib/localCache';
 import { flushOutbox, onOutboxSent, queueAction } from '../lib/sync';
-import { uploadMediaFromUri } from '../lib/media';
+import { uploadMediaFromUri, guessMime } from '../lib/media';
 import { registerMediaHandler, type MediaSubmission } from '../media/mediaSendBridge';
 import { formatLastSeen, formatDaySeparator, formatTime } from '../lib/time';
 import { useColors, useTheme, spacing, radius, font, type Palette } from '../theme';
 import MessageBubble, { type TickStatus, replySummary } from '../components/MessageBubble';
 import SwipeToReply from '../components/SwipeToReply';
 import MediaViewer, { type ViewerItem } from '../components/MediaViewer';
-import { prefetchMedia, registerLocalMedia } from '../lib/mediaCache';
+import { ensureMediaCached, prefetchMedia, registerLocalMedia } from '../lib/mediaCache';
 import ForwardSheet, { type ForwardPreview } from '../components/ForwardSheet';
 import PollCard from '../components/PollCard';
 import ScheduleMessageModal from '../components/ScheduleMessageModal';
@@ -159,11 +166,12 @@ function ChatScreenInner() {
   const { conversationId } = params;
 
   // Tell the notifications bridge which chat is open so it never notifies for it,
-  // and clear any pending notification for this chat while it's focused.
+  // clear the tray entry, and re-sync the launcher badge from the server.
   useFocusEffect(
     useCallback(() => {
       setOpenConversation(conversationId);
       void clearConversationNotification(conversationId);
+      void syncBadgeFromServer();
       return () => setOpenConversation(null);
     }, [conversationId]),
   );
@@ -834,14 +842,19 @@ function ChatScreenInner() {
     // confirmed one. If offline, it stays queued and auto-sends on reconnect.
     flushOutbox().catch(() => {});
 
-    // Best-effort push so a killed/backgrounded recipient still gets notified.
-    // No-ops until FCM (google-services.json + push function + secret) is set up.
+    // Fast-path FCM for killed recipients. messageId (= tempId / row id) enables
+    // server-side dedupe so the DB outbox trigger does not double-deliver.
     void sendPush(supabase, {
       conversationId,
       kind: isGroup ? 'group' : 'message',
       title: isGroup ? (params.title || 'Group') : 'New message',
       body,
-      data: {},
+      data: {
+        messageId: tempId,
+        messageType: 'text',
+        type: 'message',
+        senderId: uid ?? '',
+      },
     });
   }
 
@@ -866,7 +879,7 @@ function ChatScreenInner() {
   async function sendMedia(
     uri: string,
     fileName: string,
-    type: 'image' | 'file' | 'audio',
+    type: 'image' | 'video' | 'file' | 'audio',
     caption?: string,
     mediaMeta?: import('../lib/shared').MediaMeta,
   ) {
@@ -879,8 +892,13 @@ function ChatScreenInner() {
       }
       // Map remote URL → local file so we never re-download our own send.
       void registerLocalMedia(url, uri);
+      // Documents: store filename in content for the bubble label.
+      const body =
+        type === 'file'
+          ? (caption?.trim() || fileName)
+          : (caption ?? (type === 'audio' ? '' : ''));
       const { message } = await sendMessage(
-        supabase, conversationId, caption ?? fileName, type, url, undefined, undefined, mediaMeta,
+        supabase, conversationId, body, type, url, undefined, undefined, mediaMeta,
       );
       if (message) {
         setMsgs((prev) => (prev.some((m) => m.id === message.id) ? prev : [...prev, message]));
@@ -1017,28 +1035,58 @@ function ChatScreenInner() {
     Alert.alert('Scheduled', `Your message will send ${when.toLocaleString()}.`);
   }
 
-  // Camera capture. The gallery/library path is now the full-screen MediaPicker
-  // (openMediaPicker); this handles ONLY the "Camera" attach option (spec §16 — the
-  // old bottom-sheet library launch was removed).
+  // Camera capture (photo or short video). Gallery path is MediaPicker.
   async function pickImage(fromCamera: boolean) {
     setAttachOpen(false);
     const perm = await ImagePicker.requestCameraPermissionsAsync();
     if (!perm.granted) return;
-    const res = await ImagePicker.launchCameraAsync({ quality: 0.7 });
+    const res = await ImagePicker.launchCameraAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.All,
+      quality: 0.7,
+      videoMaxDuration: 60,
+      allowsEditing: false,
+    });
     if (res.canceled || !res.assets?.length) return;
     const a = res.assets[0];
     if (!withinUploadLimit(a.fileSize)) return;
-    await sendMedia(a.uri, a.fileName ?? `photo_${Date.now()}.jpg`, 'image');
-    void fromCamera; // signature kept for the existing Camera AttachOption call site
+    const isVid = a.type === 'video' || /\.(mp4|mov|m4v)(\?|$)/i.test(a.uri);
+    const name =
+      a.fileName ??
+      (isVid ? `video_${Date.now()}.mp4` : `photo_${Date.now()}.jpg`);
+    await sendMedia(a.uri, name, isVid ? 'video' : 'image');
+    void fromCamera;
   }
 
   async function pickDocument() {
     setAttachOpen(false);
-    const res = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true });
+    const res = await DocumentPicker.getDocumentAsync({
+      copyToCacheDirectory: true,
+      multiple: false,
+    });
     if (res.canceled || !res.assets?.length) return;
     const a = res.assets[0];
     if (!withinUploadLimit(a.size ?? undefined)) return;
-    await sendMedia(a.uri, a.name, 'file');
+    await sendMedia(a.uri, a.name || `file_${Date.now()}`, 'file');
+  }
+
+  /** Open a document attachment (cache → share sheet / OS open). */
+  async function openDocument(msg: Message) {
+    const url = msg.media_url;
+    if (!url) return;
+    try {
+      const local = await ensureMediaCached(url);
+      const target = local ?? (await signedMediaUrl(supabase, url)) ?? url;
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(target, {
+          dialogTitle: msg.content || 'Document',
+          mimeType: guessMime(msg.content || url),
+        });
+      } else {
+        await Share.share({ url: target, message: msg.content || 'Document' });
+      }
+    } catch {
+      Alert.alert('Could not open', 'Download failed. Check your connection and try again.');
+    }
   }
 
   // ── Voice notes ───────────────────────────────────────────────────────────
@@ -1587,6 +1635,7 @@ function ChatScreenInner() {
           selectionMode={selectionMode}
           onPress={selectionMode ? () => toggleSelect(msg) : undefined}
           onOpenImage={() => (selectionMode ? toggleSelect(msg) : void openMedia(msg))}
+          onOpenDocument={(m) => (selectionMode ? toggleSelect(m) : void openDocument(m))}
           viewOnceSpent={voSpent.has(msg.id)}
           highlight={searchActive ? search : ''}
           activeMatch={msg.id === activeMatchId}

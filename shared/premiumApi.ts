@@ -10,8 +10,6 @@ import type {
   UUID,
   MessageType,
 } from './types.js';
-import { PLANS } from './premium/plans.js';
-import { computePeriodEnd } from './payments/provider.js';
 import type { PaymentResult } from './payments/provider.js';
 
 // ── Subscription ───────────────────────────────────────────────────────────────
@@ -51,71 +49,24 @@ export async function getServerAdmin(client: SupabaseClient): Promise<boolean> {
 }
 
 /**
- * Activate (or renew) a subscription after a successful payment.
+ * @deprecated Client-side activation is permanently disabled.
  *
- * PRODUCTION: direct client writes to `subscriptions` are blocked by RLS
- * (migration 0042). Activation must go through a verified payment webhook /
- * Edge Function using the service role (`admin_activate_subscription`).
- * This client helper remains for gateways that still write via a privileged
- * path — it will fail for end-user sessions (by design).
+ * PRODUCTION (0042 + payments-razorpay): subscriptions are activated only by
+ * the verified payment Edge Function using service-role
+ * `admin_activate_subscription`. This helper always fails closed so no code
+ * path can self-grant Lumixo+.
  */
 export async function activateSubscription(
-  client: SupabaseClient,
-  plan: PlanId,
-  result: PaymentResult,
+  _client: SupabaseClient,
+  _plan: PlanId,
+  _result: PaymentResult,
 ): Promise<{ subscription: Subscription | null; error: Error | null }> {
-  const { data: auth } = await client.auth.getUser();
-  if (!auth.user) return { subscription: null, error: new Error('not authenticated') };
-
-  // Never allow free "manual" self-activation from the client. UI already gates
-  // on PAYMENTS_READY; this is defense-in-depth against API misuse.
-  if (!result?.ok || !result.provider || result.provider === 'manual') {
-    return {
-      subscription: null,
-      error: new Error('Payments are not available yet. Secure billing is required to unlock Lumixo+.'),
-    };
-  }
-
-  if (!result.providerSubscriptionId && !result.providerCustomerId) {
-    return {
-      subscription: null,
-      error: new Error('Payment could not be verified. No charge was applied.'),
-    };
-  }
-
-  // Attempt upsert — succeeds only if RLS allows (service role) or fails cleanly.
-  const nowIso = new Date().toISOString();
-  const row = {
-    user_id: auth.user.id,
-    plan,
-    status: 'active' as const,
-    provider: result.provider,
-    provider_subscription_id: result.providerSubscriptionId ?? null,
-    provider_customer_id: result.providerCustomerId ?? null,
-    amount_inr: PLANS[plan].priceInr,
-    current_period_start: nowIso,
-    current_period_end: computePeriodEnd(plan, nowIso),
-    cancel_at_period_end: false,
-    updated_at: nowIso,
+  return {
+    subscription: null,
+    error: new Error(
+      'Client activation is disabled. Subscriptions are activated only after verified server-side payment.',
+    ),
   };
-
-  const { data, error } = await client
-    .from('subscriptions')
-    .upsert(row, { onConflict: 'user_id' })
-    .select()
-    .single();
-
-  if (error) {
-    return {
-      subscription: null,
-      error: new Error(
-        /row-level|policy|permission|rls/i.test(error.message)
-          ? 'Subscription activation must complete via the payment provider. No free unlock is available.'
-          : error.message,
-      ),
-    };
-  }
-  return { subscription: data, error: null };
 }
 
 // Cancel = "don't renew." SECURITY DEFINER RPC only flips cancel_at_period_end

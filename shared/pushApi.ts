@@ -22,15 +22,18 @@ export async function removePushToken(client: SupabaseClient, token: string): Pr
 
 export interface SendPushArgs {
   conversationId: UUID;
-  kind: PushKind;                 // 'message' | 'group' | 'call' | 'missed_call' | 'status' | 'system'
+  kind: PushKind;                 // 'message' | 'group' | 'call' | 'missed_call' | 'status' | 'system' | 'mention'
   title: string;
   body: string;
-  data?: Record<string, string>;  // extra payload (e.g. callId, type)
+  data?: Record<string, string>;  // extra payload (e.g. callId, messageId, type)
 }
 
 // Fire-and-forget: invoke the `push` Edge Function to fan the notification out to
 // the conversation's other members' registered devices. Also kicks outbox drain
-// so DB-triggered jobs (migration 0038) flush quickly. Never throws.
+// so DB-triggered jobs flush quickly. Never throws.
+//
+// Pass data.messageId (or data.callId) whenever possible — the Edge Function uses
+// claim_push_dedupe so a concurrent outbox drain does not double-deliver.
 export async function sendPush(client: SupabaseClient, args: SendPushArgs): Promise<void> {
   try {
     await client.functions.invoke('push', {
@@ -40,10 +43,9 @@ export async function sendPush(client: SupabaseClient, args: SendPushArgs): Prom
         title: args.title,
         body: args.body,
         data: args.data ?? {},
-        // Always drain a few outbox rows after a client send so server-side
-        // enqueued jobs (messages/calls) don't sit waiting for a cron.
+        // Drain sibling outbox rows (other chats / call cancels) after each send.
         drainOutbox: true,
-        limit: 25,
+        limit: 30,
       },
     });
   } catch { /* Edge Function not deployed / FCM not configured — ignore */ }

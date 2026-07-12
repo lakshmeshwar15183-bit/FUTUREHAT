@@ -13,11 +13,11 @@ describe('premium free-grant lock (source contract)', () => {
     expect(src).toMatch(/Secure payments are not configured/);
   });
 
-  it('activateSubscription rejects manual provider in source', () => {
+  it('activateSubscription is permanently fail-closed in source', () => {
     const p = path.join(__dirname, '../../../../shared/premiumApi.ts');
     const src = fs.readFileSync(p, 'utf8');
-    expect(src).toMatch(/provider === 'manual'/);
-    expect(src).toMatch(/Payments are not available yet/);
+    expect(src).toMatch(/Client activation is disabled/);
+    expect(src).not.toMatch(/\.from\(['"]subscriptions['"]\)\s*\.upsert/);
   });
 
   it('mobile PremiumScreen does not call activateSubscription', () => {

@@ -1,19 +1,18 @@
 // Lumixo — push fan-out Edge Function (Deno).
 //
-// Paths:
-//   1) Client invoke (JWT): send one notification for a conversation (legacy).
-//   2) Drain outbox (service role / cron): claim_push_outbox → FCM for each job.
-//
-// FCM uses high-priority Android messages with channel routing that matches
-// mobile/src/lib/notifications.ts. Calls use full-screen-intent style tags.
+// Production contract (WhatsApp-class):
+//   • High-priority FCM for messages; MAX channel for calls
+//   • collapse_key + android.notification.tag → one tray entry per chat
+//   • claim_push_dedupe → client sendPush + outbox never double-deliver
+//   • Silent data cancel for call hangup (no ghost rings)
+//   • Prune UNREGISTERED tokens
+//   • Mute / locked / preview-off respected per recipient
 //
 // Deploy:  supabase functions deploy push
 // Secret:  supabase secrets set FCM_SERVICE_ACCOUNT="$(cat service-account.json)"
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
-// CORS allowlist — never reflect arbitrary origins. Mobile app invoke uses
-// apikey + Authorization (no browser Origin). Browser calls only from known hosts.
 const ALLOWED_ORIGINS = new Set(
   (Deno.env.get('PUSH_CORS_ORIGINS') ??
     'https://futurehat-app.netlify.app,https://lumixo.app,http://localhost:5173,http://localhost:3000')
@@ -49,7 +48,6 @@ interface Body {
   title?: string;
   body?: string;
   data?: Record<string, string>;
-  /** When true (service role), drain push_outbox instead of a single fan-out. */
   drainOutbox?: boolean;
   limit?: number;
 }
@@ -90,7 +88,6 @@ Deno.serve(async (req) => {
       body = {};
     }
 
-    // Auth: service role OR signed-in user.
     let senderId: string | null = null;
     if (!isService) {
       const asCaller = createClient(SUPABASE_URL, ANON, {
@@ -117,6 +114,7 @@ Deno.serve(async (req) => {
 
     let delivered = 0;
     let failed = 0;
+    let skippedDup = 0;
 
     // ── Single fan-out (client sendPush) ────────────────────────────────────
     if (body.conversationId && body.kind) {
@@ -130,17 +128,28 @@ Deno.serve(async (req) => {
         if (!membership) return json({ error: 'Not a member' }, 403);
       }
 
-      delivered += await fanOut(admin, accessToken, sa.project_id, {
+      const data = body.data ?? {};
+      const dedupeKey = buildDedupeKey(body.kind, data);
+
+      const result = await fanOut(admin, accessToken, sa.project_id, {
         conversationId: body.conversationId,
         kind: body.kind,
         title: body.title ?? 'Lumixo',
         body: body.body ?? 'New notification',
-        data: body.data ?? {},
+        data,
         senderId,
+        dedupeKey,
       });
+      delivered += result.delivered;
+      skippedDup += result.skippedDup;
+
+      // Client already sent → mark matching outbox rows delivered so drain won't re-send.
+      if (dedupeKey && result.delivered > 0) {
+        await admin.rpc('mark_push_dedupe_delivered', { p_dedupe_key: dedupeKey }).catch(() => {});
+      }
     }
 
-    // ── Outbox drain (always when requested, or when no single job) ─────────
+    // ── Outbox drain ────────────────────────────────────────────────────────
     const shouldDrain = !!body.drainOutbox || !body.kind;
     if (shouldDrain) {
       const { data: jobs, error: claimErr } = await admin.rpc('claim_push_outbox', {
@@ -149,15 +158,22 @@ Deno.serve(async (req) => {
       if (claimErr) console.warn('[push] claim_push_outbox', claimErr.message);
       for (const job of (jobs ?? []) as any[]) {
         try {
-          const n = await fanOut(admin, accessToken, sa.project_id, {
+          const data = flattenData(job.data);
+          const dedupeKey =
+            (typeof job.dedupe_key === 'string' && job.dedupe_key) ||
+            buildDedupeKey(job.kind, data);
+          const result = await fanOut(admin, accessToken, sa.project_id, {
             conversationId: job.conversation_id,
             kind: job.kind,
             title: job.title,
             body: job.body,
-            data: flattenData(job.data),
+            data,
             senderId: job.sender_id,
+            dedupeKey,
           });
-          delivered += n;
+          delivered += result.delivered;
+          skippedDup += result.skippedDup;
+          // Even if skipped as duplicate, mark delivered so it doesn't retry forever.
           await admin.rpc('mark_push_delivered', { p_id: job.id, p_error: null });
         } catch (e) {
           failed++;
@@ -173,12 +189,24 @@ Deno.serve(async (req) => {
       return json({ error: 'Bad request' }, 400);
     }
 
-    return json({ delivered, failed }, 200);
+    return json({ delivered, failed, skippedDup }, 200);
   } catch (e) {
     console.error('[push] error', e);
     return json({ error: String(e) }, 200);
   }
 });
+
+function buildDedupeKey(kind: string, data: Record<string, string>): string | null {
+  if (data.messageId) return `msg:${data.messageId}`;
+  if (data.callId) {
+    const t = data.type || kind;
+    if (t === 'call_status') return `call:${data.callId}:cancel:${data.status || 'x'}`;
+    if (kind === 'missed_call' || t === 'missed_call') return `call:${data.callId}:missed`;
+    if (kind === 'call' || t === 'call') return `call:${data.callId}:ring`;
+    return `call:${data.callId}:${t}`;
+  }
+  return null;
+}
 
 async function fanOut(
   admin: ReturnType<typeof createClient>,
@@ -191,8 +219,22 @@ async function fanOut(
     body: string;
     data: Record<string, string>;
     senderId: string | null;
+    dedupeKey: string | null;
   },
-): Promise<number> {
+): Promise<{ delivered: number; skippedDup: number }> {
+  // Global idempotency: first fan-out for this logical event wins.
+  if (job.dedupeKey) {
+    const { data: claimed, error } = await admin.rpc('claim_push_dedupe', {
+      p_key: job.dedupeKey,
+    });
+    if (error) {
+      // If RPC missing (migration not applied), proceed without dedupe.
+      console.warn('[push] claim_push_dedupe', error.message);
+    } else if (claimed === false) {
+      return { delivered: 0, skippedDup: 1 };
+    }
+  }
+
   const { data: members } = await admin
     .from('conversation_participants')
     .select('user_id')
@@ -202,14 +244,14 @@ async function fanOut(
   if (job.senderId) {
     recipientIds = recipientIds.filter((id) => id !== job.senderId);
   }
-  if (recipientIds.length === 0) return 0;
+  if (recipientIds.length === 0) return { delivered: 0, skippedDup: 0 };
 
   const { data: tokenRows } = await admin
     .from('device_push_tokens')
     .select('token, platform, user_id')
     .in('user_id', recipientIds);
   const tokens = (tokenRows ?? []) as { token: string; platform: string; user_id: string }[];
-  if (tokens.length === 0) return 0;
+  if (tokens.length === 0) return { delivered: 0, skippedDup: 0 };
 
   const [{ data: prefRows }, { data: lockRows }, { data: mutedRows }, { data: senderProfile }, { data: conv }] =
     await Promise.all([
@@ -227,7 +269,7 @@ async function fanOut(
       job.senderId
         ? admin.from('profiles').select('display_name, avatar_url').eq('id', job.senderId).maybeSingle()
         : Promise.resolve({ data: null }),
-      admin.from('conversations').select('type, name').eq('id', job.conversationId).maybeSingle(),
+      admin.from('conversations').select('type, name, avatar_url').eq('id', job.conversationId).maybeSingle(),
     ]);
 
   const prefsByUser = new Map<string, Prefs>();
@@ -244,8 +286,13 @@ async function fanOut(
 
   const senderName =
     (senderProfile as { display_name?: string } | null)?.display_name ?? 'Lumixo';
+  const senderAvatar =
+    (senderProfile as { avatar_url?: string | null } | null)?.avatar_url ?? null;
   const isGroup = ((conv as { type?: string } | null)?.type ?? 'direct') === 'group';
   const convName = (conv as { name?: string | null } | null)?.name ?? 'Group';
+  const convAvatar = (conv as { avatar_url?: string | null } | null)?.avatar_url ?? null;
+  // Prefer conversation avatar for groups; sender avatar for 1:1 (FCM large image).
+  const imageUrl = isGroup ? convAvatar || senderAvatar : senderAvatar;
 
   const fcmUrl = `https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`;
   const channelId = CHANNEL[job.kind] ?? 'messages';
@@ -259,21 +306,21 @@ async function fanOut(
     tokens.map(async (t) => {
       const p = prefsByUser.get(t.user_id) ?? {};
 
-      // Mute: calls always ring; chat mute skips messages.
       if (!isCall && !isCallCancel) {
         if (mutedUsers.has(t.user_id)) return;
-        if (job.kind === 'group' && p.groupMute) return;
+        if ((job.kind === 'group' || job.kind === 'mention') && p.groupMute) return;
         if (job.kind === 'message' && p.messageMute) return;
         if (job.kind === 'status' && p.statusMute) return;
       }
 
       const locked = lockedUsers.has(t.user_id);
-      const previewOff = (job.kind === 'message' || job.kind === 'group') && p.messagePreview === false;
+      const previewOff =
+        (job.kind === 'message' || job.kind === 'group' || job.kind === 'mention') &&
+        p.messagePreview === false;
 
       let title: string;
       let bodyText: string;
       if (isCallCancel) {
-        // Silent cancel for ringing devices
         title = 'Call ended';
         bodyText = '';
       } else if (isCall || job.kind === 'system' || job.kind === 'status' || job.kind === 'missed_call') {
@@ -282,30 +329,45 @@ async function fanOut(
       } else if (locked) {
         title = 'Lumixo';
         bodyText = 'New message';
-      } else if (isGroup) {
-        title = job.title?.includes(':') ? job.title : `${convName}`;
-        bodyText = previewOff ? 'New message' : job.body || 'New message';
-        if (!job.title?.includes(':') && senderName) {
-          title = convName;
-          bodyText = previewOff ? 'New message' : `${senderName}: ${job.body || 'New message'}`;
-        }
+      } else if (isGroup || job.kind === 'mention') {
+        title = convName;
+        bodyText = previewOff
+          ? 'New message'
+          : job.body?.includes(':')
+            ? job.body
+            : `${senderName}: ${job.body || 'New message'}`;
       } else {
         title = job.title || senderName;
         bodyText = previewOff ? 'New message' : job.body || 'New message';
       }
 
       const data: Record<string, string> = {
-        type: isCall || isCallCancel ? (job.data?.type || 'call') : job.kind === 'missed_call' ? 'missed_call' : 'message',
+        type: isCallCancel
+          ? 'call_status'
+          : job.kind === 'missed_call'
+            ? 'missed_call'
+            : job.kind === 'call'
+              ? 'call'
+              : job.kind === 'mention'
+                ? 'mention'
+                : job.kind === 'status'
+                  ? 'status_reply'
+                  : 'message',
         kind: job.kind,
         conversationId: job.conversationId,
         ...(job.data ?? {}),
       };
+      if (imageUrl) data.avatarUrl = imageUrl;
+      if (senderName) data.senderName = senderName;
 
-      const tag = isCall || isCallCancel
-        ? `call:${data.callId ?? job.conversationId}`
-        : `chat:${job.conversationId}`;
+      const tag =
+        isCall || isCallCancel
+          ? `call:${data.callId ?? job.conversationId}`
+          : `chat:${job.conversationId}`;
 
-      // Call cancel: data-only high priority so the app can dismiss the ring UI.
+      // collapse_key groups concurrent FCM deliveries for the same chat on Android.
+      const collapseKey = isCall || isCallCancel ? tag : `chat:${job.conversationId}`;
+
       const message =
         isCallCancel
           ? {
@@ -315,9 +377,10 @@ async function fanOut(
                 android: {
                   priority: 'high',
                   ttl: '30s',
+                  collapse_key: collapseKey,
                 },
                 apns: {
-                  headers: { 'apns-priority': '10', 'apns-push-type': 'background' },
+                  headers: { 'apns-priority': '10', 'apns-push-type': 'background', 'apns-collapse-id': collapseKey },
                   payload: { aps: { 'content-available': 1 } },
                 },
               },
@@ -328,31 +391,42 @@ async function fanOut(
                 notification: { title, body: bodyText },
                 data,
                 android: {
-                  // HIGH priority wakes doze and enables heads-up for call invites.
                   priority: 'high',
                   ttl: isCall ? '60s' : '86400s',
+                  collapse_key: collapseKey,
                   notification: {
                     channel_id: channelId,
-                    // Calls channel on-device uses NOTIFICATION_RINGTONE audio usage.
                     sound: 'default',
                     tag,
                     notification_priority: isCall ? 'PRIORITY_MAX' : 'PRIORITY_HIGH',
                     default_vibrate_timings: true,
                     visibility: 'PUBLIC',
-                    ...(isCall ? { sticky: true } : {}),
+                    // Large image (avatar) when URL is public HTTPS.
+                    ...(imageUrl && /^https:\/\//i.test(imageUrl) ? { image: imageUrl } : {}),
+                    ...(isCall
+                      ? {
+                          sticky: true,
+                          // Local-only full-screen is handled by the Calls channel importance;
+                          // FCM does not expose fullScreenIntent — high+MAX channel is best-effort.
+                        }
+                      : {}),
                   },
                 },
                 apns: {
                   headers: {
                     'apns-priority': '10',
+                    'apns-collapse-id': collapseKey,
                     ...(isCall ? { 'apns-push-type': 'alert' } : {}),
                   },
                   payload: {
                     aps: {
                       sound: 'default',
                       'thread-id': job.conversationId,
-                      badge: 1,
-                      ...(isCall ? { 'interruption-level': 'time-sensitive' } : {}),
+                      // Badge is corrected by the client via my_total_unread RPC.
+                      'mutable-content': 1,
+                      ...(isCall
+                        ? { 'interruption-level': 'time-sensitive' }
+                        : { 'interruption-level': 'active' }),
                     },
                   },
                 },
@@ -372,7 +446,8 @@ async function fanOut(
         return;
       }
       const errText = await resp.text().catch(() => '');
-      if (resp.status === 404 || /UNREGISTERED|NOT_FOUND|INVALID_ARGUMENT/i.test(errText)) {
+      // Only prune truly dead tokens — INVALID_ARGUMENT can be payload shape.
+      if (resp.status === 404 || /UNREGISTERED|NOT_FOUND|Requested entity was not found/i.test(errText)) {
         stale.push(t.token);
       } else {
         console.warn(
@@ -388,7 +463,7 @@ async function fanOut(
     } catch { /* ignore */ }
   }
 
-  return delivered;
+  return { delivered, skippedDup: 0 };
 }
 
 function flattenData(d: unknown): Record<string, string> {

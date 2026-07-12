@@ -1,9 +1,9 @@
 // Lumixo mobile — media preview & editor shell. Opens after picking; the user
-// reviews each attachment, adds a caption, picks quality (Standard/HD/Original) with
-// a live size estimate, optionally enables View Once, then Sends. The drawing/crop/
-// text/sticker tools are Phase B (require @shopify/react-native-skia + a native
-// rebuild) — their buttons are present but disabled with a "coming in next build"
-// hint so the layout is final and nothing is faked.
+// reviews each attachment, adds a caption, picks quality (Standard/HD/Original)
+// with a live size estimate (and real JPEG resize for images), optionally enables
+// View Once, then Sends. Image tools: crop/rotate/flip, draw (incl. blur + undo),
+// text, stickers. Video trim/mute is preview-intent only until a native transcoder
+// is added (metadata is recorded; original file is uploaded).
 import React, { useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -36,6 +36,7 @@ import OverlayEditor, { type OverlayResult } from '../media/tools/OverlayEditor'
 import VideoEditor, { type VideoEditResult } from '../media/tools/VideoEditor';
 import { flattenOverlays } from '../media/tools/mediaFlatten';
 import type { Overlay } from '../media/tools/overlays';
+import { prepareImageForSend } from '../media/prepareImage';
 import type { MediaMeta } from '../lib/shared';
 import { Alert } from '../ui/dialog';
 
@@ -129,50 +130,71 @@ export default function MediaPreviewScreen() {
   async function send() {
     if (sending) return;
     setSending(true);
-    const items: OutgoingMedia[] = [];
-    for (let i = 0; i < assets.length; i++) {
-      const a = assets[i];
-      const e = edits[i];
-      let uri = e.editedUri ?? a.uri;
-      let w = e.editedW ?? a.width, h = e.editedH ?? a.height;
-      // Bake text/sticker overlays into the image (images only).
-      if (a.type !== 'video' && e.overlays && e.overlays.length && e.overlayStage) {
-        // eslint-disable-next-line no-await-in-loop
-        uri = await flattenOverlays(uri, e.overlays, e.overlayStage.w, e.overlayStage.h, w, h);
+    try {
+      const items: OutgoingMedia[] = [];
+      for (let i = 0; i < assets.length; i++) {
+        const a = assets[i];
+        const e = edits[i];
+        let uri = e.editedUri ?? a.uri;
+        let w = e.editedW ?? a.width;
+        let h = e.editedH ?? a.height;
+        const q = e.video?.quality ?? e.quality;
+
+        // Bake text/sticker overlays into the image (images only).
+        if (a.type !== 'video' && e.overlays && e.overlays.length && e.overlayStage) {
+          // eslint-disable-next-line no-await-in-loop
+          uri = await flattenOverlays(uri, e.overlays, e.overlayStage.w, e.overlayStage.h, w, h);
+        }
+
+        // Real quality tier: resize + JPEG compress before upload (not estimate-only).
+        if (a.type === 'image') {
+          // eslint-disable-next-line no-await-in-loop
+          const prepared = await prepareImageForSend(uri, w, h, q);
+          uri = prepared.uri;
+          w = prepared.width;
+          h = prepared.height;
+        }
+
+        // Prefer .jpg after JPEG bake so MIME guess is correct.
+        let fileName = a.fileName;
+        if (a.type === 'image' && q !== 'original' && !/\.jpe?g$/i.test(fileName)) {
+          fileName = fileName.replace(/\.[^.]+$/, '') + '.jpg';
+        }
+
+        const meta: MediaMeta = {
+          quality: q,
+          hd: q !== 'standard',
+          viewOnce: e.viewOnce || undefined,
+          width: w,
+          height: h,
+          durationMs: a.durationMs,
+          edited: e.edited || (e.video ? true : undefined),
+          // Video trim/mute intent (native transcoder not shipped — metadata only).
+          trimStartMs: e.video && e.video.startMs > 0 ? e.video.startMs : undefined,
+          trimEndMs: e.video && a.durationMs && e.video.endMs < a.durationMs ? e.video.endMs : undefined,
+          muted: e.video?.muted || undefined,
+        };
+        items.push({
+          uri,
+          fileName,
+          type: a.type === 'video' ? 'video' : 'image',
+          caption: e.caption || undefined,
+          mediaMeta: meta,
+        });
       }
-      const meta: MediaMeta = {
-        quality: e.video?.quality ?? e.quality,
-        hd: (e.video?.quality ?? e.quality) !== 'standard',
-        viewOnce: e.viewOnce || undefined,
-        width: w,
-        height: h,
-        durationMs: a.durationMs,
-        edited: e.edited || (e.video ? true : undefined),
-        // Video trim/mute intent (applied by the native transcoder when enabled).
-        trimStartMs: e.video && e.video.startMs > 0 ? e.video.startMs : undefined,
-        trimEndMs: e.video && a.durationMs && e.video.endMs < a.durationMs ? e.video.endMs : undefined,
-        muted: e.video?.muted || undefined,
-      };
-      items.push({
-        uri,
-        fileName: a.fileName,
-        type: a.type === 'video' ? 'file' : 'image',
-        caption: e.caption || undefined,
-        mediaMeta: meta,
-      });
-    }
-    const ok = submitMedia({ conversationId, items });
-    if (!ok) {
+      const ok = submitMedia({ conversationId, items });
+      if (!ok) {
+        Alert.alert('Could not send', 'Please reopen the chat and try again.');
+        return;
+      }
+      // Pop preview + picker back to chat.
+      const st = navigation.getState();
+      const backCount = Math.min(2, st.routes.length - 1);
+      if (backCount >= 2) navigation.pop(2);
+      else navigation.goBack();
+    } finally {
       setSending(false);
-      Alert.alert('Could not send', 'Please reopen the chat and try again.');
-      return;
     }
-    // Pop the preview + picker screens back to the chat; ChatScreen's registered
-    // handler does the real upload/outbox send. popToTop-style: go back twice.
-    const st = navigation.getState();
-    const backCount = Math.min(2, st.routes.length - 1);
-    if (backCount >= 2) navigation.pop(2);
-    else navigation.goBack();
   }
 
   // Editor tools are for images only (video editing is the VideoEditor / Phase C).

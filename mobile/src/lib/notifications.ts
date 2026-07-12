@@ -1,9 +1,15 @@
-// Lumixo mobile — notification engine. WhatsApp-style Android channels + local
-// notification presentation. Sounds are the DEVICE SYSTEM DEFAULT (channel
-// `sound: 'default'`) — nothing is bundled and no picker is shown; users tune a
-// channel's sound/vibration/LED from Android's own per-channel settings. Killed-
-// state delivery rides FCM (registerForPush → push Edge Function); these local
-// presenters cover app open / background / minimized (JS alive).
+// Lumixo mobile — production notification engine (WhatsApp-class).
+//
+// Architecture:
+//   • Killed / Doze: FCM high-priority remote messages (push Edge Function).
+//   • Foreground / background (JS alive): local presenters with stable ids so
+//     FCM + local collapse to one tray entry per chat (`chat:<id>`).
+//   • Calls: MAX channel + ringtone usage; silent data cancel clears ring UI.
+//   • Grouping: per-chat counter → "5 new messages" body when stacked.
+//   • Actions: Reply / Mark read / Mute / Archive (no app open required).
+//
+// Sounds use the DEVICE SYSTEM DEFAULT per Android channel — users customize
+// in system Settings › Apps › Lumixo › Notifications.
 import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -11,10 +17,11 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from './supabase';
 import { registerPushToken, removePushToken } from './shared';
 
-// Bump when channel definitions change so they're re-created once (never every launch).
-// v4: Calls channel uses NOTIFICATION_RINGTONE usage (not generic notification stream).
-const CHANNELS_VERSION = '4';
+// Bump when channel definitions change so they're re-created once.
+// v5: channel groups + mute/archive actions + grouping metadata.
+const CHANNELS_VERSION = '5';
 const CHANNELS_KEY = 'fh:channelsVersion';
+const UNREAD_STACK_KEY = 'fh:notifStack'; // conversationId → { count, lastBody, title }
 
 export const CHANNELS = {
   messages: 'messages',
@@ -35,18 +42,18 @@ export const CATEGORY = {
 } as const;
 
 const LED = '#00A884';
+const ACCENT = '#00A884';
 
-// Foreground behaviour: show the banner + play the (system default) sound — EXCEPT
-// for the chat that's already open on screen (WhatsApp parity, no self-notify). This
-// runs for BOTH locally-scheduled notifications and remote FCM messages that arrive
-// while the app is foregrounded, so it's the single place we suppress the open chat.
+// ── Foreground handler ──────────────────────────────────────────────────────
+// Suppress system banner for the open chat; suppress sound for live calls
+// (InCallManager owns the RING stream). Applies to local AND remote FCM.
 Notifications.setNotificationHandler({
   handleNotification: async (notification) => {
     const data = notification.request.content.data as Record<string, unknown> | undefined;
     const convId = typeof data?.conversationId === 'string' ? data.conversationId : null;
     const type = typeof data?.type === 'string' ? data.type : '';
     const kind = typeof data?.kind === 'string' ? data.kind : '';
-    // Silent call-status cancels: never show a banner / sound.
+
     if (type === 'call_status' || data?.silent === '1' || data?.silent === 1) {
       return {
         shouldShowAlert: false,
@@ -54,20 +61,22 @@ Notifications.setNotificationHandler({
         shouldSetBadge: false,
       };
     }
-    // Incoming call: when JS is alive we ring via InCallManager ringtone on the
-    // RING stream. Suppress the notification *sound* here so we never double-play
-    // notification-channel audio over the proper ringtone (WhatsApp parity).
-    // Still show the banner (locked-screen / heads-up) for Accept/Decline.
+
     const isCall = type === 'call' || kind === 'call';
     if (isCall) {
       return {
         shouldShowAlert: true,
-        shouldPlaySound: false, // ringtone is InCallManager, not notification stream
+        shouldPlaySound: false,
         shouldSetBadge: false,
       };
     }
+
     const isMsg =
-      type === 'message' || type === 'mention' || kind === 'message' || kind === 'group';
+      type === 'message' ||
+      type === 'mention' ||
+      kind === 'message' ||
+      kind === 'group' ||
+      kind === 'mention';
     const suppress = isMsg && convId != null && convId === openConversationId;
     return {
       shouldShowAlert: !suppress,
@@ -78,36 +87,37 @@ Notifications.setNotificationHandler({
 });
 
 let initialized = false;
-let pushActive = false;                 // true once an FCM token is registered
-let lastToken: string | null = null;    // most recent FCM device token (for refresh/unregister)
+let pushActive = false;
+let lastToken: string | null = null;
 let openConversationId: string | null = null;
 
-/** Notification response handler callback */
 export type NotificationResponseHandler = (response: {
   type: string;
   action?: string;
   conversationId?: string;
   callId?: string;
   statusId?: string;
+  communityId?: string;
   replyText?: string;
 }) => Promise<void>;
 
 let notificationResponseHandler: NotificationResponseHandler | null = null;
 
-/** Register a handler for notification responses (taps, actions) */
 export function setNotificationResponseHandler(handler: NotificationResponseHandler | null): void {
   notificationResponseHandler = handler;
 }
 
-/** True when FCM is configured + a device token was registered (killed-state push
- *  is live) — the local realtime notifier steps aside to avoid duplicates. */
-export function isPushActive(): boolean { return pushActive; }
+export function isPushActive(): boolean {
+  return pushActive;
+}
 
-/** ChatScreen calls this on focus/blur so we never notify for the open chat. */
-export function setOpenConversation(id: string | null): void { openConversationId = id; }
-export function getOpenConversation(): string | null { return openConversationId; }
+export function setOpenConversation(id: string | null): void {
+  openConversationId = id;
+}
+export function getOpenConversation(): string | null {
+  return openConversationId;
+}
 
-/** Listen for notification responses (user taps notification or action button). */
 export function startNotificationResponseListener(): () => void {
   try {
     const sub = Notifications.addNotificationResponseReceivedListener((response) => {
@@ -121,66 +131,124 @@ export function startNotificationResponseListener(): () => void {
           conversationId: typeof data?.conversationId === 'string' ? data.conversationId : undefined,
           callId: typeof data?.callId === 'string' ? data.callId : undefined,
           statusId: typeof data?.statusId === 'string' ? data.statusId : undefined,
+          communityId: typeof data?.communityId === 'string' ? data.communityId : undefined,
           replyText: typeof response.userText === 'string' ? response.userText : undefined,
         }).catch(console.error);
       }
     });
-    return () => { try { sub.remove(); } catch { /* ignore */ } };
+    return () => {
+      try {
+        sub.remove();
+      } catch { /* ignore */ }
+    };
   } catch {
     return () => {};
   }
 }
 
-/** Create the channels once + register action categories. Idempotent. */
+/** Create channels + action categories. Idempotent. */
 export async function initNotifications(): Promise<void> {
   if (initialized) return;
   initialized = true;
 
-  // Action categories (buttons). Reply is a text-input action.
   try {
+    // Message: Reply / Mark read / Mute / Archive (WhatsApp parity actions)
     await Notifications.setNotificationCategoryAsync(CATEGORY.message, [
-      { identifier: 'reply', buttonTitle: 'Reply', textInput: { submitButtonTitle: 'Send', placeholder: 'Message' } },
-      { identifier: 'mark_read', buttonTitle: 'Mark as read' },
-      { identifier: 'open', buttonTitle: 'Open chat' },
+      {
+        identifier: 'reply',
+        buttonTitle: 'Reply',
+        textInput: { submitButtonTitle: 'Send', placeholder: 'Message' },
+        options: { opensAppToForeground: false },
+      },
+      {
+        identifier: 'mark_read',
+        buttonTitle: 'Mark as read',
+        options: { opensAppToForeground: false },
+      },
+      {
+        identifier: 'mute',
+        buttonTitle: 'Mute',
+        options: { opensAppToForeground: false },
+      },
+      {
+        identifier: 'archive',
+        buttonTitle: 'Archive',
+        options: { opensAppToForeground: false },
+      },
     ]);
     await Notifications.setNotificationCategoryAsync(CATEGORY.call, [
-      { identifier: 'accept', buttonTitle: 'Accept' },
-      { identifier: 'decline', buttonTitle: 'Decline', options: { isDestructive: true } },
+      {
+        identifier: 'accept',
+        buttonTitle: 'Accept',
+        options: { opensAppToForeground: true },
+      },
+      {
+        identifier: 'decline',
+        buttonTitle: 'Decline',
+        options: { isDestructive: true, opensAppToForeground: false },
+      },
     ]);
     await Notifications.setNotificationCategoryAsync(CATEGORY.status, [
-      { identifier: 'reply', buttonTitle: 'Reply', textInput: { submitButtonTitle: 'Send', placeholder: 'Your reply' } },
+      {
+        identifier: 'reply',
+        buttonTitle: 'Reply',
+        textInput: { submitButtonTitle: 'Send', placeholder: 'Your reply' },
+      },
       { identifier: 'open', buttonTitle: 'View status' },
     ]);
     await Notifications.setNotificationCategoryAsync(CATEGORY.mention, [
-      { identifier: 'reply', buttonTitle: 'Reply', textInput: { submitButtonTitle: 'Send', placeholder: 'Your message' } },
+      {
+        identifier: 'reply',
+        buttonTitle: 'Reply',
+        textInput: { submitButtonTitle: 'Send', placeholder: 'Your message' },
+      },
+      {
+        identifier: 'mark_read',
+        buttonTitle: 'Mark as read',
+        options: { opensAppToForeground: false },
+      },
       { identifier: 'open', buttonTitle: 'Open group' },
     ]);
-  } catch { /* categories are best-effort */ }
+  } catch { /* categories best-effort */ }
 
   if (Platform.OS !== 'android') return;
 
   const done = await AsyncStorage.getItem(CHANNELS_KEY).catch(() => null);
-  if (done === CHANNELS_VERSION) return;   // already created this version
+  if (done === CHANNELS_VERSION) return;
 
   const I = Notifications.AndroidImportance;
   try {
+    // Channel groups (system settings organization)
+    await Notifications.setNotificationChannelGroupAsync('chats', { name: 'Chats' });
+    await Notifications.setNotificationChannelGroupAsync('calls_grp', { name: 'Calls' });
+    await Notifications.setNotificationChannelGroupAsync('other', { name: 'Other' });
+
     await Notifications.setNotificationChannelAsync(CHANNELS.messages, {
-      name: 'Messages', importance: I.MAX, sound: 'default',
-      vibrationPattern: [0, 250, 250, 250], enableVibrate: true, enableLights: true, lightColor: LED,
-      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC, showBadge: true,
+      name: 'Messages',
+      importance: I.MAX,
+      sound: 'default',
+      vibrationPattern: [0, 250, 250, 250],
+      enableVibrate: true,
+      enableLights: true,
+      lightColor: LED,
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+      showBadge: true,
+      groupId: 'chats',
     });
     await Notifications.setNotificationChannelAsync(CHANNELS.groups, {
-      name: 'Group Messages', importance: I.HIGH, sound: 'default',
-      vibrationPattern: [0, 250, 250, 250], enableVibrate: true, enableLights: true, lightColor: LED, showBadge: true,
+      name: 'Group Messages',
+      importance: I.HIGH,
+      sound: 'default',
+      vibrationPattern: [0, 250, 250, 250],
+      enableVibrate: true,
+      enableLights: true,
+      lightColor: LED,
+      showBadge: true,
+      groupId: 'chats',
     });
-    // Incoming-call channel: MAX importance + RINGTONE audio usage so Android
-    // routes sound through the ringtone stream (not notification "ding").
-    // Vibration pattern is a classic long ring cadence.
     await Notifications.setNotificationChannelAsync(CHANNELS.calls, {
       name: 'Incoming calls',
       importance: I.MAX,
-      // 'default' = system default *for this channel*; with RINGTONE usage OEMs
-      // typically map this to the phone ringtone — correct for the *callee*.
       sound: 'default',
       vibrationPattern: [0, 1000, 1000, 1000, 1000, 1000],
       enableVibrate: true,
@@ -189,6 +257,7 @@ export async function initNotifications(): Promise<void> {
       bypassDnd: true,
       lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
       showBadge: false,
+      groupId: 'calls_grp',
       audioAttributes: {
         usage: Notifications.AndroidAudioUsage.NOTIFICATION_RINGTONE,
         contentType: Notifications.AndroidAudioContentType.SONIFICATION,
@@ -207,6 +276,7 @@ export async function initNotifications(): Promise<void> {
       enableLights: true,
       lightColor: LED,
       showBadge: true,
+      groupId: 'calls_grp',
       audioAttributes: {
         usage: Notifications.AndroidAudioUsage.NOTIFICATION,
         contentType: Notifications.AndroidAudioContentType.SONIFICATION,
@@ -217,44 +287,67 @@ export async function initNotifications(): Promise<void> {
       },
     });
     await Notifications.setNotificationChannelAsync(CHANNELS.status, {
-      name: 'Status Replies', importance: I.HIGH, sound: 'default',
-      vibrationPattern: [0, 250, 250, 250], enableVibrate: true, enableLights: true, lightColor: LED, showBadge: true,
+      name: 'Status Replies',
+      importance: I.HIGH,
+      sound: 'default',
+      vibrationPattern: [0, 250, 250, 250],
+      enableVibrate: true,
+      enableLights: true,
+      lightColor: LED,
+      showBadge: true,
+      groupId: 'other',
     });
     await Notifications.setNotificationChannelAsync(CHANNELS.mentions, {
-      name: 'Mentions', importance: I.MAX, sound: 'default',
-      vibrationPattern: [0, 250, 250, 250], enableVibrate: true, enableLights: true, lightColor: LED, showBadge: true,
+      name: 'Mentions',
+      importance: I.MAX,
+      sound: 'default',
+      vibrationPattern: [0, 250, 250, 250],
+      enableVibrate: true,
+      enableLights: true,
+      lightColor: LED,
+      showBadge: true,
+      groupId: 'chats',
     });
     await Notifications.setNotificationChannelAsync(CHANNELS.communities, {
-      name: 'Communities', importance: I.HIGH, sound: 'default',
-      vibrationPattern: [0, 250, 250, 250], enableVibrate: true, enableLights: true, lightColor: LED, showBadge: true,
+      name: 'Communities',
+      importance: I.HIGH,
+      sound: 'default',
+      vibrationPattern: [0, 250, 250, 250],
+      enableVibrate: true,
+      enableLights: true,
+      lightColor: LED,
+      showBadge: true,
+      groupId: 'other',
     });
     await Notifications.setNotificationChannelAsync(CHANNELS.system, {
-      name: 'Admin / System', importance: I.HIGH, sound: 'default', enableVibrate: true, enableLights: true, lightColor: LED,
+      name: 'Admin / System',
+      importance: I.HIGH,
+      sound: 'default',
+      enableVibrate: true,
+      enableLights: true,
+      lightColor: LED,
+      groupId: 'other',
     });
     await AsyncStorage.setItem(CHANNELS_KEY, CHANNELS_VERSION);
   } catch { /* channel creation best-effort */ }
 }
 
-/** Ask for POST_NOTIFICATIONS (Android 13+) and register the FCM token. Best-effort. */
+/** Ask for POST_NOTIFICATIONS (Android 13+) and register the FCM token. */
 export async function registerForPush(): Promise<void> {
   try {
     const { status } = await Notifications.getPermissionsAsync();
     let granted = status === 'granted';
     if (!granted) granted = (await Notifications.requestPermissionsAsync()).status === 'granted';
     if (!granted) return;
-    // Raw FCM device token — sent directly by our push Edge Function (FCM v1).
     const token = await Notifications.getDevicePushTokenAsync();
     if (token?.data) {
       lastToken = String(token.data);
       await registerPushToken(supabase, lastToken, (token.type as any) ?? 'android');
       pushActive = true;
     }
-  } catch { /* FCM not configured (no google-services.json) yet — ignore */ }
+  } catch { /* FCM not configured yet */ }
 }
 
-// FCM rotates device tokens (app data cleared, restore, periodic refresh). Keep the
-// server registry current so pushes never silently stop. Call once; returns an
-// unsubscribe. Safe no-op if FCM isn't configured.
 export function startPushTokenRefresh(): () => void {
   try {
     const sub = Notifications.addPushTokenListener((t) => {
@@ -264,55 +357,156 @@ export function startPushTokenRefresh(): () => void {
       pushActive = true;
       registerPushToken(supabase, next, ((t as any)?.type as any) ?? 'android').catch(() => {});
     });
-    return () => { try { sub.remove(); } catch { /* ignore */ } };
+    return () => {
+      try {
+        sub.remove();
+      } catch { /* ignore */ }
+    };
   } catch {
     return () => {};
   }
 }
 
-/** Drop this device's token on sign-out so a shared phone doesn't keep receiving the
- *  previous user's messages until the next login re-registers. Best-effort. */
 export async function unregisterForPush(): Promise<void> {
   try {
     const token = lastToken ?? String((await Notifications.getDevicePushTokenAsync())?.data ?? '');
     if (token) await removePushToken(supabase, token);
+  } catch { /* ignore */ } finally {
+    lastToken = null;
+    pushActive = false;
+  }
+}
+
+// ── Stacking / grouping (one notification per chat) ─────────────────────────
+
+type StackEntry = { count: number; lastBody: string; title: string };
+
+async function loadStacks(): Promise<Record<string, StackEntry>> {
+  try {
+    const raw = await AsyncStorage.getItem(UNREAD_STACK_KEY);
+    return raw ? (JSON.parse(raw) as Record<string, StackEntry>) : {};
+  } catch {
+    return {};
+  }
+}
+
+async function saveStacks(s: Record<string, StackEntry>): Promise<void> {
+  try {
+    await AsyncStorage.setItem(UNREAD_STACK_KEY, JSON.stringify(s));
   } catch { /* ignore */ }
-  finally { lastToken = null; pushActive = false; }
+}
+
+async function bumpStack(
+  conversationId: string,
+  title: string,
+  body: string,
+): Promise<{ count: number; displayBody: string }> {
+  const stacks = await loadStacks();
+  const prev = stacks[conversationId];
+  const count = (prev?.count ?? 0) + 1;
+  stacks[conversationId] = { count, lastBody: body, title };
+  await saveStacks(stacks);
+  // WhatsApp: first message shows preview; stacked shows "N new messages".
+  const displayBody =
+    count <= 1 ? body : count === 2 ? `${body}\n+1 more message` : `${body}\n+${count - 1} more messages`;
+  return { count, displayBody };
+}
+
+export async function resetConversationStack(conversationId: string): Promise<void> {
+  const stacks = await loadStacks();
+  if (stacks[conversationId]) {
+    delete stacks[conversationId];
+    await saveStacks(stacks);
+  }
+}
+
+/** Human preview for any message type (photos, voice, polls, stickers, …). */
+export function messagePreviewText(m: {
+  type?: string | null;
+  content?: string | null;
+  media_url?: string | null;
+}): string {
+  const type = m.type ?? 'text';
+  const content = (m.content ?? '').trim();
+
+  if (type === 'text') {
+    if (!content) return 'Message';
+    if (content.startsWith('📊')) return content.slice(0, 180);
+    if (/^(📍|location:)/i.test(content)) return '📍 Location';
+    if (/^(👤|contact:)/i.test(content)) return '👤 Contact';
+    return content.slice(0, 180);
+  }
+  if (type === 'image') {
+    if (/\.gif(\?|#|$)/i.test(m.media_url ?? '') || /gif/i.test(content)) return '🎞️ GIF';
+    return '📷 Photo';
+  }
+  if (type === 'video') return '🎥 Video';
+  if (type === 'audio' || type === 'voice') return '🎤 Voice message';
+  if (type === 'file') return content ? `📄 ${content.slice(0, 100)}` : '📄 Document';
+  if (type === 'sticker') return 'Sticker';
+  if (type === 'system') return content || 'Update';
+  return 'New message';
 }
 
 export interface MessageNotifOpts {
   conversationId: string;
-  title: string;              // sender / group name
-  body: string;               // message preview (already redacted if preview off)
+  title: string;
+  body: string;
   isGroup?: boolean;
-  vibrate?: boolean;
+  isMention?: boolean;
   messageId?: string;
   senderAvatar?: string;
+  /** When true, do not bump stack (already counted). */
+  replaceOnly?: boolean;
 }
 
-/** Present a local message notification (app open / background). Grouped per chat. */
+/** Present a local message notification. Grouped per chat; stacked body. */
 export async function presentMessageNotification(o: MessageNotifOpts): Promise<void> {
   try {
+    // Never notify for the open chat (double-guard with handler).
+    if (openConversationId === o.conversationId) return;
+
+    const { count, displayBody } = o.replaceOnly
+      ? { count: 1, displayBody: o.body }
+      : await bumpStack(o.conversationId, o.title, o.body);
+
+    // Title: "Name" or "Name (5)" style when stacked (Android still shows one card).
+    const title = count > 1 ? `${o.title}` : o.title;
+    const body =
+      count > 1
+        ? // Lead with count so collapsed tray reads like WhatsApp.
+          `${count} new messages\n${o.body}`
+        : displayBody;
+
     await Notifications.scheduleNotificationAsync({
       // Same id as FCM android.notification.tag → collapses to one tray entry.
       identifier: `chat:${o.conversationId}`,
       content: {
-        title: o.title,
-        body: o.body,
-        categoryIdentifier: CATEGORY.message,
+        title,
+        body,
+        subtitle: count > 1 ? `${count} new messages` : undefined,
+        categoryIdentifier: o.isMention ? CATEGORY.mention : CATEGORY.message,
         data: {
-          type: 'message',
+          type: o.isMention ? 'mention' : 'message',
           conversationId: o.conversationId,
           messageId: o.messageId ?? '',
-          kind: o.isGroup ? 'group' : 'message',
+          kind: o.isMention ? 'mention' : o.isGroup ? 'group' : 'message',
+          count: String(count),
+          avatarUrl: o.senderAvatar ?? '',
         },
         sound: 'default',
         badge: 1,
+        color: ACCENT,
         ...(Platform.OS === 'android'
           ? {
-              channelId: o.isGroup ? CHANNELS.groups : CHANNELS.messages,
+              channelId: o.isMention
+                ? CHANNELS.mentions
+                : o.isGroup
+                  ? CHANNELS.groups
+                  : CHANNELS.messages,
               priority: Notifications.AndroidNotificationPriority.HIGH,
               sticky: false,
+              vibrate: [0, 250, 250, 250],
             }
           : {}),
       },
@@ -326,15 +520,12 @@ export interface CallNotifOpts {
   conversationId: string;
   title: string;
   video?: boolean;
+  avatarUrl?: string;
 }
 
-/** Present a high-priority incoming-call notification with Accept/Decline.
- *  Sound for *killed/background* is the Calls channel (ringtone stream).
- *  When JS is alive, InCallManager plays the ringtone; the foreground handler
- *  suppresses notification channel audio to avoid double-ring. */
+/** High-priority incoming-call notification with Accept/Decline. */
 export async function presentCallNotification(o: CallNotifOpts): Promise<void> {
   try {
-    // Replace any prior call notif for this id (no duplicates).
     await Notifications.dismissNotificationAsync(`call:${o.callId}`).catch(() => {});
     await Notifications.scheduleNotificationAsync({
       identifier: `call:${o.callId}`,
@@ -348,39 +539,53 @@ export async function presentCallNotification(o: CallNotifOpts): Promise<void> {
           conversationId: o.conversationId,
           video: String(!!o.video),
           kind: 'call',
+          avatarUrl: o.avatarUrl ?? '',
         },
         priority: Notifications.AndroidNotificationPriority.MAX,
         sticky: true,
-        // Android: channel owns the sound (ringtone usage). iOS: default.
+        color: ACCENT,
         sound: Platform.OS === 'ios' ? 'default' : undefined,
         ...(Platform.OS === 'android'
           ? {
               channelId: CHANNELS.calls,
-              // Heads-up + lock-screen prominence (WhatsApp-class).
-              // Full-screen intent requires USE_FULL_SCREEN_INTENT (manifest).
+              vibrate: [0, 1000, 1000, 1000],
             }
-          : {}),
+          : {
+              interruptionLevel: 'timeSensitive' as const,
+            }),
       },
       trigger: null,
     });
   } catch { /* ignore */ }
 }
 
-/** Update the app icon badge count (iOS + Android 8+ launchers that support it). */
+/** Update app icon badge (iOS + supporting Android launchers). */
 export async function setBadgeCount(n: number): Promise<void> {
   try {
     await Notifications.setBadgeCountAsync(Math.max(0, Math.floor(n)));
   } catch { /* ignore */ }
 }
 
+/** Pull authoritative unread total from the server (preferred over local estimates). */
+export async function syncBadgeFromServer(): Promise<number> {
+  try {
+    const { data, error } = await supabase.rpc('my_total_unread');
+    if (error) throw error;
+    const n = typeof data === 'number' ? data : Number(data) || 0;
+    await setBadgeCount(n);
+    return n;
+  } catch {
+    return -1;
+  }
+}
+
 export interface StatusReplyNotifOpts {
   statusId: string;
   statusOwnerId: string;
-  title: string;  // who replied
-  body: string;   // reply preview
+  title: string;
+  body: string;
 }
 
-/** Status reply notification */
 export async function presentStatusReplyNotification(o: StatusReplyNotifOpts): Promise<void> {
   try {
     await Notifications.scheduleNotificationAsync({
@@ -392,6 +597,7 @@ export async function presentStatusReplyNotification(o: StatusReplyNotifOpts): P
         data: { type: 'status_reply', statusId: o.statusId, statusOwnerId: o.statusOwnerId },
         ...(Platform.OS === 'android' ? { channelId: CHANNELS.status } : {}),
         sound: 'default',
+        color: ACCENT,
       },
       trigger: null,
     });
@@ -403,24 +609,18 @@ export interface MentionNotifOpts {
   groupName: string;
   mentioner: string;
   body: string;
+  messageId?: string;
 }
 
-/** Group mention notification */
 export async function presentMentionNotification(o: MentionNotifOpts): Promise<void> {
-  try {
-    await Notifications.scheduleNotificationAsync({
-      identifier: `mention:${o.conversationId}`,
-      content: {
-        title: `${o.mentioner} in ${o.groupName}`,
-        body: o.body,
-        categoryIdentifier: CATEGORY.mention,
-        data: { type: 'mention', conversationId: o.conversationId },
-        ...(Platform.OS === 'android' ? { channelId: CHANNELS.mentions } : {}),
-        sound: 'default',
-      },
-      trigger: null,
-    });
-  } catch { /* ignore */ }
+  return presentMessageNotification({
+    conversationId: o.conversationId,
+    title: o.groupName,
+    body: `${o.mentioner}: ${o.body}`,
+    isGroup: true,
+    isMention: true,
+    messageId: o.messageId,
+  });
 }
 
 export interface MissedCallNotifOpts {
@@ -430,17 +630,19 @@ export interface MissedCallNotifOpts {
   isVideo?: boolean;
 }
 
-/** Missed call notification (when not answered in time) */
 export async function presentMissedCallNotification(o: MissedCallNotifOpts): Promise<void> {
   try {
+    // Drop any lingering ring notification first (no ghost calls).
+    await clearCallNotification(o.callId);
     await Notifications.scheduleNotificationAsync({
       identifier: `missed:${o.callId}`,
       content: {
-        title: `Missed ${o.isVideo ? 'video' : 'voice'} call from ${o.title}`,
-        body: 'Tap to call back',
+        title: `Missed ${o.isVideo ? 'video' : 'voice'} call`,
+        body: o.title,
         data: { type: 'missed_call', callId: o.callId, conversationId: o.conversationId },
         ...(Platform.OS === 'android' ? { channelId: CHANNELS.missedCalls } : {}),
         sound: 'default',
+        color: ACCENT,
       },
       trigger: null,
     });
@@ -450,11 +652,10 @@ export async function presentMissedCallNotification(o: MissedCallNotifOpts): Pro
 export interface CommunityNotifOpts {
   communityId: string;
   communityName: string;
-  title: string;  // announcement or event
+  title: string;
   body: string;
 }
 
-/** Community announcement notification */
 export async function presentCommunityNotification(o: CommunityNotifOpts): Promise<void> {
   try {
     await Notifications.scheduleNotificationAsync({
@@ -465,33 +666,56 @@ export async function presentCommunityNotification(o: CommunityNotifOpts): Promi
         data: { type: 'community_announcement', communityId: o.communityId },
         ...(Platform.OS === 'android' ? { channelId: CHANNELS.communities } : {}),
         sound: 'default',
+        color: ACCENT,
       },
       trigger: null,
     });
   } catch { /* ignore */ }
 }
 
-/** Clear a chat's notification when it's opened / read. */
+/** Clear a chat's notification when opened / read / muted / archived. */
 export async function clearConversationNotification(conversationId: string): Promise<void> {
-  try { await Notifications.dismissNotificationAsync(`chat:${conversationId}`); } catch { /* ignore */ }
+  try {
+    await Notifications.dismissNotificationAsync(`chat:${conversationId}`);
+  } catch { /* ignore */ }
+  await resetConversationStack(conversationId);
 }
 
 export async function clearCallNotification(callId: string): Promise<void> {
-  try { await Notifications.dismissNotificationAsync(`call:${callId}`); } catch { /* ignore */ }
+  try {
+    await Notifications.dismissNotificationAsync(`call:${callId}`);
+  } catch { /* ignore */ }
 }
 
 export async function clearStatusReplyNotification(statusId: string): Promise<void> {
-  try { await Notifications.dismissNotificationAsync(`status:${statusId}`); } catch { /* ignore */ }
+  try {
+    await Notifications.dismissNotificationAsync(`status:${statusId}`);
+  } catch { /* ignore */ }
 }
 
 export async function clearMentionNotification(conversationId: string): Promise<void> {
-  try { await Notifications.dismissNotificationAsync(`mention:${conversationId}`); } catch { /* ignore */ }
+  return clearConversationNotification(conversationId);
 }
 
 export async function clearMissedCallNotification(callId: string): Promise<void> {
-  try { await Notifications.dismissNotificationAsync(`missed:${callId}`); } catch { /* ignore */ }
+  try {
+    await Notifications.dismissNotificationAsync(`missed:${callId}`);
+  } catch { /* ignore */ }
 }
 
 export async function clearCommunityNotification(communityId: string): Promise<void> {
-  try { await Notifications.dismissNotificationAsync(`community:${communityId}`); } catch { /* ignore */ }
+  try {
+    await Notifications.dismissNotificationAsync(`community:${communityId}`);
+  } catch { /* ignore */ }
+}
+
+/** Dismiss all presented notifications (e.g. sign-out). */
+export async function clearAllNotifications(): Promise<void> {
+  try {
+    await Notifications.dismissAllNotificationsAsync();
+  } catch { /* ignore */ }
+  try {
+    await AsyncStorage.removeItem(UNREAD_STACK_KEY);
+  } catch { /* ignore */ }
+  await setBadgeCount(0);
 }

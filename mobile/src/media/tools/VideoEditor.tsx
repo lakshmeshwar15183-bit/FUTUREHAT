@@ -135,7 +135,9 @@ export default function VideoEditor({
           <Ionicons name="chevron-forward" size={16} color="#000" />
         </Pressable>
       </View>
-      <Text style={styles.trimHint}>Trim {fmt(startMs)} – {fmt(endMs)} · {fmt(trimmedMs)} · tap handles to nudge, long-press to set at playhead</Text>
+      <Text style={styles.trimHint}>
+        Trim {fmt(startMs)} – {fmt(endMs)} · {fmt(trimmedMs)} · tap handles to nudge, long-press to set at playhead
+      </Text>
 
       {/* Controls */}
       <View style={styles.controls}>

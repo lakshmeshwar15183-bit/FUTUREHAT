@@ -5,10 +5,10 @@
 //   • Global JS exceptions (ErrorUtils)
 //   • Unhandled promise rejections
 //
-// Persistence: AsyncStorage (Diagnostics screen). Optional remote hook:
-//   EXPO_PUBLIC_CRASH_WEBHOOK_URL — POST JSON breadcrumbs (no secrets/PII).
-//
-// When you add Sentry later, keep this as a fallback and also forward here.
+// Persistence: AsyncStorage (Diagnostics screen).
+// Remote (P0): posts to Edge Function `crash-report` by default
+//   `${EXPO_PUBLIC_SUPABASE_URL}/functions/v1/crash-report`
+// Override with EXPO_PUBLIC_CRASH_WEBHOOK_URL if needed.
 import { Platform } from 'react-native';
 
 import { APP_VERSION } from '../branding';
@@ -16,13 +16,30 @@ import { breadcrumb, recordCrash, logError } from './prodLog';
 
 let installed = false;
 
+function crashEndpoint(): string | null {
+  const override = process.env.EXPO_PUBLIC_CRASH_WEBHOOK_URL?.trim();
+  if (override) return override;
+  const base = process.env.EXPO_PUBLIC_SUPABASE_URL?.replace(/\/+$/, '');
+  if (!base) return null;
+  return `${base}/functions/v1/crash-report`;
+}
+
 async function maybePostRemote(payload: Record<string, unknown>): Promise<void> {
-  const url = process.env.EXPO_PUBLIC_CRASH_WEBHOOK_URL?.trim();
+  const url = crashEndpoint();
   if (!url) return;
+  const anon = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY?.trim();
   try {
     await fetch(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        ...(anon
+          ? {
+              apikey: anon,
+              Authorization: `Bearer ${anon}`,
+            }
+          : {}),
+      },
       body: JSON.stringify({
         ...payload,
         app: 'Lumixo',
@@ -55,7 +72,6 @@ export function installCrashReporter(): void {
   if (installed) return;
   installed = true;
 
-  // React Native global ErrorUtils
   try {
     const EU = (global as any).ErrorUtils;
     if (EU?.getGlobalHandler && EU?.setGlobalHandler) {
@@ -75,7 +91,6 @@ export function installCrashReporter(): void {
     /* ignore */
   }
 
-  // Unhandled promise rejections (best-effort; optional dependency path).
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const rejectionTracking = require('promise/setimmediate/rejection-tracking');
@@ -89,7 +104,7 @@ export function installCrashReporter(): void {
       });
     }
   } catch {
-    /* optional — not present in all RN bundles */
+    /* optional */
   }
 
   void breadcrumb('boot', 'crash reporter installed');
