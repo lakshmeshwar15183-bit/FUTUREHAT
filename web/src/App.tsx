@@ -617,7 +617,14 @@ function AppInner() {
                       </div>
                     </div>
                   ))}
-                  {searchResults.length === 0 && !loading && <div className="no-results">No users found</div>}
+                  {searchResults.length === 0 && !loading && (
+                    <div className="no-results">
+                      <div className="no-results-mascot" aria-hidden>
+                        <LumixoCat mood="confused" size="sm" decorative />
+                      </div>
+                      No users found
+                    </div>
+                  )}
                 </>
               ) : (
                 <>
@@ -644,7 +651,12 @@ function AppInner() {
                     </div>
                   ))}
                   {recentContacts.length === 0 && (
-                    <div className="no-results">No recent contacts yet. Search above to start your first chat.</div>
+                    <div className="no-results">
+                      <div className="no-results-mascot" aria-hidden>
+                        <LumixoCat mood="wave" size="sm" decorative />
+                      </div>
+                      No recent contacts yet. Search above to start your first chat.
+                    </div>
                   )}
                 </>
               )}

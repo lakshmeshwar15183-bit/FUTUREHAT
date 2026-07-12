@@ -29,6 +29,7 @@ import {
   type Profile,
   type RecentContact,
 } from '../lib/shared';
+import { LumixoCat } from '../components/LumixoCat';
 import {
   getCachedRecentContacts,
   cacheRecentContacts,
@@ -222,11 +223,17 @@ export default function NewChatScreen() {
         )}
         ListEmptyComponent={
           isSearching && !searching ? (
-            <Text style={styles.empty}>No users found for “{query.trim()}”.</Text>
+            <View style={styles.emptyWrap}>
+              <LumixoCat mood="confused" size="sm" decorative />
+              <Text style={styles.empty}>No users found for “{query.trim()}”.</Text>
+            </View>
           ) : !isSearching ? (
-            <Text style={styles.empty}>
-              No recent contacts yet. Search above to start your first chat.
-            </Text>
+            <View style={styles.emptyWrap}>
+              <LumixoCat mood="wave" size="sm" decorative />
+              <Text style={styles.empty}>
+                No recent contacts yet. Search above to start your first chat.
+              </Text>
+            </View>
           ) : null
         }
       />
@@ -262,5 +269,6 @@ const makeStyles = (colors: Palette) =>
     rowBody: { flex: 1, marginLeft: spacing(3) },
     name: { color: colors.text, fontSize: font.heading, fontWeight: '500' },
     sub: { color: colors.textMuted, fontSize: font.small, marginTop: 2 },
-    empty: { color: colors.textMuted, textAlign: 'center', marginTop: spacing(8), fontSize: font.body, paddingHorizontal: spacing(6) },
+    emptyWrap: { alignItems: 'center', marginTop: spacing(6), paddingHorizontal: spacing(6) },
+    empty: { color: colors.textMuted, textAlign: 'center', marginTop: spacing(3), fontSize: font.body },
   });

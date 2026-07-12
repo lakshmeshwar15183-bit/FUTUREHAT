@@ -168,6 +168,11 @@
   color: var(--fh-muted);
 }
 
+.no-results-mascot {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 6px;
+}
 .no-results {
   text-align: center;
   padding: 24px;
