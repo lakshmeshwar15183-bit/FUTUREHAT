@@ -27,6 +27,7 @@ import type { ConversationSummary, Profile, StreakSummary } from '@shared/types'
 import { StatusStrip } from './status/StatusStrip';
 import { WebNotifications } from './lib/WebNotificationsBridge';
 import { CommunitiesIcon, NewGroupIcon, NewChatIcon, SettingsIcon, SignOutIcon, SearchIcon, MoreIcon, PhoneIcon, TrashIcon } from './Icons';
+import { LumixoCat } from './mascot/LumixoCat';
 import { format, isToday, isYesterday } from 'date-fns';
 import {
   afterFirstPaint,
@@ -814,6 +815,9 @@ function AppInner() {
           )}
           {!listHydrating && visibleConvs.length === 0 && (
             <div className="empty-state">
+              <div className="empty-state-mascot" aria-hidden>
+                <LumixoCat mood={filterQ ? 'confused' : 'wave'} size="md" decorative />
+              </div>
               <div className="empty-state-title">
                 {filterQ
                   ? 'No matching chats'
@@ -860,7 +864,9 @@ function AppInner() {
           </div>
         ) : (
           <div key="empty" className="empty-chat">
-            <div className="empty-chat-icon">💬</div>
+            <div className="empty-chat-mascot" aria-hidden>
+              <LumixoCat mood="wave" size="lg" decorative />
+            </div>
             <h3>Welcome to Lumixo</h3>
             <p>Select a conversation or start a new chat</p>
             <button type="button" className="empty-cta-primary" onClick={() => setShowSearch(true)}>

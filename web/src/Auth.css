@@ -53,21 +53,21 @@
 .auth-mascot {
   display: flex;
   justify-content: center;
-  /* Sit the cat on top of the card edge */
-  margin: -88px auto 4px;
-  height: 180px;
+  /* Sit Lumi on top of the card edge */
+  margin: -96px auto 2px;
+  height: 200px;
   position: relative;
   z-index: 2;
-  filter: drop-shadow(0 12px 24px rgba(0, 0, 0, 0.28));
+  filter: drop-shadow(0 10px 22px rgba(0, 168, 132, 0.18)), drop-shadow(0 8px 18px rgba(0, 0, 0, 0.2));
 }
 
 @media (max-width: 420px) {
   .auth-mascot {
-    margin-top: -64px;
-    height: 150px;
+    margin-top: -72px;
+    height: 168px;
   }
   .auth-mascot .lc-root {
-    transform: scale(0.85);
+    transform: scale(0.84);
   }
 }
 

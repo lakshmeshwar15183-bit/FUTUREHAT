@@ -6,6 +6,7 @@
 
 import { useEffect, useState, type FormEvent } from 'react';
 import { supabase } from './supabase';
+import { LumixoCat } from './mascot/LumixoCat';
 import './Auth.css';
 
 interface Props {
@@ -61,6 +62,9 @@ export function ResetPasswordScreen({ hasRecoverySession, onDone }: Props) {
     <div className="auth-screen">
       <div className="auth-aurora" aria-hidden />
       <div className="auth-card glass auth-card-enter">
+        <div className="auth-mascot" aria-hidden>
+          <LumixoCat mood={done ? 'celebrating' : hasRecoverySession ? 'hiding' : 'sad'} size="lg" decorative />
+        </div>
         <h1 className="auth-logo">Lumixo</h1>
         <p className="auth-tagline">Choose a new password</p>
 
@@ -111,8 +115,6 @@ export function ResetPasswordScreen({ hasRecoverySession, onDone }: Props) {
           </form>
         )}
       </div>
-
-      <div className="auth-footer">Developed by LAKSHMESHWAR PANDEY</div>
     </div>
   );
 }

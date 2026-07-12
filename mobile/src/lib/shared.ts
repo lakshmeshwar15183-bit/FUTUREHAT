@@ -27,6 +27,8 @@ export {
   catGazeFromEmail,
   catAriaLabel,
   CAT_SIZE_PX,
+  CAT_MOTION,
+  CAT_PALETTE,
   type CatMood,
   type CatSize,
 } from '../../../shared/lumixoCat';

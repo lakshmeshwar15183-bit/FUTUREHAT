@@ -25,6 +25,7 @@ import * as Haptics from 'expo-haptics';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
+import { LumixoCat } from '../components/LumixoCat';
 import { supabase } from '../lib/supabase';
 import {
   getMyConversations,
@@ -1269,7 +1270,7 @@ export default function ConversationsScreen() {
         ListEmptyComponent={
           !loading ? (
             <View style={styles.empty}>
-              <Ionicons name="chatbubbles-outline" size={64} color={colors.textFaint} />
+              <LumixoCat mood={q ? 'confused' : 'wave'} size="md" decorative />
               <Text style={styles.emptyTitle}>
                 {q
                   ? 'No matching chats'

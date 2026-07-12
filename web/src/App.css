@@ -381,6 +381,11 @@
   color: var(--fh-muted);
   font-size: 14px;
 }
+.empty-state-mascot {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 8px;
+}
 .empty-state-title {
   color: var(--fh-text);
   font-size: 16px;
@@ -475,6 +480,12 @@
   font-size: 64px;
   margin-bottom: 16px;
   opacity: 0.5;
+}
+.empty-chat-mascot {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 12px;
+  filter: drop-shadow(0 8px 20px rgba(0, 0, 0, 0.18));
 }
 
 .empty-chat h3 {

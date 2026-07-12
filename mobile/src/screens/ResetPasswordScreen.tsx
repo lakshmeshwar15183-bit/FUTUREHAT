@@ -22,6 +22,7 @@ import { useColors, spacing, radius, font, type Palette } from '../theme';
 import { APP_NAME } from '../branding';
 import type { RootStackParamList } from '../navigation/types';
 import { Alert } from '../ui/dialog';
+import { LumixoCat } from '../components/LumixoCat';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ResetPassword'>;
 
@@ -103,6 +104,14 @@ export default function ResetPasswordScreen({ route, navigation }: Props) {
         <Text style={styles.brand}>{APP_NAME}</Text>
         <Text style={styles.tagline}>Choose a new password</Text>
 
+        <View style={styles.mascot} pointerEvents="none">
+          <LumixoCat
+            mood={done ? 'celebrating' : brokenLink ? 'sad' : 'hiding'}
+            size="lg"
+            decorative
+          />
+        </View>
+
         <View style={styles.card}>
           {brokenLink ? (
             <>
@@ -166,7 +175,8 @@ const makeStyles = (colors: Palette) =>
     flex: { flex: 1, backgroundColor: colors.bg },
     container: { flexGrow: 1, paddingHorizontal: spacing(6), alignItems: 'center' },
     brand: { color: colors.primary, fontSize: 38, fontWeight: '800', letterSpacing: 2 },
-    tagline: { color: colors.textMuted, fontSize: font.body, marginTop: spacing(2), marginBottom: spacing(8) },
+    tagline: { color: colors.textMuted, fontSize: font.body, marginTop: spacing(2), marginBottom: spacing(2) },
+    mascot: { alignItems: 'center', marginBottom: -spacing(2), zIndex: 2 },
     card: {
       width: '100%', backgroundColor: colors.surface, borderRadius: radius.lg,
       padding: spacing(5), borderWidth: 1, borderColor: colors.border,

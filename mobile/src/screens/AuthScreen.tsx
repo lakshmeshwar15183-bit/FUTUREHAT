@@ -25,7 +25,7 @@ import {
 } from '../lib/shared';
 import { resetPasswordRedirectUrl } from '../lib/authLinks';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
-import { APP_NAME, CREDIT } from '../branding';
+import { APP_NAME } from '../branding';
 import { LumixoCat } from '../components/LumixoCat';
 
 type Mode = 'signin' | 'signup' | 'forgot';
@@ -255,8 +255,6 @@ export default function AuthScreen() {
             </Pressable>
           </View>
         </View>
-
-        <Text style={styles.credit}>{CREDIT}</Text>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -335,10 +333,5 @@ const makeStyles = (colors: Palette) =>
       textAlign: 'center',
       marginTop: spacing(3),
       fontSize: font.small,
-    },
-    credit: {
-      color: colors.textFaint,
-      fontSize: font.tiny,
-      marginTop: spacing(10),
     },
   });

@@ -223,8 +223,6 @@ export function AuthScreen() {
           )}
         </div>
       </div>
-
-      <div className="auth-footer">Developed by LAKSHMESHWAR PANDEY</div>
     </div>
   );
 }

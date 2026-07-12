@@ -7,9 +7,9 @@
 
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import { recordCrash } from '../lib/prodLog';
+import { LumixoCat } from './LumixoCat';
 
 interface Props {
   children: React.ReactNode;
@@ -51,7 +51,7 @@ function DefaultFallback({ onRetry }: { onRetry: () => void }) {
   const styles = makeStyles(colors);
   return (
     <View style={styles.wrap}>
-      <Ionicons name="alert-circle-outline" size={48} color={colors.textMuted} />
+      <LumixoCat mood="sad" size="md" decorative />
       <Text style={styles.title}>Something went wrong</Text>
       <Text style={styles.body}>This screen hit an unexpected error. Your messages are safe.</Text>
       <Pressable style={styles.btn} onPress={onRetry}>
