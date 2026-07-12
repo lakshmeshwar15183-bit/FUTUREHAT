@@ -4,6 +4,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  AppState,
   FlatList,
   Keyboard,
   Dimensions,
@@ -80,7 +81,6 @@ import {
   getDisappearing,
   FREE_LIMITS,
   PREMIUM_LIMITS,
-  sendPush,
   markViewOnceSeen,
   getViewOnceState,
   isVideoMessage,
@@ -108,14 +108,14 @@ import {
   uuidv4,
 } from '../lib/localCache';
 import { flushOutbox, onOutboxSent, queueAction } from '../lib/sync';
-import { uploadMediaFromUri, guessMime } from '../lib/media';
+import { guessMime } from '../lib/media';
 import { registerMediaHandler, type MediaSubmission } from '../media/mediaSendBridge';
 import { formatLastSeen, formatDaySeparator, formatTime } from '../lib/time';
 import { useColors, useTheme, spacing, radius, font, listPerf, type Palette } from '../theme';
 import MessageBubble, { type TickStatus, replySummary } from '../components/MessageBubble';
 import SwipeToReply from '../components/SwipeToReply';
 import MediaViewer, { type ViewerItem } from '../components/MediaViewer';
-import { ensureMediaCached, prefetchMedia, registerLocalMedia } from '../lib/mediaCache';
+import { ensureMediaCached, prefetchMedia } from '../lib/mediaCache';
 import ForwardSheet, { type ForwardPreview } from '../components/ForwardSheet';
 import PollCard from '../components/PollCard';
 import ScheduleMessageModal from '../components/ScheduleMessageModal';
@@ -201,7 +201,11 @@ function ChatScreenInner() {
   // Disappearing-messages timer for this chat (0 = off) — drives the header badge.
   const [disappearSecs, setDisappearSecs] = useState(0);
   useEffect(() => {
-    getDisappearing(supabase, conversationId).then(setDisappearSecs).catch(() => {});
+    let alive = true;
+    getDisappearing(supabase, conversationId)
+      .then((s) => { if (alive) setDisappearSecs(s); })
+      .catch(() => {});
+    return () => { alive = false; };
   }, [conversationId]);
 
   // WhatsApp-identical keyboard handling. We do NOT use KeyboardAvoidingView:
@@ -231,13 +235,25 @@ function ChatScreenInner() {
   // Header avatar: group avatar_url from conversation, or peer avatar for DMs.
   const [chatAvatarUrl, setChatAvatarUrl] = useState<string | null>(null);
 
-  // Dispatch scheduled messages whose send-time has arrived — on open + every 60s.
-  // Mirrors web ChatView (dispatchDueMessages). Without this, messages scheduled
-  // on mobile would sit in the queue and never actually send.
+  // Dispatch scheduled messages whose send-time has arrived — on open + while
+  // foreground (every 60s). Pause interval in background to save battery.
   useEffect(() => {
-    void dispatchDueMessages(supabase).catch(() => {});
-    const id = setInterval(() => { void dispatchDueMessages(supabase).catch(() => {}); }, 60000);
-    return () => clearInterval(id);
+    let id: ReturnType<typeof setInterval> | null = null;
+    const kick = () => { void dispatchDueMessages(supabase).catch(() => {}); };
+    const arm = () => {
+      if (id) clearInterval(id);
+      id = setInterval(kick, 60_000);
+    };
+    kick();
+    arm();
+    const sub = AppState.addEventListener('change', (s) => {
+      if (s === 'active') { kick(); arm(); }
+      else if (id) { clearInterval(id); id = null; }
+    });
+    return () => {
+      if (id) clearInterval(id);
+      sub.remove();
+    };
   }, []);
   const [isGroup, setIsGroup] = useState(false);
   const [myGroupRole, setMyGroupRole] = useState<ParticipantRole | null>(null);
@@ -564,30 +580,36 @@ function ChatScreenInner() {
       },
     );
 
+    let alive = true;
     const rxChannel = subscribeToReactions(supabase, conversationId, () => {
       getReactions(
         supabase,
         messagesRef.current.map((m) => m.id),
-      ).then(setReactions);
+      ).then((r) => { if (alive) setReactions(r); }).catch(() => {});
     });
 
     const rcChannel = subscribeToReceipts(supabase, conversationId, (r) =>
       applyReceipts([r as any]),
     );
 
-    const presenceChannel = joinPresence(supabase, uid, setOnlineIds);
+    const presenceChannel = joinPresence(supabase, uid, (ids) => {
+      if (alive) setOnlineIds(ids);
+    });
 
     const tc = createTypingChannel(supabase, conversationId, (p) => {
-      if (p.userId === uid) return;
+      if (!alive || p.userId === uid) return;
       setTypingName(p.typing ? p.name : null);
       if (p.typing) {
         if (typingTimeout.current) clearTimeout(typingTimeout.current);
-        typingTimeout.current = setTimeout(() => setTypingName(null), 4000);
+        typingTimeout.current = setTimeout(() => {
+          if (alive) setTypingName(null);
+        }, 4000);
       }
     });
     typingChannel.current = tc;
 
     return () => {
+      alive = false;
       supabase.removeChannel(msgChannel);
       supabase.removeChannel(rxChannel);
       supabase.removeChannel(rcChannel);
@@ -599,9 +621,13 @@ function ChatScreenInner() {
     };
   }, [uid, conversationId, setMsgs, applyReceipts]);
 
-  // Restore a persisted draft when the chat opens.
+  // Restore a persisted draft when the chat opens (cancel on switch — no cross-chat bleed).
   useEffect(() => {
-    getDraft(conversationId).then((d) => { if (d) setText(d); }).catch(() => {});
+    let alive = true;
+    getDraft(conversationId)
+      .then((d) => { if (alive && d) setText(d); })
+      .catch(() => {});
+    return () => { alive = false; };
   }, [conversationId]);
 
   // When a queued (offline) message finally sends, swap its optimistic row for
@@ -785,79 +811,72 @@ function ChatScreenInner() {
     }
   }
 
+  // Re-entrancy guard: `sending` state is not set for text, so double-tap/Enter
+  // can race two handleSends before re-render without this ref.
+  const sendInFlight = useRef(false);
+
   async function handleSend() {
     const body = text.trim();
-    if (!body || sending) return;
+    if (!body || sendInFlight.current) return;
     if (groupSendBlocked) {
       Alert.alert('Only admins', 'Only admins can send messages in this group.');
       return;
     }
-    setText('');
-    setDraft(conversationId, '').catch(() => {}); // clear persisted draft
-    typingChannel.current?.notify({ userId: uid ?? '', name: selfNameRef.current, typing: false });
+    sendInFlight.current = true;
+    try {
+      setText('');
+      setDraft(conversationId, '').catch(() => {}); // clear persisted draft
+      typingChannel.current?.notify({ userId: uid ?? '', name: selfNameRef.current, typing: false });
 
-    if (editing) {
-      const target = editing;
-      setEditing(null);
-      await editMessage(supabase, target.id, body);
-      return;
-    }
+      if (editing) {
+        const target = editing;
+        setEditing(null);
+        await editMessage(supabase, target.id, body);
+        return;
+      }
 
-    const replyId = reply?.id;
-    setReply(null);
+      const replyId = reply?.id;
+      setReply(null);
 
-    // Optimistic: render the message immediately with a client-generated id and a
-    // "sending" (clock) tick. The SAME id is used for the server insert so the
-    // realtime echo dedupes cleanly.
-    const tempId = uuidv4();
-    const optimistic: Message = {
-      id: tempId,
-      conversation_id: conversationId,
-      sender_id: uid ?? '',
-      type: 'text',
-      content: body,
-      media_url: null,
-      reply_to: replyId ?? null,
-      is_deleted: false,
-      created_at: new Date().toISOString(),
-      edited_at: null,
-      pending: true,
-    };
-    setMsgs((prev) => [...prev, optimistic]);
-    setReceipts((prev) => new Map(prev).set(tempId, 'sending'));
-    upsertCachedMessage(conversationId, optimistic).catch(() => {});
-    requestAnimationFrame(() => listRef.current?.scrollToOffset({ offset: 0, animated: true }));
+      // Optimistic: render the message immediately with a client-generated id and a
+      // "sending" (clock) tick. The SAME id is used for the server insert so the
+      // realtime echo dedupes cleanly.
+      const tempId = uuidv4();
+      const optimistic: Message = {
+        id: tempId,
+        conversation_id: conversationId,
+        sender_id: uid ?? '',
+        type: 'text',
+        content: body,
+        media_url: null,
+        reply_to: replyId ?? null,
+        is_deleted: false,
+        created_at: new Date().toISOString(),
+        edited_at: null,
+        pending: true,
+      };
+      setMsgs((prev) => [...prev, optimistic]);
+      setReceipts((prev) => new Map(prev).set(tempId, 'sending'));
+      upsertCachedMessage(conversationId, optimistic).catch(() => {});
+      requestAnimationFrame(() => listRef.current?.scrollToOffset({ offset: 0, animated: true }));
 
-    // Queue durably first so the message survives an app kill, then try to send.
-    await enqueueOutbox({
-      tempId,
-      conversationId,
-      senderId: uid ?? '',
-      content: body,
-      type: 'text',
-      replyTo: replyId,
-      createdAt: optimistic.created_at,
-      attempts: 0,
-    });
-    // flushOutbox sends it (reusing tempId as the row id) and removes it from the
-    // queue on success; the onOutboxSent listener swaps the pending row for the
-    // confirmed one. If offline, it stays queued and auto-sends on reconnect.
-    flushOutbox().catch(() => {});
-
-    // Fast-path FCM for killed recipients. messageId (= tempId / row id) enables
-    // server-side dedupe so the DB outbox trigger does not double-deliver.
-    void sendPush(supabase, {
-      conversationId,
-      kind: isGroup ? 'group' : 'message',
-      title: isGroup ? (params.title || 'Group') : 'New message',
-      body,
-      data: {
-        messageId: tempId,
-        messageType: 'text',
-        type: 'message',
+      // Queue durably first so the message survives an app kill, then try to send.
+      await enqueueOutbox({
+        tempId,
+        conversationId,
         senderId: uid ?? '',
-      },
-    });
+        content: body,
+        type: 'text',
+        replyTo: replyId,
+        createdAt: optimistic.created_at,
+        attempts: 0,
+      });
+      // flushOutbox inserts then sendPush (with messageId dedupe). Do NOT push
+      // here — FCM can arrive before the row exists (ghost notification).
+      flushOutbox().catch(() => {});
+    } finally {
+      sendInFlight.current = false;
+    }
   }
 
   // Free tier caps uploads at 5 MB; premium lifts it to 100 MB (web parity via
@@ -878,6 +897,7 @@ function ChatScreenInner() {
     return false;
   }
 
+  /** Camera / mic / document path — same durable outbox as MediaPreview (survives kill + offline). */
   async function sendMedia(
     uri: string,
     fileName: string,
@@ -885,31 +905,42 @@ function ChatScreenInner() {
     caption?: string,
     mediaMeta?: import('../lib/shared').MediaMeta,
   ) {
-    setSending(true);
-    try {
-      const { url, error } = await uploadMediaFromUri(conversationId, uri, fileName);
-      if (error || !url) {
-        Alert.alert('Upload failed', error?.message ?? 'Could not upload file.');
-        return;
-      }
-      // Map remote URL → local file so we never re-download our own send.
-      void registerLocalMedia(url, uri);
-      // Documents: store filename in content for the bubble label.
-      const body =
-        type === 'file'
-          ? (caption?.trim() || fileName)
-          : (caption ?? (type === 'audio' ? '' : ''));
-      const { message } = await sendMessage(
-        supabase, conversationId, body, type, url, undefined, undefined, mediaMeta,
-      );
-      if (message) {
-        setMsgs((prev) => (prev.some((m) => m.id === message.id) ? prev : [...prev, message]));
-        setReceipts((prev) => new Map(prev).set(message.id, 'sent'));
-        upsertCachedMessage(conversationId, message).catch(() => {}); // keep offline cache warm
-      }
-    } finally {
-      setSending(false);
-    }
+    const body =
+      type === 'file'
+        ? (caption?.trim() || fileName)
+        : (caption ?? '');
+    const tempId = uuidv4();
+    const optimistic: Message = {
+      id: tempId,
+      conversation_id: conversationId,
+      sender_id: uid ?? '',
+      type,
+      content: body,
+      media_url: uri,
+      reply_to: null,
+      is_deleted: false,
+      created_at: new Date().toISOString(),
+      edited_at: null,
+      pending: true,
+      media_meta: (mediaMeta ?? null) as Message['media_meta'],
+    };
+    setMsgs((prev) => [...prev, optimistic]);
+    setReceipts((prev) => new Map(prev).set(tempId, 'sending'));
+    upsertCachedMessage(conversationId, optimistic).catch(() => {});
+    await enqueueOutbox({
+      tempId,
+      conversationId,
+      senderId: uid ?? '',
+      content: body,
+      type,
+      createdAt: optimistic.created_at,
+      attempts: 0,
+      localUri: uri,
+      fileName,
+      mediaMeta: mediaMeta as Record<string, unknown> | undefined,
+    });
+    requestAnimationFrame(() => listRef.current?.scrollToOffset({ offset: 0, animated: true }));
+    flushOutbox().catch(() => {});
   }
 
   // Open the full-screen media picker (replaces the old bottom-sheet gallery).
@@ -994,12 +1025,18 @@ function ChatScreenInner() {
       return;
     }
     // Consume server-side FIRST (one open, authoritative), then reveal.
+    // Fail closed: network error must not open media (would burn the one view locally).
     const res = await markViewOnceSeen(supabase, msg.id);
-    setVoSpent((prev) => new Set(prev).add(msg.id));  // lock locally regardless
-    if (res && res.first_view === false && res.consumed) {
+    if (!res) {
+      Alert.alert('View Once', 'Could not open. Check your connection and try again.');
+      return;
+    }
+    if (res.consumed && res.first_view === false) {
+      setVoSpent((prev) => new Set(prev).add(msg.id));
       Alert.alert('View Once', 'You’ve already viewed this once. It can’t be opened again.');
       return;
     }
+    setVoSpent((prev) => new Set(prev).add(msg.id));
     setViewerUrl(url);
   }, [uid, voSpent]);
 

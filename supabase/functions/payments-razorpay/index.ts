@@ -114,7 +114,7 @@ Deno.serve(async (req) => {
     const paymentId = body.razorpay_payment_id ?? '';
     const orderId = body.razorpay_order_id ?? '';
     const signature = body.razorpay_signature ?? '';
-    const plan = body.plan === 'yearly' ? 'yearly' : 'monthly';
+    // NEVER trust body.plan for period — attacker could pay monthly and claim yearly.
 
     if (!paymentId || !signature) {
       return json(req, { error: 'Missing payment proof' }, 400);
@@ -132,7 +132,7 @@ Deno.serve(async (req) => {
       return json(req, { error: 'Payment verification failed' }, 400);
     }
 
-    // Optional: fetch payment from Razorpay to confirm captured amount/status.
+    // Fetch payment from Razorpay — amount is the source of truth for plan.
     const authBasic = btoa(`${KEY_ID}:${KEY_SECRET}`);
     const payResp = await fetch(`https://api.razorpay.com/v1/payments/${paymentId}`, {
       headers: { authorization: `Basic ${authBasic}` },
@@ -145,8 +145,17 @@ Deno.serve(async (req) => {
       return json(req, { error: `Payment not successful (${payment.status})` }, 400);
     }
 
+    // Bind plan to captured amount only (must match create_order amounts).
+    const amountPaise = Number(payment.amount || 0);
+    const plan: 'monthly' | 'yearly' | null =
+      amountPaise === 24900 ? 'yearly' : amountPaise === 2500 ? 'monthly' : null;
+    if (!plan) {
+      console.warn('[payments] amount mismatch', amountPaise, 'user', user.id);
+      return json(req, { error: 'Payment amount does not match a plan' }, 400);
+    }
+
     const periodDays = plan === 'yearly' ? 365 : 30;
-    const amountInr = Math.round(Number(payment.amount || 0) / 100);
+    const amountInr = Math.round(amountPaise / 100);
 
     const { error: actErr } = await admin.rpc('admin_activate_subscription', {
       p_user_id: user.id,

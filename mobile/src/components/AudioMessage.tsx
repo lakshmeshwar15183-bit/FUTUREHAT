@@ -25,6 +25,7 @@ export default function AudioMessage({ uri, tint }: Props) {
   const { url: playableUri } = useSignedUrl(uri);
   const soundRef = useRef<Audio.Sound | null>(null);
   const barWidth = useRef(0);
+  const mountedRef = useRef(true);
   const [playing, setPlaying] = useState(false);
   const [posMs, setPosMs] = useState(0);
   const [durMs, setDurMs] = useState(0);
@@ -32,14 +33,16 @@ export default function AudioMessage({ uri, tint }: Props) {
   // Unload on unmount AND whenever the source uri changes (FlatList recycles
   // bubbles, so a stale Sound would otherwise leak when the row is reused).
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
       soundRef.current?.unloadAsync();
       soundRef.current = null;
     };
   }, [uri]);
 
   const onStatus = (st: AVPlaybackStatus) => {
-    if (!st.isLoaded) return;
+    if (!st.isLoaded || !mountedRef.current) return;
     setPosMs(st.positionMillis);
     if (st.durationMillis) setDurMs(st.durationMillis);
     if (st.didJustFinish) {

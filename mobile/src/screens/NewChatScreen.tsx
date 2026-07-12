@@ -98,11 +98,16 @@ export default function NewChatScreen() {
     let active = true;
     setSearching(true);
     const t = setTimeout(async () => {
-      const data = await searchProfiles(supabase, q);
-      if (active) {
-        // never surface the current user in their own results
-        setResults(data.filter((p) => p.id !== uid));
-        setSearching(false);
+      try {
+        const data = await searchProfiles(supabase, q);
+        if (active) {
+          // never surface the current user in their own results
+          setResults(data.filter((p) => p.id !== uid));
+        }
+      } catch {
+        if (active) setResults([]);
+      } finally {
+        if (active) setSearching(false);
       }
     }, 300);
     return () => {

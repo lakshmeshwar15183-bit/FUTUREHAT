@@ -174,21 +174,38 @@ export async function getOutbox(): Promise<OutboxItem[]> {
   return readJSON<OutboxItem[]>(K.outbox, []);
 }
 
+// Serialize outbox RMW so concurrent enqueue/remove/update cannot drop rows.
+let outboxChain: Promise<unknown> = Promise.resolve();
+function withOutboxLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = outboxChain.then(fn, fn);
+  outboxChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
 export async function enqueueOutbox(item: OutboxItem): Promise<void> {
-  const cur = await getOutbox();
-  cur.push(item);
-  await writeJSON(K.outbox, cur);
+  return withOutboxLock(async () => {
+    const cur = await getOutbox();
+    cur.push(item);
+    await writeJSON(K.outbox, cur);
+  });
 }
 
 export async function removeFromOutbox(tempId: string): Promise<void> {
-  const cur = await getOutbox();
-  await writeJSON(K.outbox, cur.filter((i) => i.tempId !== tempId));
+  return withOutboxLock(async () => {
+    const cur = await getOutbox();
+    await writeJSON(K.outbox, cur.filter((i) => i.tempId !== tempId));
+  });
 }
 
 export async function updateOutboxItem(tempId: string, patch: Partial<OutboxItem>): Promise<void> {
-  const cur = await getOutbox();
-  const next = cur.map((i) => (i.tempId === tempId ? { ...i, ...patch } : i));
-  await writeJSON(K.outbox, next);
+  return withOutboxLock(async () => {
+    const cur = await getOutbox();
+    const next = cur.map((i) => (i.tempId === tempId ? { ...i, ...patch } : i));
+    await writeJSON(K.outbox, next);
+  });
 }
 
 // ── Action queue (durable outbox for NON-message mutations) ────────────────────
@@ -209,18 +226,36 @@ export interface QueuedAction {
 export async function getActionQueue(): Promise<QueuedAction[]> {
   return readJSON<QueuedAction[]>(K.actions, []);
 }
+
+// Serialize action-queue RMW (same race as outbox under rapid pin/mute/archive).
+let actionChain: Promise<unknown> = Promise.resolve();
+function withActionLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = actionChain.then(fn, fn);
+  actionChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
 export async function enqueueAction(action: QueuedAction): Promise<void> {
-  const cur = await getActionQueue();
-  cur.push(action);
-  await writeJSON(K.actions, cur);
+  return withActionLock(async () => {
+    const cur = await getActionQueue();
+    cur.push(action);
+    await writeJSON(K.actions, cur);
+  });
 }
 export async function removeAction(id: string): Promise<void> {
-  const cur = await getActionQueue();
-  await writeJSON(K.actions, cur.filter((a) => a.id !== id));
+  return withActionLock(async () => {
+    const cur = await getActionQueue();
+    await writeJSON(K.actions, cur.filter((a) => a.id !== id));
+  });
 }
 export async function updateAction(id: string, patch: Partial<QueuedAction>): Promise<void> {
-  const cur = await getActionQueue();
-  await writeJSON(K.actions, cur.map((a) => (a.id === id ? { ...a, ...patch } : a)));
+  return withActionLock(async () => {
+    const cur = await getActionQueue();
+    await writeJSON(K.actions, cur.map((a) => (a.id === id ? { ...a, ...patch } : a)));
+  });
 }
 
 // ── Reconciliation with in-flight optimistic actions ───────────────────────────

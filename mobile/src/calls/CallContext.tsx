@@ -126,13 +126,16 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
           (InCallManager as any).startRingtone('_DEFAULT_');
         } catch { /* noop */ }
       }
-      void presentCallNotification({
-        callId: call.id,
-        conversationId: call.conversation_id,
-        title: peer?.display_name ?? 'Lumixo',
-        video: call.type === 'video',
-        avatarUrl: peer?.avatar_url ?? undefined,
-      });
+      // Foreground only — NotificationsBridge owns background tray (avoids double ring notif).
+      if (AppState.currentState === 'active') {
+        void presentCallNotification({
+          callId: call.id,
+          conversationId: call.conversation_id,
+          title: peer?.display_name ?? 'Lumixo',
+          video: call.type === 'video',
+          avatarUrl: peer?.avatar_url ?? undefined,
+        });
+      }
 
       if (ringTimeoutRef.current) clearTimeout(ringTimeoutRef.current);
       ringTimeoutRef.current = setTimeout(async () => {
@@ -162,6 +165,10 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     });
     return () => {
       supabase.removeChannel(channel);
+      if (ringTimeoutRef.current) {
+        clearTimeout(ringTimeoutRef.current);
+        ringTimeoutRef.current = null;
+      }
     };
   }, [uid]);
 

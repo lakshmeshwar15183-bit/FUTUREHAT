@@ -380,8 +380,12 @@ export default function ConversationsScreen() {
     if (term.length < 2) { setMsgHits([]); return; }
     let alive = true;
     const t = setTimeout(async () => {
-      const hits = await searchAllMessages(supabase, term);
-      if (alive) setMsgHits(hits.filter((h) => convById.has(h.conversationId)));
+      try {
+        const hits = await searchAllMessages(supabase, term);
+        if (alive) setMsgHits(hits.filter((h) => convById.has(h.conversationId)));
+      } catch {
+        if (alive) setMsgHits([]);
+      }
     }, 280);
     return () => { alive = false; clearTimeout(t); };
   }, [query, convById]);
