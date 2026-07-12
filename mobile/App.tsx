@@ -141,10 +141,26 @@ function MainTabs() {
         },
       })}
     >
-      <Tab.Screen name="Chats" component={ConversationsScreen} options={{ title: APP_NAME }} />
-      <Tab.Screen name="Communities" component={CommunitiesScreen} />
-      <Tab.Screen name="Calls" component={CallsScreen} />
-      <Tab.Screen name="Settings" component={SettingsScreen} />
+      <Tab.Screen
+        name="Chats"
+        component={ConversationsScreen}
+        options={{ title: APP_NAME, tabBarAccessibilityLabel: 'Chats' }}
+      />
+      <Tab.Screen
+        name="Communities"
+        component={CommunitiesScreen}
+        options={{ tabBarAccessibilityLabel: 'Communities' }}
+      />
+      <Tab.Screen
+        name="Calls"
+        component={CallsScreen}
+        options={{ tabBarAccessibilityLabel: 'Calls' }}
+      />
+      <Tab.Screen
+        name="Settings"
+        component={SettingsScreen}
+        options={{ tabBarAccessibilityLabel: 'Settings' }}
+      />
     </Tab.Navigator>
   );
 }

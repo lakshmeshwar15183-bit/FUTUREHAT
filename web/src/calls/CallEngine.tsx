@@ -385,6 +385,14 @@ export function CallEngine({ onApiReady }: { onApiReady: (api: CallApi) => void 
   // ── outgoing ────────────────────────────────────────────────────────────────
   const startCall = useCallback(async (conversationId: string, type: CallType, name: string) => {
     if (!myId || phase !== 'idle') return;
+    // Production hard-require TURN (parity with mobile CallContext).
+    if (import.meta.env.PROD && !hasTurn(ICE_SERVERS)) {
+      console.error('[call] TURN required in production — refusing startCall');
+      window.alert(
+        'Calls unavailable: no TURN relay configured (VITE_TURN_*). Configure TURN for production calling.',
+      );
+      return;
+    }
     isCaller.current = true;
     setCallType(type); setPeerName(name); setPhase('outgoing');
     try {

@@ -867,7 +867,15 @@ function ChatScreenInner() {
       if (editing) {
         const target = editing;
         setEditing(null);
-        await editMessage(supabase, target.id, body);
+        // Optimistic + durable action queue (works offline).
+        setMsgs((prev) =>
+          prev.map((m) =>
+            m.id === target.id
+              ? { ...m, content: body, edited_at: new Date().toISOString() }
+              : m,
+          ),
+        );
+        await queueAction('editMessage', { messageId: target.id, content: body });
         return;
       }
 
@@ -2328,7 +2336,12 @@ function ChatScreenInner() {
         </View>
       ) : (
         <View style={[styles.composer, { paddingBottom: 6 }]}>
-          <Pressable onPress={() => { Keyboard.dismiss(); setAttachOpen(true); }} hitSlop={8}>
+          <Pressable
+            onPress={() => { Keyboard.dismiss(); setAttachOpen(true); }}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Attach"
+          >
             <Ionicons name="add-circle-outline" size={28} color={colors.textMuted} />
           </Pressable>
           {!text.trim() && (
@@ -2336,6 +2349,8 @@ function ChatScreenInner() {
               onPress={() => { Keyboard.dismiss(); void pickImage(true); }}
               hitSlop={8}
               style={{ marginLeft: 2 }}
+              accessibilityRole="button"
+              accessibilityLabel="Camera"
             >
               <Ionicons name="camera-outline" size={26} color={colors.textMuted} />
             </Pressable>
@@ -2344,6 +2359,7 @@ function ChatScreenInner() {
             style={styles.input}
             placeholder="Message"
             placeholderTextColor={colors.textFaint}
+            accessibilityLabel="Message"
             value={text}
             onChangeText={onChangeText}
             onKeyPress={onInputKeyPress}
@@ -2356,11 +2372,19 @@ function ChatScreenInner() {
             onPress={() => { Keyboard.dismiss(); setEmojiComposerOpen(true); }}
             hitSlop={8}
             style={{ marginRight: 4 }}
+            accessibilityRole="button"
+            accessibilityLabel="Emoji"
           >
             <Ionicons name="happy-outline" size={26} color={colors.textMuted} />
           </Pressable>
           {text.trim().length > 0 ? (
-            <Pressable onPress={handleSend} style={({ pressed }) => [styles.sendBtn, pressed && styles.sendBtnPressed]} disabled={sending}>
+            <Pressable
+              onPress={handleSend}
+              accessibilityRole="button"
+              accessibilityLabel={editing ? 'Save edit' : 'Send message'}
+              style={({ pressed }) => [styles.sendBtn, pressed && styles.sendBtnPressed]}
+              disabled={sending}
+            >
               <Ionicons name={editing ? 'checkmark' : 'send'} size={20} color="#fff" />
             </Pressable>
           ) : (

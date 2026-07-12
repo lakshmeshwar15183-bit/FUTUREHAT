@@ -43,6 +43,14 @@ import { formatDistanceToNow, format, isToday, isYesterday, isSameDay } from 'da
 import { spring } from './motion';
 import { STICKERS } from './premium/stickers';
 import { GroupInfoModal } from './GroupInfoModal';
+import {
+  enqueueSend,
+  enqueueEdit,
+  flushOutbox,
+  onOutboxEvent,
+  getOutboxForConversation,
+  optimisticFromOutbox,
+} from './lib/outbox';
 import './ChatView.css';
 
 interface Props {
@@ -204,11 +212,22 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
     (async () => {
       const msgs = await getMessages(supabase, convId);
       if (!active) return;
-      setMessages(msgs);
+      // Merge durable outbox pending rows (offline / refresh) into the thread.
+      const pending = getOutboxForConversation(convId)
+        .filter((i) => i.kind === 'send')
+        .map((i) => optimisticFromOutbox(i, profile?.id ?? ''));
+      const byId = new Map<string, Message>();
+      for (const m of msgs) byId.set(m.id, m);
+      for (const m of pending) if (!byId.has(m.id)) byId.set(m.id, m);
+      const merged = [...byId.values()].sort((a, b) =>
+        a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0,
+      );
+      setMessages(merged);
       const ids = msgs.map((m) => m.id);
       setReceipts(await getReceipts(supabase, ids));
       setReactions(await getReactions(supabase, ids));
       if (!ghostRef.current) msgs.forEach((m) => { if (m.sender_id !== profile?.id) void markMessageAsRead(supabase, m.id).catch(() => {}); });
+      void flushOutbox();
     })().catch(() => {});
 
     // Disappearing messages (0022): opportunistic physical cleanup of expired
@@ -369,7 +388,33 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
     });
   }
 
-  // ── Send / edit ──────────────────────────────────────────────────────────────
+  // Outbox sent / failed (offline durability).
+  useEffect(() => {
+    return onOutboxEvent((item, message, error) => {
+      if (item.conversationId !== convId) return;
+      if (error) {
+        if (item.kind === 'send') {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === item.id ? ({ ...m, pending: false, failed: true } as Message) : m,
+            ),
+          );
+        }
+        setToast(error === 'max_attempts' ? 'Message failed after retries' : 'Send failed — will retry');
+        return;
+      }
+      if (message) {
+        upsertMessage({ ...message, pending: false } as Message);
+      } else if (item.kind === 'send') {
+        // Dupe path — clear pending on optimistic row
+        setMessages((prev) =>
+          prev.map((m) => (m.id === item.id ? ({ ...m, pending: false } as Message) : m)),
+        );
+      }
+    });
+  }, [convId]);
+
+  // ── Send / edit (durable outbox — works offline + survives refresh) ──────────
   async function handleSend(e: FormEvent) {
     e.preventDefault();
     if (!input.trim() || sending) return;
@@ -384,20 +429,43 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
     if (editing) {
       const target = editing;
       setEditing(null);
-      const { message, error } = await editMessage(supabase, target.id, content);
-      if (error) { setToast(error.message); setInput(content); setEditing(target); }
-      else if (message) upsertMessage(message);
+      // Optimistic local content; durable queue if offline / fails.
+      upsertMessage({ ...target, content, edited_at: new Date().toISOString() });
+      try {
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+          await enqueueEdit({ conversationId: convId, messageId: target.id, content });
+          setToast('Edit queued — will sync when online');
+        } else {
+          const { message, error } = await editMessage(supabase, target.id, content);
+          if (error || !message) {
+            await enqueueEdit({ conversationId: convId, messageId: target.id, content });
+            setToast(error?.message || 'Edit queued for retry');
+          } else {
+            upsertMessage(message);
+          }
+        }
+      } catch {
+        await enqueueEdit({ conversationId: convId, messageId: target.id, content });
+      }
       setSending(false);
       return;
     }
 
     const reply = replyTo;
     setReplyTo(null);
-    const { message, error } = await sendMessage(supabase, convId, content, 'text', undefined, reply?.id);
-    if (error || !message) { setInput(content); setReplyTo(reply); setToast(error?.message || 'Message failed to send'); }
-    else {
-      upsertMessage(message);
-      notifyPush(content, 'text', message.id);
+    // Optimistic + durable outbox (same id as server insert for realtime dedupe).
+    const item = await enqueueSend({
+      conversationId: convId,
+      content,
+      type: 'text',
+      replyTo: reply?.id,
+      senderId: profile?.id,
+    });
+    upsertMessage(optimisticFromOutbox(item, profile?.id ?? ''));
+    // flushOutbox runs inside enqueue; if online, push is sent after insert.
+    // Do NOT call notifyPush here — outbox flush owns push with messageId.
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      setToast('Queued — will send when online');
     }
     setSending(false);
   }

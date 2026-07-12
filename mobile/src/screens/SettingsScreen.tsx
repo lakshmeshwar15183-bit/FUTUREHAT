@@ -249,6 +249,14 @@ function Row({
   const tint = danger ? colors.danger : colors.text;
   return (
     <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={
+        locked
+          ? `${label}, Lumixo Plus required`
+          : badge
+            ? `${label}, ${badge} unread`
+            : label
+      }
       style={({ pressed }) => [
         {
           flexDirection: 'row',

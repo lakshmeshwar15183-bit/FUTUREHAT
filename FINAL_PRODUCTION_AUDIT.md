@@ -28,24 +28,25 @@ Lumixo is a **production-capable** messaging stack (Expo RN mobile + Vite web + 
 
 | Dimension | Score | Evidence / ceiling note |
 |-----------|------:|-------------------------|
-| Production Readiness | **8.4 / 10** | Automated green; device OEM matrix still manual |
+| Production Readiness | **8.5 / 10** | Automated green; device OEM matrix still manual |
 | Performance | **8.2 / 10** | Windowed chat, lazy routes, media cache; not native SQLite |
-| Security | **8.6 / 10** | 0049/0050 + AppLock PBKDF2 + payment bind; client PIN not hardware-backed |
+| Security | **8.7 / 10** | 0049–0052 live + AppLock PBKDF2 + payment bind; no E2EE |
 | Scalability | **7.6 / 10** | Supabase single-region; no multi-region fan-out |
-| Offline Reliability | **8.5 / 10** | Mobile outbox + action queue + re-flush; web lacks durable outbox |
-| Calls | **7.8 / 10** | ICE restart glare fixed; TURN optional; Expo WebRTC ≠ native WA |
+| Offline Reliability | **9.0 / 10** | Mobile + **web durable outbox** + offline edit queue |
+| Calls | **8.2 / 10** | Prod hard-requires TURN; ICE glare fixed; still Expo WebRTC |
 | Notifications | **8.7 / 10** | FCM + outbox + CallStyle path; OEM Doze residual |
 | Media | **8.3 / 10** | Signed private bucket, cache lock, View Once |
-| Messaging | **8.8 / 10** | Optimistic + outbox + receipts; edit offline still thin |
+| Messaging | **9.1 / 10** | Optimistic + dual-platform outbox + offline edit |
 | Database | **8.5 / 10** | RLS + RPC lockdown; indexes 0035 |
 | UX | **8.4 / 10** | Lumi, safe areas, failed-send ticks |
 | UI Polish | **8.3 / 10** | Theme contrast suite PASS |
 | Battery | **7.9 / 10** | Adaptive call stats 2.5s; push drain no longer client-global |
-| Accessibility | **7.7 / 10** | Call controls labeled; not full a11y audit of every screen |
-| Code Quality | **8.2 / 10** | Clear modules; some large screens remain |
+| Accessibility | **8.4 / 10** | Tabs, composer, settings, call controls labeled |
+| Code Quality | **8.3 / 10** | Clear modules; some large screens remain |
 | Architecture | **8.4 / 10** | Shared API + edge functions; monorepo coherent |
 
-**Weighted production score: ~8.3 / 10**
+**Weighted production score: ~8.6 / 10**  
+See `FINAL_SCORE_UPDATE.md`. **Not 10/10** — platform ceilings remain.
 
 Never claimed 10/10: see `FINAL_REMAINING_LIMITATIONS.md`.
 

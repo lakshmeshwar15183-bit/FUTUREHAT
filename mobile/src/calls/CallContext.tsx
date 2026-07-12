@@ -251,6 +251,16 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
             : null,
         );
         if (!hasTurn(ice)) {
+          // Production: hard-block — cross-NAT reliability is not WhatsApp-class without TURN.
+          // Dev builds may continue with a confirm so local same-Wi‑Fi testing still works.
+          const isProd = typeof __DEV__ === 'undefined' || !__DEV__;
+          if (isProd) {
+            Alert.alert(
+              'Calls unavailable',
+              'Voice/video needs a TURN relay (EXPO_PUBLIC_TURN_*). Configure TURN for production calling.',
+            );
+            return;
+          }
           const proceed = await showConfirm({
             title: 'Weak call network setup',
             message: 'No TURN relay is configured. Calls may only work on the same Wi‑Fi. Continue anyway?',

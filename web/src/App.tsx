@@ -35,6 +35,7 @@ import {
   writeCachedConversations,
   mark,
 } from './lib/startupCache';
+import { startWebOutbox } from './lib/outbox';
 import './App.css';
 
 // ChatView is large — load only when a conversation is opened (or prefetch idle).
@@ -98,6 +99,8 @@ function writeCachedRecent(uid: string, list: RecentContact[]): void {
 }
 
 function AppInner() {
+  // Durable offline message outbox (localStorage + online flush).
+  useEffect(() => startWebOutbox(), []);
   const { user, profile } = useAuth();
   const { isPremium, premiumUserIds } = usePremium();
   const { onlineIds } = usePresence();

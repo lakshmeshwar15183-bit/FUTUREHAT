@@ -15,6 +15,7 @@ import { uploadMediaFromUri } from './media';
 import { registerLocalMedia } from './mediaCache';
 import {
   sendMessage,
+  editMessage,
   sendPush,
   pinConversation,
   unpinConversation,
@@ -289,6 +290,8 @@ const actionHandlers: Record<string, (payload: any) => Promise<ActionResult>> = 
   star: (p) => starMessage(supabase, p.messageId),
   unstar: (p) => unstarMessage(supabase, p.messageId),
   hideMessage: (p) => hideMessageForMe(supabase, p.messageId),
+  // Offline-safe message edit (payload: { messageId, content }).
+  editMessage: (p) => editMessage(supabase, p.messageId, p.content),
   deleteForMe: (p) => deleteConversationForMe(supabase, p.conversationId),
   deleteForEveryone: (p) => deleteConversationForEveryone(supabase, p.conversationId),
   updateProfile: (p) => updateMyProfile(supabase, p.updates),
