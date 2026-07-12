@@ -74,6 +74,7 @@ import StreakInfoScreen, { STREAK_INFO_TITLES } from './src/screens/StreakInfoSc
 import HallOfLegendsScreen from './src/screens/HallOfLegendsScreen';
 import AdminGate from './src/components/AdminGate';
 import NotificationsBridge from './src/components/NotificationsBridge';
+import NotificationSetupGate from './src/components/NotificationSetupGate';
 import { DialogHost } from './src/ui/dialog';
 import ErrorBoundary from './src/components/ErrorBoundary';
 
@@ -405,6 +406,8 @@ function RootNavigator() {
       </NavigationContainer>
       {signedIn && <AdminGate />}
       {signedIn && <NotificationsBridge navRef={navRef} />}
+      {/* First-launch permission + OEM battery guidance (never blocks auth). */}
+      {signedIn && !locked && <NotificationSetupGate />}
       {signedIn && locked && (
         <View style={StyleSheet.absoluteFill}>
           <LockScreen />

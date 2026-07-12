@@ -22,6 +22,11 @@ import {
   openNotificationSystemSettings,
   registerForPush,
 } from '../lib/notifications';
+import {
+  detectOemFamily,
+  getOemGuide,
+  openAppBatterySettings,
+} from '../lib/notificationSetup';
 import { getCache, setCache } from '../lib/localCache';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 
@@ -46,6 +51,7 @@ async function openChannelSettings(channelId: string) {
 export default function NotificationsScreen() {
   const colors = useColors();
   const styles = useMemo(() => makeStyles(colors), [colors]);
+  const oem = useMemo(() => getOemGuide(detectOemFamily()), []);
   const [n, setN] = useState<NotificationSettings>(DEFAULT_NOTIFICATION_SETTINGS);
   const [osGranted, setOsGranted] = useState<boolean | null>(null);
 
@@ -140,6 +146,29 @@ export default function NotificationsScreen() {
               <Text style={styles.rowLabel}>Battery optimization</Text>
               <Text style={styles.rowDesc}>
                 Allow unrestricted battery so notifications work after force-stop
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
+          </Pressable>
+        )}
+        {Platform.OS === 'android' && oem.aggressive && (
+          <Pressable
+            style={styles.row}
+            onPress={() => {
+              Alert.alert(
+                oem.title,
+                `${oem.body}\n\n${oem.steps.map((s, i) => `${i + 1}. ${s}`).join('\n')}`,
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Open settings', onPress: () => void openAppBatterySettings() },
+                ],
+              );
+            }}
+          >
+            <View style={{ flex: 1, marginRight: spacing(3) }}>
+              <Text style={styles.rowLabel}>{oem.brandLabel} background settings</Text>
+              <Text style={styles.rowDesc}>
+                This phone may block closed-app alerts — follow the recommended steps
               </Text>
             </View>
             <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
