@@ -1,6 +1,6 @@
 {
   "name": "@futurehat/mobile",
-  "version": "4.5.8",
+  "version": "4.5.9",
   "private": true,
   "main": "index.ts",
   "scripts": {
