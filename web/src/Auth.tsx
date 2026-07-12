@@ -38,12 +38,14 @@ export function AuthScreen() {
   const [showConfused, setShowConfused] = useState(false);
 
   const gaze = catGazeFromEmail(email);
-  const mood: CatMood = catMoodFromAuth({
+  const baseMood: CatMood = catMoodFromAuth({
     passwordFocused,
     emailFocused: emailFocused || (!passwordFocused && email.length > 0 && !success),
     error: showConfused ? error : null,
     success,
   });
+  // Welcome wave on signup when not typing / celebrating.
+  const mood: CatMood = baseMood === 'idle' && mode === 'signup' ? 'wave' : baseMood;
 
   // Confused mood: brief shake + ~1s sad eyes, then back to idle/watching.
   useEffect(() => {

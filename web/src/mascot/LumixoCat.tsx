@@ -247,9 +247,13 @@ export function LumixoCat({
             {/* Soft forehead highlight */}
             <ellipse cx="100" cy="72" rx="26" ry="16" fill={P.furTop} opacity="0.5" />
 
-            {/* Rosy cheeks */}
+            {/* Rosy cheeks + soft freckle dots for plush depth */}
             <ellipse className="lc-cheek" cx="70" cy="96" rx="9" ry="6.5" fill={P.cheek} />
             <ellipse className="lc-cheek" cx="130" cy="96" rx="9" ry="6.5" fill={P.cheek} />
+            <circle cx="66" cy="98" r="0.9" fill="rgba(244,160,180,0.45)" />
+            <circle cx="72" cy="100" r="0.7" fill="rgba(244,160,180,0.4)" />
+            <circle cx="128" cy="100" r="0.7" fill="rgba(244,160,180,0.4)" />
+            <circle cx="134" cy="98" r="0.9" fill="rgba(244,160,180,0.45)" />
 
             {/* Soft brows — appear on confused/sad */}
             <g className="lc-brows" stroke={P.brow} strokeWidth="2" strokeLinecap="round" fill="none">

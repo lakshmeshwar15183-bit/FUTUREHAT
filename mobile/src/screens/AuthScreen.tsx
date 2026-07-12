@@ -60,12 +60,14 @@ export default function AuthScreen() {
     return () => clearTimeout(t);
   }, [error]);
 
-  const mood: CatMood = catMoodFromAuth({
+  const baseMood: CatMood = catMoodFromAuth({
     passwordFocused,
     emailFocused: emailFocused || (!passwordFocused && email.length > 0 && !success),
     error: showConfused ? error : null,
     success,
   });
+  // Welcome wave on signup when not typing / celebrating.
+  const mood: CatMood = baseMood === 'idle' && isSignup ? 'wave' : baseMood;
   const gaze = catGazeFromEmail(email);
 
   function reset() {
