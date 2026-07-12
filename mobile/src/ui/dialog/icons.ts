@@ -1,20 +1,22 @@
-// Map semantic dialog icons → Ionicons names.
+// Map semantic dialog icons → Ionicons names (compact outline style).
 import type { DialogIconName } from './types';
 
-export function ioniconFor(icon: DialogIconName | undefined): keyof typeof import('@expo/vector-icons').Ionicons.glyphMap | null {
+export function ioniconFor(
+  icon: DialogIconName | undefined,
+): keyof typeof import('@expo/vector-icons').Ionicons.glyphMap | null {
   switch (icon) {
     case 'trash':
       return 'trash-outline';
     case 'warning':
     case 'alert':
-      return 'warning-outline';
+      return 'alert-circle-outline';
     case 'success':
     case 'check':
       return 'checkmark-circle-outline';
     case 'info':
       return 'information-circle-outline';
     case 'block':
-      return 'hand-left-outline';
+      return 'ban-outline';
     case 'logout':
       return 'log-out-outline';
     case 'group':

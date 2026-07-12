@@ -1,11 +1,15 @@
-// Lumixo — global premium dialog / sheet host (Telegram-level polish).
+// Lumixo — global dialog / sheet host (WhatsApp / Telegram / iMessage class).
 // Mount once near the app root. Imperative API lives in `controller.ts`.
 //
-// Performance contract for action sheets (WhatsApp parity):
-//  • Sheet shell is always mounted (never cold-start a Modal).
-//  • Open is a Reanimated translate/opacity only — target <100 ms to first paint.
-//  • enqueue() presents on the same JS turn (no requestAnimationFrame deferral).
-//  • No network / no list work here — content is already in the request payload.
+// Design system (production messaging, not game/prototype):
+//  • Compact cards (~20–30% smaller than v1): max ~300pt, tight padding
+//  • Icons 44–48pt, not oversized circles
+//  • Typography: title 16–17 bold · body 13 muted · buttons 15
+//  • Material-height buttons (44pt) · radius 20–22
+//  • Subtle shadow / hairline border · no bulky empty regions
+//  • Alerts: fast fade + scale 170ms
+//  • Sheets: always-mounted shell, slide up ~180ms (WhatsApp parity)
+//  • enqueue() presents same JS turn (no rAF deferral)
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -29,7 +33,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { useColors, spacing, font, type Palette } from '../../theme';
+import { useColors, type Palette } from '../../theme';
 import { bindDialogHost } from './controller';
 import { ioniconFor, inferIcon } from './icons';
 import type {
@@ -41,12 +45,19 @@ import type {
   DialogTone,
 } from './types';
 
-const RADIUS = 26;
-// Snappy open/close — WhatsApp-class, not a slow spring from off-screen.
-const OPEN_MS = 160;
-const CLOSE_MS = 130;
+// ── Design tokens (single source for every dialog / sheet) ───────────────────
+const RADIUS = 22;
+const SHEET_RADIUS = 20;
+const ICON_SIZE = 44;
+const ICON_GLYPH = 22;
+const CARD_MAX_W = 300;
+const OPEN_MS = 170;
+const CLOSE_MS = 140;
+const SHEET_OPEN_MS = 180;
+const SHEET_CLOSE_MS = 150;
 const OPEN_EASING = Easing.out(Easing.cubic);
 const CLOSE_EASING = Easing.in(Easing.cubic);
+const SHEET_EASING = Easing.bezier(0.25, 0.1, 0.25, 1);
 
 export default function DialogHost() {
   const colors = useColors();
@@ -60,17 +71,13 @@ export default function DialogHost() {
   const reqRef = useRef<HostRequest | null>(null);
   const promptValues = useRef<Record<string, string>>({});
   const [, bump] = useState(0);
-  // Last sheet payload kept so the pre-mounted shell can re-render content
-  // without waiting for a cold mount of action rows.
   const [sheetOpts, setSheetOpts] = useState<SheetOptions | null>(null);
   const [alertOpts, setAlertOpts] = useState<DialogOptions | null>(null);
   const [promptOpts, setPromptOpts] = useState<PromptOptions | null>(null);
 
-  // Separate progress so the pre-mounted sheet never slides up for alerts/prompts.
   const sheetProgress = useSharedValue(0);
   const cardProgress = useSharedValue(0);
   const backdropProgress = useSharedValue(0);
-  // Full-screen travel so a tall action list never peeks while closed.
   const sheetTravel = height;
 
   const clearAfterClose = useCallback(() => {
@@ -80,9 +87,7 @@ export default function DialogHost() {
     setBusy(false);
     setAlertOpts(null);
     setPromptOpts(null);
-    // Keep sheetOpts so the next open only swaps labels (no empty flash).
     finished?.resolve();
-    // Drain queue on next tick of the JS loop (not rAF — lower latency).
     queueMicrotask(() => {
       if (!reqRef.current) presentNextRef.current();
     });
@@ -105,7 +110,6 @@ export default function DialogHost() {
       setPromptOpts(next.opts);
       setAlertOpts(null);
     } else if (next.kind === 'sheet') {
-      // Stage content before animation so first paint already has the right rows.
       setSheetOpts(next.opts);
       setAlertOpts(null);
       setPromptOpts(null);
@@ -115,9 +119,12 @@ export default function DialogHost() {
     }
 
     setReq(next);
-    backdropProgress.value = withTiming(1, { duration: OPEN_MS, easing: OPEN_EASING });
+    backdropProgress.value = withTiming(1, {
+      duration: next.kind === 'sheet' ? SHEET_OPEN_MS : OPEN_MS,
+      easing: OPEN_EASING,
+    });
     if (next.kind === 'sheet') {
-      sheetProgress.value = withTiming(1, { duration: OPEN_MS, easing: OPEN_EASING });
+      sheetProgress.value = withTiming(1, { duration: SHEET_OPEN_MS, easing: SHEET_EASING });
       cardProgress.value = 0;
     } else {
       cardProgress.value = withTiming(1, { duration: OPEN_MS, easing: OPEN_EASING });
@@ -131,7 +138,6 @@ export default function DialogHost() {
     bindDialogHost({
       enqueue: (r) => {
         queue.current.push(r);
-        // Same JS turn when idle — critical for <100 ms menu open.
         presentNextRef.current();
       },
     });
@@ -141,19 +147,29 @@ export default function DialogHost() {
   const dismiss = useCallback(() => {
     if (!reqRef.current) return;
     const kind = reqRef.current.kind;
-    backdropProgress.value = withTiming(0, { duration: CLOSE_MS, easing: CLOSE_EASING });
+    backdropProgress.value = withTiming(0, {
+      duration: kind === 'sheet' ? SHEET_CLOSE_MS : CLOSE_MS,
+      easing: CLOSE_EASING,
+    });
     if (kind === 'sheet') {
-      sheetProgress.value = withTiming(0, { duration: CLOSE_MS, easing: CLOSE_EASING }, (finished) => {
-        if (finished) runOnJS(clearAfterClose)();
-      });
+      sheetProgress.value = withTiming(
+        0,
+        { duration: SHEET_CLOSE_MS, easing: CLOSE_EASING },
+        (finished) => {
+          if (finished) runOnJS(clearAfterClose)();
+        },
+      );
     } else {
-      cardProgress.value = withTiming(0, { duration: CLOSE_MS, easing: CLOSE_EASING }, (finished) => {
-        if (finished) runOnJS(clearAfterClose)();
-      });
+      cardProgress.value = withTiming(
+        0,
+        { duration: CLOSE_MS, easing: CLOSE_EASING },
+        (finished) => {
+          if (finished) runOnJS(clearAfterClose)();
+        },
+      );
     }
   }, [backdropProgress, sheetProgress, cardProgress, clearAfterClose]);
 
-  // Android hardware back closes the active dialog/sheet.
   useEffect(() => {
     if (!req) return;
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -177,23 +193,22 @@ export default function DialogHost() {
 
   const sheetStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: (1 - sheetProgress.value) * sheetTravel }],
-    // Fully hide when closed so it never intercepts layout/compositing cost on lists.
     opacity: sheetProgress.value === 0 ? 0 : 1,
   }));
 
   const backdropStyle = useAnimatedStyle(() => ({
-    opacity: backdropProgress.value * (colors.isLight ? 0.45 : 0.62),
+    opacity: backdropProgress.value * (colors.isLight ? 0.4 : 0.55),
   }));
 
+  // Fade + slight scale from 0.96 → 1 (subtle, not bouncy).
   const cardStyle = useAnimatedStyle(() => ({
     opacity: cardProgress.value,
-    transform: [{ scale: 0.94 + cardProgress.value * 0.06 }],
+    transform: [{ scale: 0.96 + cardProgress.value * 0.04 }],
   }));
 
   const open = !!req;
   const kind = req?.kind ?? null;
 
-  // Always-mounted host: pointer-events off when idle so the list stays fully interactive.
   return (
     <View
       style={styles.host}
@@ -223,11 +238,11 @@ export default function DialogHost() {
         />
       </Animated.View>
 
-      {/* ── Pre-mounted action sheet (chat long-press path) ───────────────── */}
+      {/* ── Action sheet (WhatsApp-class bottom sheet) ───────────────────── */}
       <Animated.View
         style={[
           styles.sheet,
-          { paddingBottom: Math.max(insets.bottom, 16) + 8 },
+          { paddingBottom: Math.max(insets.bottom, 10) + 6 },
           sheetStyle,
         ]}
         pointerEvents={kind === 'sheet' && open ? 'auto' : 'none'}
@@ -245,10 +260,15 @@ export default function DialogHost() {
                 : role === 'primary'
                   ? colors.primary
                   : colors.text;
+            const last = i === (sheetOpts?.actions?.length ?? 0) - 1;
             return (
               <Pressable
                 key={`${a.text}-${i}`}
-                style={({ pressed }) => [styles.sheetRow, pressed && styles.pressed]}
+                style={({ pressed }) => [
+                  styles.sheetRow,
+                  !last && styles.sheetRowBorder,
+                  pressed && styles.pressed,
+                ]}
                 onPress={() => void runButton(a)}
                 disabled={busy || kind !== 'sheet'}
               >
@@ -256,17 +276,22 @@ export default function DialogHost() {
                   <View
                     style={[
                       styles.sheetIconWrap,
-                      role === 'destructive' && { backgroundColor: colors.danger + '22' },
+                      role === 'destructive' && { backgroundColor: colors.danger + '18' },
                     ]}
                   >
-                    <Ionicons name={icon} size={20} color={color} />
+                    <Ionicons name={icon} size={18} color={color} />
                   </View>
                 )}
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.sheetActionText, { color }]}>{a.text}</Text>
-                  {!!a.subtitle && <Text style={styles.sheetSub}>{a.subtitle}</Text>}
+                <View style={styles.sheetTextCol}>
+                  <Text style={[styles.sheetActionText, { color }]} numberOfLines={1}>
+                    {a.text}
+                  </Text>
+                  {!!a.subtitle && (
+                    <Text style={styles.sheetSub} numberOfLines={2}>
+                      {a.subtitle}
+                    </Text>
+                  )}
                 </View>
-                <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
               </Pressable>
             );
           })}
@@ -280,7 +305,7 @@ export default function DialogHost() {
         </Pressable>
       </Animated.View>
 
-      {/* ── Alert / confirm card ──────────────────────────────────────────── */}
+      {/* ── Alert / confirm card ─────────────────────────────────────────── */}
       {kind === 'alert' && alertOpts && (
         <View style={styles.centerWrap} pointerEvents="box-none">
           <Animated.View style={[styles.card, cardStyle]}>
@@ -295,7 +320,7 @@ export default function DialogHost() {
         </View>
       )}
 
-      {/* ── Prompt card ───────────────────────────────────────────────────── */}
+      {/* ── Prompt card ──────────────────────────────────────────────────── */}
       {kind === 'prompt' && promptOpts && (
         <KeyboardAvoidingView
           style={styles.centerWrap}
@@ -354,15 +379,32 @@ function AlertBody({
       : 'default');
   const iconName = ioniconFor(opts.icon ?? inferIcon(opts.title, tone));
 
-  const ordered = [...buttons].sort((a, b) => {
-    const rank = (x: DialogButton) => {
-      const r = x.role ?? x.style ?? 'default';
-      if (r === 'destructive' || r === 'primary') return 0;
-      if (r === 'default') return 1;
-      return 2;
-    };
-    return rank(a) - rank(b);
-  });
+  // Material / iMessage: 2-button confirms lay out horizontally (action | cancel).
+  // 1 or 3+ buttons stay compact vertical stack.
+  const horizontal =
+    buttons.length === 2 &&
+    buttons.some((b) => (b.role ?? b.style) === 'cancel') &&
+    buttons.some((b) => {
+      const r = b.role ?? b.style;
+      return r === 'primary' || r === 'destructive' || r === 'default';
+    });
+
+  const ordered = horizontal
+    ? (() => {
+        // Left = cancel, right = primary/destructive (Material RTL-safe reading order).
+        const cancel = buttons.find((b) => (b.role ?? b.style) === 'cancel');
+        const action = buttons.find((b) => (b.role ?? b.style) !== 'cancel');
+        return [cancel, action].filter(Boolean) as DialogButton[];
+      })()
+    : [...buttons].sort((a, b) => {
+        const rank = (x: DialogButton) => {
+          const r = x.role ?? x.style ?? 'default';
+          if (r === 'destructive' || r === 'primary') return 0;
+          if (r === 'default') return 1;
+          return 2;
+        };
+        return rank(a) - rank(b);
+      });
 
   return (
     <>
@@ -374,7 +416,7 @@ function AlertBody({
         tone={tone}
         iconName={iconName}
       />
-      <View style={styles.btnCol}>
+      <View style={horizontal ? styles.btnRow : styles.btnCol}>
         {ordered.map((b, i) => (
           <DialogBtn
             key={`${b.text}-${i}`}
@@ -384,16 +426,21 @@ function AlertBody({
             role={
               (b.role ??
                 b.style ??
-                (i === 0 && ordered.length === 1 ? 'primary' : 'default')) as any
+                (i === 0 && ordered.length === 1 ? 'primary' : 'default')) as
+                | 'default'
+                | 'cancel'
+                | 'destructive'
+                | 'primary'
             }
             busy={busy}
+            flex={horizontal}
             onPress={() => onPress(b)}
           />
         ))}
       </View>
       {busy && (
         <View style={styles.busyOverlay}>
-          <ActivityIndicator color={colors.primary} />
+          <ActivityIndicator color={colors.primary} size="small" />
         </View>
       )}
     </>
@@ -446,21 +493,23 @@ function PromptBody({
           }}
         />
       ))}
-      <View style={styles.btnCol}>
+      <View style={styles.btnRow}>
+        <DialogBtn
+          styles={styles}
+          colors={colors}
+          label={opts.cancelLabel ?? 'Cancel'}
+          role="cancel"
+          flex
+          onPress={onCancel}
+        />
         <DialogBtn
           styles={styles}
           colors={colors}
           label={opts.submitLabel ?? 'Save'}
           role="primary"
           busy={busy}
+          flex
           onPress={onSubmit}
-        />
-        <DialogBtn
-          styles={styles}
-          colors={colors}
-          label={opts.cancelLabel ?? 'Cancel'}
-          role="cancel"
-          onPress={onCancel}
         />
       </View>
     </>
@@ -484,26 +533,26 @@ function DialogHeader({
 }) {
   const iconBg =
     tone === 'danger'
-      ? colors.danger + '1F'
+      ? colors.danger + '18'
       : tone === 'success'
-        ? colors.primary + '1F'
+        ? colors.primary + '18'
         : tone === 'warning'
-          ? '#F5B94222'
-          : colors.primary + '18';
+          ? '#F5B94220'
+          : colors.primary + '14';
   const iconColor =
     tone === 'danger'
       ? colors.danger
       : tone === 'success'
         ? colors.primary
         : tone === 'warning'
-          ? '#E5A400'
+          ? '#C99200'
           : colors.primary;
 
   return (
     <View style={styles.header}>
       {iconName && (
         <View style={[styles.iconCircle, { backgroundColor: iconBg }]}>
-          <Ionicons name={iconName} size={28} color={iconColor} />
+          <Ionicons name={iconName} size={ICON_GLYPH} color={iconColor} />
         </View>
       )}
       <Text style={styles.title}>{title}</Text>
@@ -519,6 +568,7 @@ function DialogBtn({
   role,
   onPress,
   busy,
+  flex,
 }: {
   styles: ReturnType<typeof makeStyles>;
   colors: Palette;
@@ -526,6 +576,7 @@ function DialogBtn({
   role: 'default' | 'cancel' | 'destructive' | 'primary';
   onPress: () => void;
   busy?: boolean;
+  flex?: boolean;
 }) {
   const isPrimary = role === 'primary';
   const isDanger = role === 'destructive';
@@ -536,20 +587,22 @@ function DialogBtn({
       onPress={onPress}
       style={({ pressed }) => [
         styles.btn,
+        flex && styles.btnFlex,
         isPrimary && { backgroundColor: colors.primary },
         isDanger && { backgroundColor: colors.danger },
         isCancel && styles.btnCancel,
         !isPrimary && !isDanger && !isCancel && styles.btnSecondary,
-        pressed && { opacity: 0.88, transform: [{ scale: 0.98 }] },
+        pressed && styles.btnPressed,
       ]}
     >
       <Text
         style={[
           styles.btnText,
-          (isPrimary || isDanger) && { color: '#fff' },
+          (isPrimary || isDanger) && styles.btnTextOnFill,
           isCancel && { color: colors.textMuted },
           !isPrimary && !isDanger && !isCancel && { color: colors.text },
         ]}
+        numberOfLines={1}
       >
         {label}
       </Text>
@@ -566,165 +619,225 @@ const makeStyles = (colors: Palette, width: number) =>
     },
     backdropFill: {
       ...StyleSheet.absoluteFillObject,
-      backgroundColor: colors.isLight ? 'rgb(15, 23, 28)' : 'rgb(0, 0, 0)',
+      backgroundColor: colors.isLight ? 'rgb(12, 18, 22)' : 'rgb(0, 0, 0)',
     },
     centerWrap: {
       ...StyleSheet.absoluteFillObject,
       justifyContent: 'center',
       alignItems: 'center',
-      paddingHorizontal: spacing(5),
+      paddingHorizontal: 28,
     },
     card: {
-      width: Math.min(width - 40, 360),
+      width: Math.min(width - 56, CARD_MAX_W),
       backgroundColor: colors.surface,
       borderRadius: RADIUS,
-      paddingTop: spacing(6),
-      paddingBottom: spacing(4),
-      paddingHorizontal: spacing(4),
+      paddingTop: 18,
+      paddingBottom: 14,
+      paddingHorizontal: 16,
+      // Subtle elevation — not a bulky floating brick.
       shadowColor: '#000',
-      shadowOpacity: colors.isLight ? 0.18 : 0.45,
-      shadowRadius: 28,
-      shadowOffset: { width: 0, height: 14 },
-      elevation: 18,
+      shadowOpacity: colors.isLight ? 0.12 : 0.4,
+      shadowRadius: 16,
+      shadowOffset: { width: 0, height: 8 },
+      elevation: 12,
       borderWidth: StyleSheet.hairlineWidth,
-      borderColor: colors.border,
+      borderColor: colors.isLight ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.08)',
       overflow: 'hidden',
     },
-    header: { alignItems: 'center', paddingHorizontal: spacing(2), marginBottom: spacing(4) },
+    header: {
+      alignItems: 'center',
+      paddingHorizontal: 4,
+      marginBottom: 14,
+    },
     iconCircle: {
-      width: 56,
-      height: 56,
-      borderRadius: 28,
+      width: ICON_SIZE,
+      height: ICON_SIZE,
+      borderRadius: ICON_SIZE / 2,
       alignItems: 'center',
       justifyContent: 'center',
-      marginBottom: spacing(3),
+      marginBottom: 10,
     },
     title: {
       color: colors.text,
-      fontSize: 19,
+      fontSize: 16.5,
       fontWeight: '700',
       textAlign: 'center',
-      letterSpacing: -0.2,
+      letterSpacing: -0.25,
+      lineHeight: 21,
     },
     message: {
       color: colors.textMuted,
-      fontSize: font.body,
-      lineHeight: 21,
+      fontSize: 13.5,
+      lineHeight: 18.5,
       textAlign: 'center',
-      marginTop: spacing(2),
-      paddingHorizontal: spacing(1),
+      marginTop: 6,
+      paddingHorizontal: 2,
     },
-    btnCol: { gap: spacing(2), marginTop: spacing(1) },
+    btnCol: {
+      gap: 8,
+    },
+    btnRow: {
+      flexDirection: 'row',
+      gap: 8,
+      alignItems: 'stretch',
+    },
     btn: {
-      minHeight: 50,
-      borderRadius: 16,
+      minHeight: 44,
+      height: 44,
+      borderRadius: 12,
       alignItems: 'center',
       justifyContent: 'center',
-      paddingHorizontal: spacing(4),
+      paddingHorizontal: 14,
+    },
+    btnFlex: {
+      flex: 1,
+      minWidth: 0,
     },
     btnSecondary: {
       backgroundColor: colors.surfaceAlt,
     },
     btnCancel: {
-      backgroundColor: 'transparent',
-      minHeight: 44,
+      backgroundColor: colors.surfaceAlt,
+    },
+    btnPressed: {
+      opacity: 0.88,
+      transform: [{ scale: 0.985 }],
     },
     btnText: {
-      fontSize: 16,
+      fontSize: 15,
       fontWeight: '600',
+      letterSpacing: -0.1,
+    },
+    btnTextOnFill: {
+      color: '#fff',
     },
     input: {
       backgroundColor: colors.surfaceAlt,
       color: colors.text,
-      borderRadius: 14,
-      paddingHorizontal: spacing(3.5),
-      paddingVertical: spacing(3),
-      fontSize: font.body,
-      marginBottom: spacing(2),
+      borderRadius: 12,
+      paddingHorizontal: 12,
+      paddingVertical: Platform.OS === 'ios' ? 11 : 9,
+      fontSize: 15,
+      marginBottom: 10,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: colors.border,
+      minHeight: 44,
     },
-    inputMulti: { minHeight: 88, textAlignVertical: 'top' },
+    inputMulti: {
+      minHeight: 76,
+      textAlignVertical: 'top',
+      paddingTop: 10,
+    },
     busyOverlay: {
       ...StyleSheet.absoluteFillObject,
-      backgroundColor: colors.isLight ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.35)',
+      backgroundColor: colors.isLight ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.35)',
       alignItems: 'center',
       justifyContent: 'center',
     },
+
+    // ── Bottom sheet ──────────────────────────────────────────────────────
     sheet: {
       position: 'absolute',
-      left: 0,
-      right: 0,
+      left: 8,
+      right: 8,
       bottom: 0,
       backgroundColor: colors.surface,
-      borderTopLeftRadius: RADIUS,
-      borderTopRightRadius: RADIUS,
-      paddingTop: spacing(2),
-      paddingHorizontal: spacing(4),
+      borderTopLeftRadius: SHEET_RADIUS,
+      borderTopRightRadius: SHEET_RADIUS,
+      borderBottomLeftRadius: Platform.OS === 'ios' ? SHEET_RADIUS : 0,
+      borderBottomRightRadius: Platform.OS === 'ios' ? SHEET_RADIUS : 0,
+      paddingTop: 8,
+      paddingHorizontal: 10,
       shadowColor: '#000',
-      shadowOpacity: 0.3,
-      shadowRadius: 20,
-      shadowOffset: { width: 0, height: -6 },
-      elevation: 24,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderColor: colors.border,
+      shadowOpacity: colors.isLight ? 0.16 : 0.45,
+      shadowRadius: 18,
+      shadowOffset: { width: 0, height: -4 },
+      elevation: 20,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.isLight ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.08)',
+      // Float slightly above the home indicator on iOS (WhatsApp-style inset).
+      marginBottom: Platform.OS === 'ios' ? 0 : 0,
     },
     handle: {
       alignSelf: 'center',
-      width: 40,
+      width: 36,
       height: 4,
       borderRadius: 2,
       backgroundColor: colors.textFaint,
-      marginBottom: spacing(3),
-      opacity: 0.55,
+      marginBottom: 10,
+      opacity: 0.45,
     },
     sheetTitle: {
       color: colors.text,
-      fontSize: 17,
+      fontSize: 15,
       fontWeight: '700',
       textAlign: 'center',
-      marginBottom: spacing(1),
+      marginBottom: 2,
+      letterSpacing: -0.15,
+      paddingHorizontal: 8,
     },
     sheetMsg: {
       color: colors.textMuted,
-      fontSize: font.small,
+      fontSize: 12.5,
       textAlign: 'center',
-      marginBottom: spacing(3),
-      lineHeight: 18,
+      marginBottom: 10,
+      lineHeight: 17,
+      paddingHorizontal: 12,
     },
     sheetActions: {
       backgroundColor: colors.surfaceAlt,
-      borderRadius: 18,
+      borderRadius: 14,
       overflow: 'hidden',
-      marginBottom: spacing(2),
+      marginBottom: 8,
     },
     sheetRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      paddingVertical: spacing(3.5),
-      paddingHorizontal: spacing(3.5),
-      gap: spacing(3),
+      paddingVertical: 11,
+      paddingHorizontal: 12,
+      gap: 11,
+      minHeight: 48,
+    },
+    sheetRowBorder: {
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: colors.border,
     },
     sheetIconWrap: {
-      width: 36,
-      height: 36,
-      borderRadius: 12,
+      width: 32,
+      height: 32,
+      borderRadius: 9,
       backgroundColor: colors.surface,
       alignItems: 'center',
       justifyContent: 'center',
     },
-    sheetActionText: { fontSize: 16, fontWeight: '600' },
-    sheetSub: { color: colors.textMuted, fontSize: font.tiny, marginTop: 2 },
+    sheetTextCol: {
+      flex: 1,
+      minWidth: 0,
+    },
+    sheetActionText: {
+      fontSize: 15.5,
+      fontWeight: '600',
+      letterSpacing: -0.1,
+    },
+    sheetSub: {
+      color: colors.textMuted,
+      fontSize: 12,
+      marginTop: 1,
+      lineHeight: 15,
+    },
     sheetCancel: {
       backgroundColor: colors.surfaceAlt,
-      borderRadius: 16,
-      minHeight: 52,
+      borderRadius: 14,
+      minHeight: 48,
+      height: 48,
       alignItems: 'center',
       justifyContent: 'center',
-      marginTop: spacing(1),
     },
-    sheetCancelText: { color: colors.text, fontSize: 16, fontWeight: '700' },
-    pressed: { opacity: 0.85 },
+    sheetCancelText: {
+      color: colors.text,
+      fontSize: 15.5,
+      fontWeight: '700',
+      letterSpacing: -0.1,
+    },
+    pressed: { opacity: 0.82 },
   });
