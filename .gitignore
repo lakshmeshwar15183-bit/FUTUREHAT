@@ -51,3 +51,6 @@ coverage/
 
 # Local release artifacts (APK/AAB) — do not commit binaries
 release/
+
+# Validation run logs
+validation/results/
