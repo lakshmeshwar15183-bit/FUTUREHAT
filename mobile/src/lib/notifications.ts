@@ -10,7 +10,7 @@
 //
 // Sounds use the DEVICE SYSTEM DEFAULT per Android channel — users customize
 // in system Settings › Apps › Lumixo › Notifications.
-import { Platform } from 'react-native';
+import { Linking, Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -18,8 +18,8 @@ import { supabase } from './supabase';
 import { registerPushToken, removePushToken } from './shared';
 
 // Bump when channel definitions change so they're re-created once.
-// v6: ongoing_call channel for in-call sticky status.
-const CHANNELS_VERSION = '6';
+// v7: killed-app reliability — non-sticky call rings align with FCM cancel-by-tag.
+const CHANNELS_VERSION = '7';
 const CHANNELS_KEY = 'fh:channelsVersion';
 const UNREAD_STACK_KEY = 'fh:notifStack'; // conversationId → { count, lastBody, title }
 
@@ -344,20 +344,93 @@ export async function initNotifications(): Promise<void> {
   } catch { /* channel creation best-effort */ }
 }
 
-/** Ask for POST_NOTIFICATIONS (Android 13+) and register the FCM token. */
-export async function registerForPush(): Promise<void> {
+/**
+ * Ask for POST_NOTIFICATIONS (Android 13+) and register the raw FCM/APNs device
+ * token. Killed-app delivery depends on this token living in device_push_tokens.
+ * Uses getDevicePushTokenAsync (not Expo push service) so FCM works offline of Expo.
+ */
+export async function registerForPush(): Promise<boolean> {
   try {
-    const { status } = await Notifications.getPermissionsAsync();
-    let granted = status === 'granted';
-    if (!granted) granted = (await Notifications.requestPermissionsAsync()).status === 'granted';
-    if (!granted) return;
+    const current = await Notifications.getPermissionsAsync();
+    let granted = current.status === 'granted';
+    if (!granted) {
+      // Legitimate system prompt — required for Android 13+ and iOS.
+      const req = await Notifications.requestPermissionsAsync({
+        ios: {
+          allowAlert: true,
+          allowBadge: true,
+          allowSound: true,
+          allowDisplayInCarPlay: false,
+        },
+      });
+      granted = req.status === 'granted';
+    }
+    if (!granted) {
+      pushActive = false;
+      return false;
+    }
     const token = await Notifications.getDevicePushTokenAsync();
     if (token?.data) {
       lastToken = String(token.data);
-      await registerPushToken(supabase, lastToken, (token.type as any) ?? 'android');
+      const platform =
+        token.type === 'ios' || Platform.OS === 'ios'
+          ? 'ios'
+          : token.type === 'web' || Platform.OS === 'web'
+            ? 'web'
+            : 'android';
+      await registerPushToken(supabase, lastToken, platform);
       pushActive = true;
+      return true;
     }
-  } catch { /* FCM not configured yet */ }
+    pushActive = false;
+    return false;
+  } catch {
+    /* FCM / google-services not configured yet */
+    pushActive = false;
+    return false;
+  }
+}
+
+/** Whether the OS has granted notification permission (does not register token). */
+export async function getNotificationPermissionGranted(): Promise<boolean> {
+  try {
+    const { status } = await Notifications.getPermissionsAsync();
+    return status === 'granted';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Open system screens so the user can allow notifications / unrestricted battery.
+ * Policy-safe: user-initiated only (no auto REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).
+ */
+export async function openNotificationSystemSettings(): Promise<void> {
+  try {
+    if (Platform.OS === 'android') {
+      try {
+        await Linking.sendIntent('android.settings.APP_NOTIFICATION_SETTINGS', [
+          { key: 'android.provider.extra.APP_PACKAGE', value: 'dev.lakshmeshwar.futurehat' },
+        ]);
+        return;
+      } catch { /* fall through */ }
+    }
+    await Linking.openSettings();
+  } catch { /* ignore */ }
+}
+
+/** Open battery optimization / app details so OEM can allow killed-state FCM. */
+export async function openBatteryOptimizationSettings(): Promise<void> {
+  try {
+    if (Platform.OS === 'android') {
+      // Opens App info (Battery / Unrestricted lives here on modern Android).
+      try {
+        await Linking.openURL('package:dev.lakshmeshwar.futurehat');
+        return;
+      } catch { /* fall through */ }
+    }
+    await Linking.openSettings();
+  } catch { /* ignore */ }
 }
 
 export function startPushTokenRefresh(): () => void {
@@ -535,7 +608,11 @@ export interface CallNotifOpts {
   avatarUrl?: string;
 }
 
-/** High-priority incoming-call notification with Accept/Decline. */
+/**
+ * High-priority incoming-call notification with Accept/Decline.
+ * Not sticky: when the process is killed, FCM cancels by replacing the same
+ * `call:<id>` tag — sticky system notifs cannot be cleared without the app.
+ */
 export async function presentCallNotification(o: CallNotifOpts): Promise<void> {
   try {
     await Notifications.dismissNotificationAsync(`call:${o.callId}`).catch(() => {});
@@ -554,7 +631,7 @@ export async function presentCallNotification(o: CallNotifOpts): Promise<void> {
           avatarUrl: o.avatarUrl ?? '',
         },
         priority: Notifications.AndroidNotificationPriority.MAX,
-        sticky: true,
+        sticky: false,
         color: ACCENT,
         sound: Platform.OS === 'ios' ? 'default' : undefined,
         ...(Platform.OS === 'android'

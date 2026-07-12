@@ -158,10 +158,13 @@ export async function flushOutbox(): Promise<void> {
                       : item.type === 'file'
                         ? (item.content?.trim() ? `📄 ${item.content}` : '📄 Document')
                         : 'New message';
+            // Title is reconstructed server-side from profiles; body + messageId
+            // matter for preview and dedupe. kind defaults to message — Edge
+            // Function upgrades channel from conversation type when needed.
             void sendPush(supabase, {
               conversationId: item.conversationId,
               kind: 'message',
-              title: 'New message',
+              title: '', // empty → Edge uses sender display name (not "New message")
               body: preview,
               data: {
                 messageId: mid,

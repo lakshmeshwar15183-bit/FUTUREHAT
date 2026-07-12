@@ -28,24 +28,31 @@ export interface SendPushArgs {
   data?: Record<string, string>;  // extra payload (e.g. callId, messageId, type)
 }
 
-// Fire-and-forget: invoke the `push` Edge Function to fan the notification out to
-// the conversation's other members' registered devices. Also kicks outbox drain
-// so DB-triggered jobs flush quickly. Never throws.
-//
-// Pass data.messageId (or data.callId) whenever possible — the Edge Function uses
-// claim_push_dedupe so a concurrent outbox drain does not double-deliver.
+/**
+ * Fire-and-forget: invoke the `push` Edge Function to fan the notification out
+ * to other members' registered devices (FCM). Also drains the push_outbox so
+ * DB-triggered jobs flush even if this process dies next.
+ *
+ * Never throws. Killed-app delivery depends on:
+ *   1) recipient FCM token in device_push_tokens
+ *   2) Edge Function secret FCM_SERVICE_ACCOUNT
+ *   3) this call and/or the 1-minute outbox drain cron
+ *
+ * Pass data.messageId / data.callId for dedupe. Empty title is OK — the Edge
+ * Function rebuilds titles from profiles (avoids tray showing "New message").
+ */
 export async function sendPush(client: SupabaseClient, args: SendPushArgs): Promise<void> {
   try {
     await client.functions.invoke('push', {
       body: {
         conversationId: args.conversationId,
         kind: args.kind,
-        title: args.title,
-        body: args.body,
+        title: args.title ?? '',
+        body: args.body ?? '',
         data: args.data ?? {},
         // Drain sibling outbox rows (other chats / call cancels) after each send.
         drainOutbox: true,
-        limit: 30,
+        limit: 50,
       },
     });
   } catch { /* Edge Function not deployed / FCM not configured — ignore */ }

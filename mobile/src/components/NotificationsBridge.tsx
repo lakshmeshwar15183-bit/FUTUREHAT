@@ -315,12 +315,12 @@ export default function NotificationsBridge({
       }
     });
 
-    // ── Taps + action buttons ───────────────────────────────────────────────
-    const respSub = Notifications.addNotificationResponseReceivedListener(async (resp) => {
+    // Shared handler for tap / action (live listener + cold start after kill).
+    const handleResponse = async (resp: Notifications.NotificationResponse) => {
       const data = resp.notification.request.content.data as Record<string, string> | undefined;
       if (!data) return;
       const action = resp.actionIdentifier;
-      const userText = (resp as any).userText as string | undefined;
+      const userText = (resp as { userText?: string }).userText;
 
       const isDefault =
         action === Notifications.DEFAULT_ACTION_IDENTIFIER ||
@@ -339,7 +339,6 @@ export default function NotificationsBridge({
 
         if (action === 'reply' && userText?.trim()) {
           await sendMessage(supabase, convId, userText.trim(), 'text').catch(() => {});
-          // Notify recipients of the quick-reply (outbox + edge).
           void sendPush(supabase, {
             conversationId: convId,
             kind: 'message',
@@ -373,7 +372,16 @@ export default function NotificationsBridge({
         if (isDefault || action === 'open') {
           await clearConversationNotification(convId);
           refreshBadge();
-          navRef.navigate('Chat' as any, { conversationId: convId, title: '' });
+          if (navRef.isReady()) {
+            navRef.navigate('Chat' as any, { conversationId: convId, title: '' });
+          } else {
+            // Nav may not be ready on cold start — retry once.
+            setTimeout(() => {
+              try {
+                navRef.navigate('Chat' as any, { conversationId: convId, title: '' });
+              } catch { /* ignore */ }
+            }, 400);
+          }
         }
         return;
       }
@@ -381,7 +389,6 @@ export default function NotificationsBridge({
       if (data.type === 'call' || data.kind === 'call' || data.type === 'ongoing_call') {
         const callId = data.callId;
         if (action === 'accept' && callId) {
-          // Must start WebRTC as callee — status-only flip left calls half-dead.
           await acceptCallByIdRef.current(callId);
           navRef.navigate('Main' as any);
           return;
@@ -391,7 +398,6 @@ export default function NotificationsBridge({
           return;
         }
         if (isDefault || action === 'open') {
-          // Bring app forward; keep ring UI / CallProvider as source of truth.
           navRef.navigate('Main' as any);
         }
         return;
@@ -418,6 +424,18 @@ export default function NotificationsBridge({
       if (data.type === 'community_announcement' && data.communityId) {
         navRef.navigate('Main' as any);
       }
+    };
+
+    // ── Cold start: user tapped a notification while app was killed ─────────
+    void Notifications.getLastNotificationResponseAsync()
+      .then((last) => {
+        if (last && !cancelled) void handleResponse(last);
+      })
+      .catch(() => {});
+
+    // ── Taps + action buttons (process alive) ───────────────────────────────
+    const respSub = Notifications.addNotificationResponseReceivedListener((resp) => {
+      void handleResponse(resp);
     });
 
     // Foreground FCM receipt — silent cancels, open-chat dismiss, multi-device clear.

@@ -189,8 +189,17 @@ Deno.serve(async (req) => {
           });
           delivered += result.delivered;
           skippedDup += result.skippedDup;
-          // Even if skipped as duplicate, mark delivered so it doesn't retry forever.
-          await admin.rpc('mark_push_delivered', { p_id: job.id, p_error: null });
+          // Complete when FCM delivered, prior dedupe won, muted-all, or no recipients.
+          // Incomplete (zero FCM with tokens) leaves the row for backoff retry.
+          if (result.complete || result.delivered > 0 || result.skippedDup > 0) {
+            await admin.rpc('mark_push_delivered', { p_id: job.id, p_error: null });
+          } else {
+            await admin.rpc('mark_push_delivered', {
+              p_id: job.id,
+              p_error: 'fcm_zero_delivery_will_retry',
+            });
+            failed++;
+          }
         } catch (e) {
           failed++;
           await admin.rpc('mark_push_delivered', {
@@ -237,8 +246,10 @@ async function fanOut(
     senderId: string | null;
     dedupeKey: string | null;
   },
-): Promise<{ delivered: number; skippedDup: number }> {
+): Promise<{ delivered: number; skippedDup: number; complete: boolean }> {
   // Global idempotency: first fan-out for this logical event wins.
+  // CRITICAL: if we claim but deliver 0 (no tokens / FCM fail), we MUST release
+  // the claim so the outbox drain can retry — otherwise killed-app notifs die forever.
   if (job.dedupeKey) {
     const { data: claimed, error } = await admin.rpc('claim_push_dedupe', {
       p_key: job.dedupeKey,
@@ -247,9 +258,20 @@ async function fanOut(
       // If RPC missing (migration not applied), proceed without dedupe.
       console.warn('[push] claim_push_dedupe', error.message);
     } else if (claimed === false) {
-      return { delivered: 0, skippedDup: 1 };
+      return { delivered: 0, skippedDup: 1, complete: true };
     }
   }
+
+  const releaseDedupe = async () => {
+    if (!job.dedupeKey) return;
+    try {
+      await admin.rpc('release_push_dedupe', { p_key: job.dedupeKey });
+    } catch {
+      try {
+        await admin.from('push_sent_dedupe').delete().eq('key', job.dedupeKey);
+      } catch { /* ignore */ }
+    }
+  };
 
   const { data: members } = await admin
     .from('conversation_participants')
@@ -260,14 +282,20 @@ async function fanOut(
   if (job.senderId) {
     recipientIds = recipientIds.filter((id) => id !== job.senderId);
   }
-  if (recipientIds.length === 0) return { delivered: 0, skippedDup: 0 };
+  if (recipientIds.length === 0) {
+    // No recipients (e.g. solo) — complete, keep claim.
+    return { delivered: 0, skippedDup: 0, complete: true };
+  }
 
   const { data: tokenRows } = await admin
     .from('device_push_tokens')
     .select('token, platform, user_id')
     .in('user_id', recipientIds);
   const tokens = (tokenRows ?? []) as { token: string; platform: string; user_id: string }[];
-  if (tokens.length === 0) return { delivered: 0, skippedDup: 0 };
+  if (tokens.length === 0) {
+    await releaseDedupe();
+    return { delivered: 0, skippedDup: 0, complete: false };
+  }
 
   const [{ data: prefRows }, { data: lockRows }, { data: mutedRows }, { data: senderProfile }, { data: conv }] =
     await Promise.all([
@@ -317,6 +345,7 @@ async function fanOut(
   const isClearChat = job.data?.type === 'clear_chat';
 
   let delivered = 0;
+  let mutedSkips = 0;
   const stale: string[] = [];
 
   await Promise.all(
@@ -324,23 +353,54 @@ async function fanOut(
       const p = prefsByUser.get(t.user_id) ?? {};
 
       if (!isCall && !isCallCancel && !isClearChat) {
-        if (mutedUsers.has(t.user_id)) return;
-        if ((job.kind === 'group' || job.kind === 'mention') && p.groupMute) return;
-        if (job.kind === 'message' && p.messageMute) return;
-        if (job.kind === 'status' && p.statusMute) return;
+        if (mutedUsers.has(t.user_id)) {
+          mutedSkips++;
+          return;
+        }
+        if ((job.kind === 'group' || job.kind === 'mention') && p.groupMute) {
+          mutedSkips++;
+          return;
+        }
+        if (job.kind === 'message' && p.messageMute) {
+          mutedSkips++;
+          return;
+        }
+        if (job.kind === 'status' && p.statusMute) {
+          mutedSkips++;
+          return;
+        }
       }
 
       const locked = lockedUsers.has(t.user_id);
       const previewOff =
         (job.kind === 'message' || job.kind === 'group' || job.kind === 'mention') &&
         p.messagePreview === false;
+      const isMsgKind =
+        job.kind === 'message' || job.kind === 'group' || job.kind === 'mention';
+      // Client sendPush often races with "New message" as title — always rebuild
+      // from server profile/conversation so killed-app tray looks WhatsApp-class.
+      const genericTitle = !job.title || /^(new message|lumixo|message)$/i.test(job.title.trim());
 
       let title: string;
       let bodyText: string;
-      if (isClearChat || isCallCancel) {
-        title = isClearChat ? 'Read' : 'Call ended';
+      if (isClearChat) {
+        title = 'Read';
         bodyText = '';
-      } else if (isCall || job.kind === 'system' || job.kind === 'status' || job.kind === 'missed_call') {
+      } else if (isCallCancel) {
+        // Same Android `tag` as the ring replaces the tray entry when the app is
+        // killed (data-only silent cancels cannot remove a system notification).
+        const st = (job.data?.status || '').toLowerCase();
+        title = st === 'missed' ? 'Missed call' : 'Call ended';
+        bodyText =
+          st === 'missed'
+            ? job.title && !genericTitle
+              ? job.title
+              : senderName
+            : '';
+      } else if (isCall || job.kind === 'status' || job.kind === 'missed_call') {
+        title = job.title || senderName || 'Lumixo';
+        bodyText = job.body || '';
+      } else if (job.kind === 'system') {
         title = job.title || 'Lumixo';
         bodyText = job.body || '';
       } else if (locked) {
@@ -353,9 +413,12 @@ async function fanOut(
           : job.body?.includes(':')
             ? job.body
             : `${senderName}: ${job.body || 'New message'}`;
-      } else {
-        title = job.title || senderName;
+      } else if (isMsgKind) {
+        title = genericTitle ? senderName : job.title;
         bodyText = previewOff ? 'New message' : job.body || 'New message';
+      } else {
+        title = job.title || senderName || 'Lumixo';
+        bodyText = job.body || 'New message';
       }
 
       const data: Record<string, string> = {
@@ -387,74 +450,88 @@ async function fanOut(
       // collapse_key groups concurrent FCM deliveries for the same chat on Android.
       const collapseKey = isCall || isCallCancel ? tag : `chat:${job.conversationId}`;
 
-      const message =
-        isCallCancel || isClearChat
-          ? {
-              message: {
-                token: t.token,
-                data: { ...data, silent: '1' },
-                android: {
-                  priority: 'high',
-                  ttl: isClearChat ? '60s' : '30s',
-                  collapse_key: collapseKey,
+      // clear_chat: data-only (multi-device read) — no tray flash.
+      // call_status: REPLACE ring with same tag (works when app is killed).
+      // everything else: high-priority notification so Android delivers in Doze/killed.
+      const message = isClearChat
+        ? {
+            message: {
+              token: t.token,
+              data: { ...data, silent: '1' },
+              android: {
+                priority: 'high',
+                ttl: '60s',
+                collapse_key: collapseKey,
+              },
+              apns: {
+                headers: {
+                  'apns-priority': '10',
+                  'apns-push-type': 'background',
+                  'apns-collapse-id': collapseKey,
                 },
-                apns: {
-                  headers: {
-                    'apns-priority': '10',
-                    'apns-push-type': 'background',
-                    'apns-collapse-id': collapseKey,
-                  },
-                  payload: { aps: { 'content-available': 1 } },
+                payload: { aps: { 'content-available': 1 } },
+              },
+            },
+          }
+        : {
+            message: {
+              token: t.token,
+              notification: {
+                title: title || 'Lumixo',
+                body: bodyText || (isCallCancel ? ' ' : 'New notification'),
+              },
+              data: isCallCancel ? { ...data, silent: '0', type: 'call_status' } : data,
+              android: {
+                // HIGH is required for Doze / App Standby / killed-process delivery.
+                priority: 'high',
+                ttl: isCall ? '60s' : isCallCancel ? '30s' : '86400s',
+                collapse_key: collapseKey,
+                direct_boot_ok: true,
+                notification: {
+                  channel_id: isCallCancel
+                    ? (job.data?.status === 'missed' ? 'missed_calls' : 'admin_system')
+                    : channelId,
+                  sound: isCallCancel && job.data?.status !== 'missed' ? undefined : 'default',
+                  tag,
+                  notification_priority: isCall
+                    ? 'PRIORITY_MAX'
+                    : isCallCancel
+                      ? 'PRIORITY_DEFAULT'
+                      : 'PRIORITY_HIGH',
+                  default_vibrate_timings: !isCallCancel,
+                  visibility: 'PUBLIC',
+                  // Large image (avatar) when URL is public HTTPS.
+                  ...(!isCallCancel && imageUrl && /^https:\/\//i.test(imageUrl)
+                    ? { image: imageUrl }
+                    : {}),
+                  // Do NOT sticky FCM call rings when killed — sticky ghost rings cannot
+                  // be cleared by data-only cancels. Local sticky is fine while JS is alive.
+                  ...(isCall ? { sticky: false } : {}),
+                  ...(isCallCancel ? { sticky: false, local_only: false } : {}),
                 },
               },
-            }
-          : {
-              message: {
-                token: t.token,
-                notification: { title, body: bodyText },
-                data,
-                android: {
-                  priority: 'high',
-                  ttl: isCall ? '60s' : '86400s',
-                  collapse_key: collapseKey,
-                  notification: {
-                    channel_id: channelId,
-                    sound: 'default',
-                    tag,
-                    notification_priority: isCall ? 'PRIORITY_MAX' : 'PRIORITY_HIGH',
-                    default_vibrate_timings: true,
-                    visibility: 'PUBLIC',
-                    // Large image (avatar) when URL is public HTTPS.
-                    ...(imageUrl && /^https:\/\//i.test(imageUrl) ? { image: imageUrl } : {}),
+              apns: {
+                headers: {
+                  'apns-priority': '10',
+                  'apns-collapse-id': collapseKey,
+                  'apns-push-type': 'alert',
+                  ...(isCall ? { 'apns-expiration': String(Math.floor(Date.now() / 1000) + 60) } : {}),
+                },
+                payload: {
+                  aps: {
+                    sound: isCallCancel && job.data?.status !== 'missed' ? undefined : 'default',
+                    'thread-id': job.conversationId,
+                    'mutable-content': 1,
                     ...(isCall
-                      ? {
-                          sticky: true,
-                          // Local-only full-screen is handled by the Calls channel importance;
-                          // FCM does not expose fullScreenIntent — high+MAX channel is best-effort.
-                        }
-                      : {}),
-                  },
-                },
-                apns: {
-                  headers: {
-                    'apns-priority': '10',
-                    'apns-collapse-id': collapseKey,
-                    ...(isCall ? { 'apns-push-type': 'alert' } : {}),
-                  },
-                  payload: {
-                    aps: {
-                      sound: 'default',
-                      'thread-id': job.conversationId,
-                      // Badge is corrected by the client via my_total_unread RPC.
-                      'mutable-content': 1,
-                      ...(isCall
-                        ? { 'interruption-level': 'time-sensitive' }
+                      ? { 'interruption-level': 'time-sensitive' }
+                      : isCallCancel
+                        ? { 'interruption-level': 'passive' }
                         : { 'interruption-level': 'active' }),
-                    },
                   },
                 },
               },
-            };
+            },
+          };
 
       const resp = await fetch(fcmUrl, {
         method: 'POST',
@@ -486,7 +563,18 @@ async function fanOut(
     } catch { /* ignore */ }
   }
 
-  return { delivered, skippedDup: 0 };
+  // All recipients intentionally muted → done (do not retry forever).
+  if (delivered === 0 && mutedSkips === tokens.length && tokens.length > 0) {
+    return { delivered: 0, skippedDup: 0, complete: true };
+  }
+
+  // Zero FCM success with tokens that should have received → release for retry.
+  if (delivered === 0) {
+    await releaseDedupe();
+    return { delivered: 0, skippedDup: 0, complete: false };
+  }
+
+  return { delivered, skippedDup: 0, complete: true };
 }
 
 /** Silent clear for multi-device read sync — only the authenticated user's tokens. */
