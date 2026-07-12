@@ -14,6 +14,7 @@ import {
 import { queueAction } from '../lib/sync';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import Avatar from '../components/Avatar';
+import { LumixoCat } from '../components/LumixoCat';
 import type { RootStackParamList } from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -92,7 +93,10 @@ export default function ArchivedChatsScreen() {
       {loading ? (
         <Text style={styles.empty}>Loading…</Text>
       ) : items.length === 0 ? (
-        <Text style={styles.empty}>No archived chats.</Text>
+        <View style={styles.emptyWrap}>
+          <LumixoCat mood="sleeping" size="md" decorative />
+          <Text style={styles.empty}>No archived chats.</Text>
+        </View>
       ) : items.map((c) => (
         <View key={c.conversation.id} style={styles.row}>
           <Pressable style={styles.rowMain} onPress={() => navigation.navigate('Chat', { conversationId: c.conversation.id, title: c.title })}>
@@ -112,7 +116,8 @@ export default function ArchivedChatsScreen() {
 const makeStyles = (colors: Palette) =>
   StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.bg },
-    empty: { color: colors.textMuted, textAlign: 'center', marginTop: spacing(10), fontSize: font.body },
+    emptyWrap: { alignItems: 'center', marginTop: spacing(8), paddingHorizontal: spacing(4) },
+    empty: { color: colors.textMuted, textAlign: 'center', marginTop: spacing(3), fontSize: font.body },
     subtitle: { color: colors.textMuted, fontSize: font.small, paddingHorizontal: spacing(4), paddingVertical: spacing(3) },
     row: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing(4), paddingVertical: spacing(3), borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
     rowMain: { flex: 1, flexDirection: 'row', alignItems: 'center' },

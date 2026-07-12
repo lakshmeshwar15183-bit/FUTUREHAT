@@ -22,6 +22,7 @@ import { submitTicket, getMyTickets } from '../lib/shared';
 import type { TicketKind, SupportTicket } from '../lib/shared';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import { APP_NAME, APP_VERSION, CREDIT, SUPPORT_EMAIL, GRIEVANCE_OFFICER } from '../branding';
+import { LumixoCat } from '../components/LumixoCat';
 import { Alert } from '../ui/dialog';
 
 const FAQ: { q: string; a: string }[] = [
@@ -111,7 +112,10 @@ export default function HelpSupportScreen() {
         loadingTickets ? (
           <View style={styles.center}><ActivityIndicator color={colors.primary} /></View>
         ) : tickets.length === 0 ? (
-          <Text style={styles.empty}>No tickets yet. Submit one from “Get help”.</Text>
+          <View style={styles.emptyWrap}>
+            <LumixoCat mood="sleeping" size="md" decorative />
+            <Text style={styles.empty}>No tickets yet. Submit one from “Get help”.</Text>
+          </View>
         ) : (
           <View style={{ marginTop: spacing(3) }}>
             {tickets.map((t) => {
@@ -217,7 +221,8 @@ const makeStyles = (colors: Palette) =>
     tabText: { color: colors.textMuted, fontSize: font.body, fontWeight: '700' },
     tabTextOn: { color: '#fff' },
     center: { paddingVertical: spacing(10), alignItems: 'center' },
-    empty: { color: colors.textMuted, fontSize: font.body, textAlign: 'center', marginTop: spacing(10) },
+    emptyWrap: { alignItems: 'center', paddingVertical: spacing(8), paddingHorizontal: spacing(4) },
+    empty: { color: colors.textMuted, fontSize: font.body, textAlign: 'center', marginTop: spacing(3) },
     ticketCard: { backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing(4), marginBottom: spacing(3) },
     ticketHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing(2) },
     ticketKind: { flexDirection: 'row', alignItems: 'center', gap: spacing(1.5) },

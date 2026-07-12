@@ -72,6 +72,11 @@ No new native dependencies. No framer-motion on the cat. Auth screens only pass 
 | Empty calls | ✅ CallsView | ✅ CallsScreen |
 | Empty starred | ✅ StarredMessagesModal | ✅ StarredScreen |
 | Empty mailbox | ✅ Mailbox | ✅ MailboxScreen |
+| Empty communities | ✅ CommunitiesModal | ✅ CommunitiesScreen |
+| Empty streaks | — | ✅ StreaksScreen |
+| Empty archived | ✅ ArchivedChatsModal | ✅ ArchivedChatsScreen |
+| Empty help tickets | ✅ HelpSupportModal | ✅ HelpSupportScreen |
+| Offline (PWA) | ✅ `offline.html` + SW | — |
 | Error boundary | ✅ | ✅ |
 | Settings → About (+ developer credit) | ✅ | ✅ |
 | Static vector asset | `web/public/lumi.svg` · `mobile/assets/lumi.svg` | |
