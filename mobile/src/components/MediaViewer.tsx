@@ -29,6 +29,7 @@ import {
   type NativeSyntheticEvent,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { footerBottomPad } from '../lib/safeLayout';
 import { Ionicons } from '@expo/vector-icons';
 import { Audio, ResizeMode, Video } from 'expo-av';
 import * as FileSystem from 'expo-file-system';
@@ -674,7 +675,7 @@ export default function MediaViewer({ items, index, onClose, onForward, onDelete
 
         {/* ── Footer: caption + meta + thumbnail strip ── */}
         <Animated.View
-          style={[styles.footer, chromeStyle, { paddingBottom: Math.max(insets.bottom, 12) + 10 }]}
+          style={[styles.footer, chromeStyle, { paddingBottom: footerBottomPad(insets, 10) }]}
           pointerEvents={chrome && !zoomed ? 'auto' : 'none'}
         >
           {(!!item?.sender || !!item?.time) && (
@@ -819,7 +820,7 @@ function InfoSheet({
     <Modal visible transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
       <Pressable style={styles.infoBackdrop} onPress={onClose}>
         <Pressable
-          style={[styles.infoSheet, { paddingBottom: Math.max(bottomInset, 12) + 18 }]}
+          style={[styles.infoSheet, { paddingBottom: Math.max(bottomInset, 0) + 18 }]}
           onPress={(e) => e.stopPropagation()}
         >
           <View style={styles.infoHandle} />

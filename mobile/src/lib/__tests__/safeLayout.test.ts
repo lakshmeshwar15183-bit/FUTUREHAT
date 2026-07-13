@@ -87,8 +87,16 @@ describe('sheetBottomPad', () => {
 });
 
 describe('footerBottomPad', () => {
-  it('sums inset and extra', () => {
+  it('sums live system inset and extra (3-button / gesture)', () => {
     expect(footerBottomPad({ bottom: 48 }, 12)).toBe(60);
+    expect(footerBottomPad({ bottom: 16 }, 12)).toBe(28);
+    expect(footerBottomPad({ bottom: 0 }, 12)).toBe(12);
+  });
+
+  it('never uses hard-coded Android 3-button height constants', () => {
+    // 48 is a realistic 3-button inset, not a magic constant baked into helpers.
+    expect(footerBottomPad({ bottom: 48 }, 0)).toBe(48);
+    expect(footerBottomPad({ bottom: 0 }, 0)).toBe(0);
   });
 });
 

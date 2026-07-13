@@ -18,6 +18,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { ResizeMode, Video, Audio, type AVPlaybackStatus } from 'expo-av';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { footerBottomPad } from '../../lib/safeLayout';
 
 import { supabase } from '../../lib/supabase';
 import {
@@ -351,7 +352,7 @@ export default function StatusViewer({
 
       {/* footer — bottom inset for system nav / gesture bar */}
       {isMine ? (
-        <View style={[styles.footerMine, { paddingBottom: Math.max(insets.bottom, 8) + 8 }]}>
+        <View style={[styles.footerMine, { paddingBottom: footerBottomPad(insets, 8) + 8 }]}>
           <Pressable style={styles.seenBtn} onPress={loadViewers}>
             <Ionicons name="eye-outline" size={18} color="#fff" />
             <Text style={styles.seenText}>{viewCount > 0 ? `Seen by ${viewCount}` : 'Seen by'}</Text>
@@ -370,7 +371,7 @@ export default function StatusViewer({
           )}
         </View>
       ) : (
-        <View style={[styles.footerReply, { paddingBottom: Math.max(insets.bottom, 8) + 8 }]}>
+        <View style={[styles.footerReply, { paddingBottom: footerBottomPad(insets, 8) + 8 }]}>
           <TextInput
             style={styles.replyInput}
             placeholder={`Reply to ${group.profile?.display_name ?? 'status'}…`}

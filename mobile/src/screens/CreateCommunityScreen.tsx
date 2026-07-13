@@ -11,6 +11,7 @@ import {
   View
 } from 'react-native';
 import SafeScrollView from '../ui/SafeScrollView';
+import SafeBottomBar from '../ui/SafeBottomBar';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -163,6 +164,7 @@ export default function CreateCommunityScreen() {
 
       <SafeScrollView
         contentContainerStyle={styles.scroll}
+        bottomExtra={96}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
@@ -251,7 +253,7 @@ export default function CreateCommunityScreen() {
         )}
       </SafeScrollView>
 
-      <View style={styles.footer}>
+      <SafeBottomBar style={styles.footer} extra={12}>
         <Pressable style={styles.backBtn} onPress={back} disabled={busy}>
           <Text style={styles.backText}>{step === 0 ? 'Cancel' : 'Back'}</Text>
         </Pressable>
@@ -266,7 +268,7 @@ export default function CreateCommunityScreen() {
             <Text style={styles.nextText}>{step === 2 ? 'Create community' : 'Next'}</Text>
           )}
         </Pressable>
-      </View>
+      </SafeBottomBar>
     </View>
   );
 }

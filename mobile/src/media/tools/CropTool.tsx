@@ -13,6 +13,7 @@ import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-na
 import * as ImageManipulator from 'expo-image-manipulator';
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { footerBottomPad } from '../../lib/safeLayout';
 import { useColors, spacing, radius, font, type Palette } from '../../theme';
 
 export interface CropResult { uri: string; width: number; height: number; }
@@ -116,7 +117,7 @@ export default function CropTool({
   }
 
   return (
-    <View style={[styles.container, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+    <View style={[styles.container, { paddingBottom: footerBottomPad(insets, 8) }]}>
       <View style={[styles.top, { paddingTop: Math.max(insets.top, 8) + 8 }]}>
         <Pressable hitSlop={10} onPress={onCancel}><Ionicons name="close" size={26} color="#fff" /></Pressable>
         <Text style={styles.title}>Crop</Text>

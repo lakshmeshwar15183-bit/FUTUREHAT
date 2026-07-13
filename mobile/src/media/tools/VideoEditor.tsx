@@ -17,6 +17,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as VideoThumbnails from 'expo-video-thumbnails';
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { footerBottomPad } from '../../lib/safeLayout';
 import { useColors, spacing, radius, font, type Palette } from '../../theme';
 import { estimateBytes, formatBytes, type Quality } from '../qualityEstimate';
 
@@ -101,7 +102,7 @@ export default function VideoEditor({
   const endPct = dur ? endMs / dur : 1;
 
   return (
-    <View style={[styles.container, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+    <View style={[styles.container, { paddingBottom: footerBottomPad(insets, 8) }]}>
       <View style={[styles.top, { paddingTop: Math.max(insets.top, 8) + 8 }]}>
         <Pressable hitSlop={10} onPress={onCancel}><Ionicons name="close" size={26} color="#fff" /></Pressable>
         <Text style={styles.title}>Edit video</Text>

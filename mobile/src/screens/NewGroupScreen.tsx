@@ -24,6 +24,8 @@ import { uploadAvatarFromUri } from '../lib/media';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import { fabBottom } from '../lib/safeLayout';
+import { useSafeBottomBarStyle } from '../lib/safeLayoutHooks';
+import SafeFlatList from '../ui/SafeFlatList';
 import Avatar from '../components/Avatar';
 import type { RootStackParamList } from '../navigation/types';
 import { Alert } from '../ui/dialog';
@@ -34,6 +36,7 @@ export default function NewGroupScreen() {
   const navigation = useNavigation<Nav>();
   const colors = useColors();
   const insets = useSafeAreaInsets();
+  const safeBottomStyle = useSafeBottomBarStyle(16);
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
   const [step, setStep] = useState<'members' | 'details'>('members');
@@ -199,9 +202,10 @@ export default function NewGroupScreen() {
             : `${selected.length} selected`}
         </Text>
 
-        <FlatList
+        <SafeFlatList
           data={results}
           keyExtractor={(p) => p.id}
+          contentContainerStyle={{ paddingBottom: 88 }}
           renderItem={({ item }) => {
             const on = selected.some((s) => s.id === item.id);
             return (
@@ -292,17 +296,19 @@ export default function NewGroupScreen() {
 
       {!!error && <Text style={styles.error}>{error}</Text>}
 
-      <Pressable
-        style={[styles.createBtn, (!name.trim() || creating) && styles.fabDisabled]}
-        onPress={create}
-        disabled={creating || !name.trim() || uploading}
-      >
-        {creating ? (
-          <ActivityIndicator color="#fff" />
-        ) : (
-          <Text style={styles.createBtnText}>Create group</Text>
-        )}
-      </Pressable>
+      <View style={safeBottomStyle}>
+        <Pressable
+          style={[styles.createBtn, (!name.trim() || creating) && styles.fabDisabled]}
+          onPress={create}
+          disabled={creating || !name.trim() || uploading}
+        >
+          {creating ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.createBtnText}>Create group</Text>
+          )}
+        </Pressable>
+      </View>
     </View>
   );
 }

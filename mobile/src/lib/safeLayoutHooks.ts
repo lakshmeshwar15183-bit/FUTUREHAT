@@ -56,6 +56,15 @@ export function useFooterBottomPad(extra = 12): number {
   return footerBottomPad(insets, extra);
 }
 
+/**
+ * Style fragment for absolute/fixed bottom chrome:
+ * `{ paddingBottom: systemInset + extra }`.
+ * Prefer `<SafeBottomBar>` when you can wrap the footer.
+ */
+export function useSafeBottomBarStyle(extra = 12): { paddingBottom: number } {
+  return { paddingBottom: useFooterBottomPad(extra) };
+}
+
 /** Vertical padding for centered dialogs (status bar + nav bar). */
 export function useDialogVerticalPad(min = 16): {
   paddingTop: number;

@@ -17,6 +17,7 @@ import {
 } from '@shopify/react-native-skia';
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { footerBottomPad } from '../../lib/safeLayout';
 import { useColors, spacing, font, type Palette } from '../../theme';
 
 export interface DrawResult { uri: string; width: number; height: number; }
@@ -148,7 +149,7 @@ export default function DrawTool({
     : strokes;
 
   return (
-    <View style={[styles.container, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+    <View style={[styles.container, { paddingBottom: footerBottomPad(insets, 8) }]}>
       <View style={[styles.top, { paddingTop: Math.max(insets.top, 8) + 8 }]}>
         <Pressable hitSlop={10} onPress={onCancel}><Ionicons name="close" size={26} color="#fff" /></Pressable>
         <View style={styles.topMid}>

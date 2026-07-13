@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { footerBottomPad } from '../../lib/safeLayout';
 
 import { supabase } from '../../lib/supabase';
 import { getMyConversations, getCurrentUser } from '../../lib/shared';
@@ -116,7 +117,7 @@ export default function AudiencePicker({ visible, audience, memberIds, onClose, 
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <View style={[styles.container, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+      <View style={[styles.container, { paddingBottom: footerBottomPad(insets, 8) }]}>
         <View style={[styles.header, { paddingTop: Math.max(insets.top, 8) + 8 }]}>
           <Pressable hitSlop={10} onPress={onClose}>
             <Ionicons name="close" size={26} color={colors.text} />

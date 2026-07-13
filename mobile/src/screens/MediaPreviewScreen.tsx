@@ -24,6 +24,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { footerBottomPad } from '../lib/safeLayout';
 
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import type { RootStackParamList } from '../navigation/types';
@@ -404,7 +405,7 @@ export default function MediaPreviewScreen() {
       )}
 
       {/* Caption + send */}
-      <View style={[styles.bottomBar, { paddingBottom: insets.bottom + 8 }]}>
+      <View style={[styles.bottomBar, { paddingBottom: footerBottomPad(insets, 8) }]}>
         <View style={styles.captionWrap}>
           <TextInput
             style={styles.caption}

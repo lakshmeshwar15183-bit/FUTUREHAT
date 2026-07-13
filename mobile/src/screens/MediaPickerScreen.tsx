@@ -18,6 +18,7 @@ import * as Haptics from 'expo-haptics';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { footerBottomPad, sheetBottomPad } from '../lib/safeLayout';
 
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import type { RootStackParamList } from '../navigation/types';
@@ -397,7 +398,7 @@ export default function MediaPickerScreen() {
 
       {/* Send bar — appears while ≥1 selected */}
       {selected.length > 0 && (
-        <View style={[styles.sendBar, { paddingBottom: insets.bottom + 10 }]}>
+        <View style={[styles.sendBar, { paddingBottom: footerBottomPad(insets, 10) }]}>
           <Text style={styles.sendCount}>{selected.length} selected</Text>
           <Pressable
             style={[styles.sendBtn, resolving && { opacity: 0.7 }]}
@@ -424,7 +425,7 @@ export default function MediaPickerScreen() {
       {/* Album switcher sheet + search */}
       <Modal visible={albumOpen} transparent animationType="slide" onRequestClose={() => setAlbumOpen(false)}>
         <Pressable style={styles.backdrop} onPress={() => { setAlbumOpen(false); setAlbumQuery(''); }}>
-          <Pressable style={[styles.albumSheet, { paddingBottom: insets.bottom + 12 }]} onPress={() => {}}>
+          <Pressable style={[styles.albumSheet, { paddingBottom: sheetBottomPad(insets, 12) }]} onPress={() => {}}>
             <Text style={styles.albumSheetTitle}>Albums</Text>
             <View style={styles.albumSearch}>
               <Ionicons name="search" size={16} color={colors.textFaint} />
