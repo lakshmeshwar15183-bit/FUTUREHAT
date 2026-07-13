@@ -36,19 +36,34 @@ describe('threadColumnBottomPad (manual / iOS)', () => {
 });
 
 describe('threadColumnBottomPad (android-resize)', () => {
-  it('returns 0 when keyboard is open — OS already resized the window', () => {
-    // This is the critical fix for the huge blank gap above the composer.
-    expect(threadColumnBottomPad(320, 34, 'android-resize')).toBe(0);
-    expect(threadColumnBottomPad(280, 0, 'android-resize')).toBe(0);
+  it('returns 0 when OS fully resized the window (shrink ≈ IME)', () => {
+    // Classic adjustResize — pad would double-count and create a huge gap.
+    expect(threadColumnBottomPad(320, 34, 'android-resize', 320)).toBe(0);
+    expect(threadColumnBottomPad(280, 0, 'android-resize', 280)).toBe(0);
+    // Near-full shrink within slack still counts as complete.
+    expect(threadColumnBottomPad(320, 34, 'android-resize', 315)).toBe(0);
+  });
+
+  it('pads residual IME when window did not shrink (edge-to-edge / Realme)', () => {
+    // Phone screenshot bug: IME open, window height unchanged → pad full IME.
+    expect(threadColumnBottomPad(765, 132, 'android-resize', 0)).toBe(765);
+    expect(threadColumnBottomPad(897, 132, 'android-resize', 0)).toBe(897);
+    // Partial resize: only lift what the OS did not already exclude.
+    expect(threadColumnBottomPad(320, 34, 'android-resize', 100)).toBe(220);
   });
 
   it('uses safe-area only when keyboard is closed', () => {
-    expect(threadColumnBottomPad(0, 34, 'android-resize')).toBe(34);
-    expect(threadColumnBottomPad(0, 0, 'android-resize')).toBe(0);
+    expect(threadColumnBottomPad(0, 34, 'android-resize', 0)).toBe(34);
+    expect(threadColumnBottomPad(0, 0, 'android-resize', 50)).toBe(0);
   });
 
   it('treats residual IME noise as closed', () => {
-    expect(threadColumnBottomPad(1, 24, 'android-resize')).toBe(24);
+    expect(threadColumnBottomPad(1, 24, 'android-resize', 0)).toBe(24);
+  });
+
+  it('legacy call without shrink arg still pads full IME (safe default)', () => {
+    // Missing 4th arg → shrink 0 → residual = IME (never under the keyboard).
+    expect(threadColumnBottomPad(320, 34, 'android-resize')).toBe(320);
   });
 });
 

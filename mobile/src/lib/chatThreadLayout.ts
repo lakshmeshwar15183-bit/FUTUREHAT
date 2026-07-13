@@ -8,20 +8,32 @@
  *  - contentContainerStyle.paddingBottom → visual gap at the TOP of the thread
  *  - Outer paddingBottom lifts list+composer for IME / home indicator together
  *
- * CRITICAL — Android gap bug:
- *  With windowSoftInputMode=adjustResize the OS already shrinks the window by
- *  the keyboard height. Adding keyboard height as paddingBottom AGAIN creates
- *  a huge empty band between the last message and the composer. Use mode
- *  `android-resize` so open-keyboard pad is 0 on Android.
+ * CRITICAL — Android dual modes:
+ *  1) Classic adjustResize: OS shrinks the window by ~IME height. Extra pad =
+ *     huge empty band between last message and composer (the old gap bug).
+ *  2) Edge-to-edge / OEM (Realme, Android 15 targetSdk 35, etc.): OS reports
+ *     IME insets but does NOT shrink the RN window. Pad 0 → composer sits
+ *     UNDER the keyboard (the phone screenshot bug).
+ *
+ * Fix: android-resize pads only the residual (IME height − measured window
+ * shrink). Full resize → residual 0 (no gap). No resize → residual = IME
+ * (composer rides above the keyboard).
  */
 
 /** Max residual IME height treated as “keyboard closed” (OEM noise). */
 export const KEYBOARD_CLOSED_EPSILON_PX = 2;
 
 /**
+ * If measured window shrink is within this many px of IME height, treat resize
+ * as complete (avoid 1–8px noise gaps on OEMs).
+ */
+export const ANDROID_RESIZE_COMPLETE_SLACK_PX = 8;
+
+/**
  * How the host window interacts with the IME.
  * - `manual` — iOS / adjustPan: pad by keyboard height when open.
- * - `android-resize` — adjustResize: window already excludes IME; do not re-pad.
+ * - `android-resize` — prefer OS resize; only pad residual IME not already
+ *   excluded by a measured window height drop.
  */
 export type KeyboardPadMode = 'manual' | 'android-resize';
 
@@ -29,13 +41,17 @@ export type KeyboardPadMode = 'manual' | 'android-resize';
  * Bottom padding for the thread column (list + composer).
  * - Keyboard closed: safe-area inset only.
  * - Keyboard open (manual): IME height only (covers home indicator).
- * - Keyboard open (android-resize): 0 — OS already resized the window.
+ * - Keyboard open (android-resize): max(0, ime − windowShrink) with small slack.
  * Never Math.max(ime, inset) while IME is open — double-counts on OEMs.
+ *
+ * @param windowShrinkPx how many px the window height dropped when IME opened
+ *   (closedWindowHeight − openWindowHeight). Pass 0 when unknown / iOS.
  */
 export function threadColumnBottomPad(
   keyboardHeight: number,
   safeAreaBottom: number,
   mode: KeyboardPadMode = 'manual',
+  windowShrinkPx = 0,
 ): number {
   // Callable from Reanimated UI worklets (ChatScreen keyboard pad). Pure math only.
   'worklet';
@@ -44,8 +60,13 @@ export function threadColumnBottomPad(
   const open = kb > KEYBOARD_CLOSED_EPSILON_PX;
 
   if (mode === 'android-resize') {
-    // Window already excludes the keyboard. Extra pad = blank gap (the reported bug).
-    return open ? 0 : inset;
+    if (!open) return inset;
+    const shrink = Number.isFinite(windowShrinkPx) ? Math.max(0, windowShrinkPx) : 0;
+    const residual = Math.max(0, kb - shrink);
+    // Full (or near-full) OS resize → no extra pad (prevents the huge gap bug).
+    if (residual <= ANDROID_RESIZE_COMPLETE_SLACK_PX) return 0;
+    // Edge-to-edge / OEM: window barely shrank — lift by remaining IME.
+    return residual;
   }
 
   // iOS / pan: lift the whole column by the keyboard height.

@@ -295,42 +295,80 @@ function ChatScreenInner() {
   }, [conversationId]);
 
   // Keyboard / IME — no Reanimated root (was translucent on some Realme OEMs).
-  // Android uses adjustResize: the OS shrinks the window. We must NOT also add
-  // keyboard height as paddingBottom (that was the huge empty gap bug).
-  // iOS does not resize the same way — pad by keyboard height when open.
+  // Android dual behaviour:
+  //  • Classic adjustResize: window shrinks ≈ IME → pad residual 0 (no gap).
+  //  • Edge-to-edge / Realme / API 35: window does NOT shrink → pad residual
+  //    IME so the composer sits above the keyboard (not under it).
+  // iOS: always pad by keyboard height.
   const safeBottom = insets.bottom;
   const [imePad, setImePad] = useState(0);
+  /** How much Dimensions window height dropped when IME opened (Android). */
+  const [androidWinShrink, setAndroidWinShrink] = useState(0);
+  /** Window height while keyboard closed — baseline for shrink measurement. */
+  const closedWinHRef = useRef(Dimensions.get('window').height);
+  /** True while system IME is open (for Dimensions remeasure). */
+  const imeOpenRef = useRef(false);
   /** Last real keyboard height — emoji/sticker tray matches this (WhatsApp). */
   const [lastImeHeight, setLastImeHeight] = useState(280);
   const winH = Dimensions.get('window').height;
   useEffect(() => {
     const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const measureShrink = () => {
+      if (Platform.OS !== 'android' || !imeOpenRef.current) return;
+      const winNow = Dimensions.get('window').height;
+      setAndroidWinShrink(Math.max(0, closedWinHRef.current - winNow));
+    };
     const onShow = Keyboard.addListener(showEvt, (e) => {
       const h = e?.endCoordinates?.height ?? 0;
       // Ignore tiny residuals (nav-bar ghost heights on OEMs).
       if (h > 40) {
+        imeOpenRef.current = true;
         setImePad(h);
         setLastImeHeight(h);
+        // Measure now + next frames (adjustResize can lag keyboardDidShow).
+        measureShrink();
+        requestAnimationFrame(measureShrink);
+        setTimeout(measureShrink, 50);
+        setTimeout(measureShrink, 120);
       } else {
+        imeOpenRef.current = false;
         setImePad(0);
+        setAndroidWinShrink(0);
       }
     });
-    const onHide = Keyboard.addListener(hideEvt, () => setImePad(0));
+    const onHide = Keyboard.addListener(hideEvt, () => {
+      imeOpenRef.current = false;
+      setImePad(0);
+      setAndroidWinShrink(0);
+      // Window restores async on some OEMs — refresh closed baseline shortly.
+      const snap = () => {
+        closedWinHRef.current = Dimensions.get('window').height;
+      };
+      requestAnimationFrame(snap);
+      setTimeout(snap, 80);
+      setTimeout(snap, 200);
+    });
+    // Some OEMs apply adjustResize a frame after keyboardDidShow — remeasure.
+    const onDim = Dimensions.addEventListener('change', () => {
+      measureShrink();
+    });
     return () => {
       onShow.remove();
       onHide.remove();
+      onDim.remove();
     };
   }, []);
   // Opaque paper canvas — never translucent over Main tabs.
   const chatCanvasBg =
     wallpaperColor ?? (colors.isLight ? '#EFEAE2' : colors.bg);
-  // Android resize: pad 0 while keyboard open. iOS: pad keyboard height.
+  // Android: residual IME pad (0 if OS already resized). iOS: full IME pad.
   // Keyboard closed: safe-area only (gesture / 3-button nav).
   const columnPadBottom = threadColumnBottomPad(
     imePad,
     safeBottom,
     Platform.OS === 'android' ? 'android-resize' : 'manual',
+    Platform.OS === 'android' ? androidWinShrink : 0,
   );
   const trayH = composerTrayHeight(lastImeHeight, winH);
   // Green header chrome: always white glyphs (not muted palette text).
