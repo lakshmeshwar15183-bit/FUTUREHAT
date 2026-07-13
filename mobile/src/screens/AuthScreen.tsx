@@ -16,6 +16,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { supabase } from '../lib/supabase';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   signInWithEmail,
   signUpWithEmail,
@@ -139,8 +140,21 @@ export default function AuthScreen() {
           }, 900);
         }
       } else {
-        const { error: err } = await signInWithEmail(supabase, mail, password);
+        const { user, error: err } = await signInWithEmail(supabase, mail, password);
         if (err) throw err;
+        // Immediately ack force_logout_at so AdminGate never signs us out on
+        // the first successful login after "sign out everywhere".
+        if (user?.id) {
+          try {
+            const { data: row } = await supabase
+              .from('profiles')
+              .select('force_logout_at')
+              .eq('id', user.id)
+              .maybeSingle();
+            const stamp = (row as { force_logout_at?: string } | null)?.force_logout_at;
+            if (stamp) await AsyncStorage.setItem('fh:forceLogoutAck', stamp);
+          } catch { /* ignore */ }
+        }
         setSuccess(true);
       }
     } catch (e: any) {

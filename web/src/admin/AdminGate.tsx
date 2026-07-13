@@ -14,6 +14,7 @@ import { usePremium } from '../PremiumContext';
 import { supabase } from '../supabase';
 import { signOut } from '@shared/api';
 import { registerDevice, isFeatureEnabled, getActiveAnnouncements } from '@shared/adminApi';
+import { decideForceLogout, sessionIssuedAtMs } from '@shared/forceLogout';
 import type { Announcement } from '@shared/types';
 
 const BLOCKED = new Set(['banned', 'disabled', 'locked']);
@@ -53,11 +54,21 @@ export function AdminGate() {
           return;
         }
         if (row?.force_logout_at) {
+          // Fresh login after force-logout must stay signed in (ack only).
           const ack = localStorage.getItem('fh:forceLogoutAck');
-          if (ack !== row.force_logout_at) {
+          const { data: sessWrap } = await supabase.auth.getSession();
+          const decision = decideForceLogout(
+            row.force_logout_at,
+            sessionIssuedAtMs(sessWrap.session),
+            ack,
+          );
+          if (decision === 'revoke') {
             localStorage.setItem('fh:forceLogoutAck', row.force_logout_at);
             void signOut(supabase);
             return;
+          }
+          if (decision === 'ack_keep' && ack !== row.force_logout_at) {
+            localStorage.setItem('fh:forceLogoutAck', row.force_logout_at);
           }
         }
       } catch { /* columns may predate the migration — ignore */ }

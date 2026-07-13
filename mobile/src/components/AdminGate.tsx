@@ -18,6 +18,7 @@ import {
   registerDevice, isFeatureEnabled, getActiveAnnouncements,
 } from '../lib/shared';
 import type { Announcement } from '../lib/shared';
+import { decideForceLogout, sessionIssuedAtMs } from '../../../shared/forceLogout';
 import { useColors } from '../theme';
 
 const BLOCKED = new Set(['banned', 'disabled', 'locked']);
@@ -69,11 +70,22 @@ export default function AdminGate() {
           return;
         }
         if (row?.force_logout_at) {
+          // Only revoke sessions that predate the force-logout stamp.
+          // Fresh logins (after "sign out everywhere" / password change) must stay.
           const ack = await AsyncStorage.getItem(FORCE_ACK_KEY);
-          if (ack !== row.force_logout_at) {
+          const { data: sessWrap } = await supabase.auth.getSession();
+          const decision = decideForceLogout(
+            row.force_logout_at,
+            sessionIssuedAtMs(sessWrap.session),
+            ack,
+          );
+          if (decision === 'revoke') {
             await AsyncStorage.setItem(FORCE_ACK_KEY, row.force_logout_at);
             void signOut(supabase);
             return;
+          }
+          if (decision === 'ack_keep' && ack !== row.force_logout_at) {
+            await AsyncStorage.setItem(FORCE_ACK_KEY, row.force_logout_at);
           }
         }
       } catch { /* columns may predate the migration — ignore */ }

@@ -129,6 +129,24 @@ export async function loginWithEmail(
         .from('security_events')
         .insert({ user_id: data.user.id, kind: 'login', user_agent: 'password' })
         .then(() => {}, () => {});
+      // Ack any prior force-logout stamp so AdminGate does not bounce this
+      // brand-new session (was causing "login twice" on mobile/web).
+      void client
+        .from('profiles')
+        .select('force_logout_at')
+        .eq('id', data.user.id)
+        .maybeSingle()
+        .then(({ data: row }) => {
+          const stamp = (row as { force_logout_at?: string } | null)?.force_logout_at;
+          if (!stamp) return;
+          try {
+            if (typeof localStorage !== 'undefined') {
+              localStorage.setItem('fh:forceLogoutAck', stamp);
+            }
+          } catch { /* ignore */ }
+          // Mobile AsyncStorage is not available in this shared module; AdminGate
+          // also acks via decideForceLogout(ack_keep) on the new session.
+        }, () => {});
     }
     return { user: data.user, session: data.session, error: null };
   } catch (e) {
