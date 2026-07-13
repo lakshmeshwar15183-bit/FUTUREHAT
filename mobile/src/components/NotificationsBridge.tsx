@@ -41,6 +41,11 @@ import {
   syncBadgeFromServer,
   messagePreviewText,
 } from '../lib/notifications';
+import {
+  nativeClearPendingCallAction,
+  nativeGetPendingCallAction,
+  subscribeNativeIncomingCallActions,
+} from '../lib/incomingCallNative';
 import { recordDelivery } from '../lib/notifLatency';
 import { useCalls } from '../calls/CallContext';
 import type { RootStackParamList } from '../navigation/types';
@@ -55,6 +60,45 @@ export default function NotificationsBridge({
   const declineCallByIdRef = useRef(declineCallById);
   useEffect(() => { acceptCallByIdRef.current = acceptCallById; }, [acceptCallById]);
   useEffect(() => { declineCallByIdRef.current = declineCallById; }, [declineCallById]);
+
+  // Drain native Decline (and similar) actions that ran without launching the app.
+  useEffect(() => {
+    let alive = true;
+
+    const applyPending = async () => {
+      const pending = await nativeGetPendingCallAction();
+      if (!alive || !pending?.callId) return;
+      if (pending.action === 'decline') {
+        await declineCallByIdRef.current(pending.callId);
+        await clearCallNotification(pending.callId);
+      }
+      // Mute is ring-only on native — no server status change.
+      await nativeClearPendingCallAction();
+    };
+
+    void applyPending();
+    const unsubNative = subscribeNativeIncomingCallActions((payload) => {
+      if (!payload.callId) return;
+      if (payload.action === 'decline') {
+        void declineCallByIdRef.current(payload.callId);
+        void clearCallNotification(payload.callId);
+        void nativeClearPendingCallAction();
+      }
+      if (payload.action === 'ended' || payload.action === 'missed') {
+        // Caller hung up — drop ring UI + tray if this call is showing.
+        void clearCallNotification(payload.callId);
+      }
+    });
+    const appSub = AppState.addEventListener('change', (s) => {
+      if (s === 'active') void applyPending();
+    });
+
+    return () => {
+      alive = false;
+      unsubNative();
+      appSub.remove();
+    };
+  }, []);
 
   const meRef = useRef<string | null>(null);
   const settingsRef = useRef<Awaited<ReturnType<typeof getNotificationSettings>> | null>(null);
@@ -411,15 +455,23 @@ export default function NotificationsBridge({
 
       if (data.type === 'call' || data.kind === 'call' || data.type === 'ongoing_call') {
         const callId = data.callId;
-        if (action === 'accept' && callId) {
+        // Answer only — native Decline/Mute never open the app (BroadcastReceiver).
+        if ((action === 'accept' || action === 'answer') && callId) {
           await acceptCallByIdRef.current(callId);
           navRef.navigate('Main' as any);
           return;
         }
         if (action === 'decline' && callId) {
+          // Expo-notifications fallback path (iOS / no native module).
           await declineCallByIdRef.current(callId);
+          await clearCallNotification(callId);
           return;
         }
+        if (action === 'mute' && callId) {
+          // Ring mute only — keep call ringing server-side; user can still Answer.
+          return;
+        }
+        // Body tap / default open → show in-app incoming UI (not auto-answer).
         if (isDefault || action === 'open') {
           navRef.navigate('Main' as any);
         }

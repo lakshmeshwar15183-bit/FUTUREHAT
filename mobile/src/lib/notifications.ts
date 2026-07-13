@@ -180,16 +180,23 @@ export async function initNotifications(): Promise<void> {
         options: { opensAppToForeground: false },
       },
     ]);
+    // Fallback (Expo Go / iOS). Android release uses native CallStyle:
+    // Decline · Mute · Answer — Decline/Mute must NOT open the app.
     await Notifications.setNotificationCategoryAsync(CATEGORY.call, [
-      {
-        identifier: 'accept',
-        buttonTitle: 'Accept',
-        options: { opensAppToForeground: true },
-      },
       {
         identifier: 'decline',
         buttonTitle: 'Decline',
         options: { isDestructive: true, opensAppToForeground: false },
+      },
+      {
+        identifier: 'mute',
+        buttonTitle: 'Mute',
+        options: { opensAppToForeground: false },
+      },
+      {
+        identifier: 'accept',
+        buttonTitle: 'Answer',
+        options: { opensAppToForeground: true },
       },
     ]);
     await Notifications.setNotificationCategoryAsync(CATEGORY.status, [

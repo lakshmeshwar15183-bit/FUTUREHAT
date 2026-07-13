@@ -147,5 +147,15 @@
         <action android:name="com.google.firebase.MESSAGING_EVENT"/>
       </intent-filter>
     </service>
+    <!-- Decline / Mute — must be BroadcastReceiver (never starts MainActivity). -->
+    <receiver
+      android:name=".IncomingCallActionReceiver"
+      android:exported="false"
+      android:enabled="true">
+      <intent-filter>
+        <action android:name="dev.lakshmeshwar.futurehat.CALL_DECLINE"/>
+        <action android:name="dev.lakshmeshwar.futurehat.CALL_MUTE"/>
+      </intent-filter>
+    </receiver>
   </application>
 </manifest>

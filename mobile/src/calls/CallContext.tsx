@@ -334,10 +334,11 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     }
     stopAllCallTones();
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-    void clearCallNotification(incoming.call.id);
     const id = incoming.call.id;
+    // Instant UI + tray clear (WhatsApp: Decline does not leave ghosts).
     setIncoming(null);
-    await updateCallStatus(supabase, id, 'declined');
+    void clearCallNotification(id);
+    await updateCallStatus(supabase, id, 'declined').catch(() => {});
   }, [incoming]);
 
   /**

@@ -258,9 +258,21 @@ function writeSources(projectRoot) {
     ...PKG.split('.'),
   );
   fs.mkdirSync(javaDir, { recursive: true });
-  fs.writeFileSync(path.join(javaDir, 'LumixoFirebaseMessagingService.kt'), SERVICE_KT);
-  fs.writeFileSync(path.join(javaDir, 'IncomingCallNotifier.kt'), NOTIFIER_KT);
-  fs.writeFileSync(path.join(javaDir, 'IncomingCallPackage.kt'), PACKAGE_KT);
+  // Prefer checked-in production sources (WhatsApp-class Decline/Mute/Answer).
+  // Fall back to embedded templates only if sources are missing (fresh prebuild).
+  const srcDir = javaDir;
+  const prefer = (name, fallback) => {
+    const p = path.join(srcDir, name);
+    if (fs.existsSync(p) && fs.statSync(p).size > 200) {
+      // Keep existing hand-maintained production Kotlin.
+      return;
+    }
+    fs.writeFileSync(p, fallback);
+  };
+  prefer('LumixoFirebaseMessagingService.kt', SERVICE_KT);
+  prefer('IncomingCallNotifier.kt', NOTIFIER_KT);
+  prefer('IncomingCallPackage.kt', PACKAGE_KT);
+  // IncomingCallActionReceiver lives inside IncomingCallNotifier.kt in production.
 }
 
 function withIncomingCallNotifications(config) {
@@ -331,6 +343,27 @@ function withIncomingCallNotifications(config) {
       ],
     });
     app.service = services;
+
+    // Decline / Mute BroadcastReceiver (must not launch MainActivity).
+    app.receiver = app.receiver || [];
+    app.receiver = app.receiver.filter(
+      (r) => !(r.$?.['android:name'] || '').includes('IncomingCallActionReceiver'),
+    );
+    app.receiver.push({
+      $: {
+        'android:name': '.IncomingCallActionReceiver',
+        'android:exported': 'false',
+        'android:enabled': 'true',
+      },
+      'intent-filter': [
+        {
+          action: [
+            { $: { 'android:name': 'dev.lakshmeshwar.futurehat.CALL_DECLINE' } },
+            { $: { 'android:name': 'dev.lakshmeshwar.futurehat.CALL_MUTE' } },
+          ],
+        },
+      ],
+    });
 
     // Ensure USE_FULL_SCREEN_INTENT is present
     manifest['uses-permission'] = manifest['uses-permission'] || [];
