@@ -39,9 +39,9 @@ export function computePeriodEnd(plan: PlanId, fromIso: string): string {
 /**
  * Manual provider — no gateway. Always fails closed in production builds so
  * users cannot self-activate Lumixo+ without a verified payment provider
- * (Razorpay / Play Billing) and service-role subscription write (migration 0042).
+ * (Razorpay) and service-role subscription write (migrations 0042 / 0054).
  *
- * Local developers can temporarily return ok:true for testing only — never ship that.
+ * Never return ok:true from this class in shipped builds.
  */
 export class ManualProvider implements PaymentProvider {
   readonly id: PaymentProviderId = 'manual';

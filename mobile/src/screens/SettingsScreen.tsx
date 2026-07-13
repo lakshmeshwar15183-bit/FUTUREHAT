@@ -121,14 +121,13 @@ export default function SettingsScreen() {
         <View style={{ flex: 1, marginLeft: spacing(3) }}>
           <View style={styles.premiumTitleRow}>
             <Text style={styles.premiumTitle}>{APP_NAME}+{admin ? ' · Lifetime' : premium ? ' · Active' : ''}</Text>
-            {!premium && !admin && <Text style={styles.soonTag}>Available soon</Text>}
           </View>
           <Text style={styles.premiumSub}>
             {admin
               ? 'Developer · lifetime Lumixo+ + Admin'
               : premium
               ? 'Thanks for supporting Lumixo'
-              : 'Themes, AI, scheduling & more'}
+              : 'Monthly ₹25 · Yearly ₹249 · Secure Razorpay'}
           </Text>
         </View>
         <Ionicons name="chevron-forward" size={20} color={colors.textFaint} />

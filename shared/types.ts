@@ -209,6 +209,35 @@ export interface Subscription {
   updated_at: string;
 }
 
+/** Razorpay payment ledger row (migration 0054). amount is paise. */
+export type RazorpayPaymentStatus =
+  | 'created'
+  | 'attempted'
+  | 'authorized'
+  | 'captured'
+  | 'failed'
+  | 'refunded'
+  | 'cancelled';
+
+export interface RazorpayPayment {
+  id: UUID;
+  user_id: UUID;
+  razorpay_order_id: string;
+  razorpay_payment_id: string | null;
+  amount: number;
+  currency: string;
+  plan: PlanId;
+  status: RazorpayPaymentStatus;
+  error_code: string | null;
+  error_description: string | null;
+  refund_id: string | null;
+  amount_refunded: number;
+  signature_verified: boolean;
+  activated: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface UserPreferences {
   user_id: UUID;
   theme: string;
