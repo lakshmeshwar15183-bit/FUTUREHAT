@@ -1,14 +1,14 @@
-// Lumixo+ AI — Supabase Edge Function (Deno).
-// Premium + JWT verified server-side; rate-limited; input capped; no secret leakage.
+// Lumixo — optional writing-tools Edge Function (premium-gated, server-side).
+// Secrets (server only): AI_API_KEY, AI_BASE_URL, AI_MODEL
+// Legacy env aliases still accepted for existing deployments.
 //
 // Deploy:  supabase functions deploy ai
-// Secrets: ANTHROPIC_API_KEY (required), ANTHROPIC_BASE_URL / ANTHROPIC_MODEL (optional)
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
-const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') ?? '';
-const ANTHROPIC_BASE_URL = (Deno.env.get('ANTHROPIC_BASE_URL') ?? 'https://api.anthropic.com').replace(/\/+$/, '');
-const MODEL = Deno.env.get('ANTHROPIC_MODEL') ?? 'claude-haiku-4-5-20251001';
+const AI_API_KEY = Deno.env.get('AI_API_KEY') ?? '';
+const AI_BASE_URL = (Deno.env.get('AI_BASE_URL') ?? '').replace(/\/+$/, '');
+const MODEL = Deno.env.get('AI_MODEL') ?? 'default';
 
 const ALLOWED_ACTIONS = new Set(['rewrite', 'translate', 'summarize', 'smart_reply', 'assist']);
 const MAX_TEXT = 4000;
@@ -77,7 +77,7 @@ function buildPrompt(b: Body): { system: string; user: string } | null {
     case 'assist':
       if (!text.trim()) return null;
       return {
-        system: 'You are a writing assistant. Draft a chat message from the instruction. Return ONLY the message.',
+        system: 'You draft a chat message from the instruction. Return ONLY the message.',
         user: text,
       };
     default:
@@ -90,8 +90,8 @@ Deno.serve(async (req) => {
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
 
   try {
-    if (!ANTHROPIC_API_KEY) {
-      return json({ error: 'AI not configured' }, 503);
+    if (!AI_API_KEY || !AI_BASE_URL) {
+      return json({ error: 'Writing tools not configured' }, 503);
     }
 
     const authHeader = req.headers.get('Authorization');
@@ -108,14 +108,12 @@ Deno.serve(async (req) => {
     const { data: premium } = await supabase.rpc('is_premium', { uid: userData.user.id });
     if (!premium) return json({ error: 'Lumixo+ required' }, 403);
 
-    // Server-side rate limit (DB) — prevents cost abuse even with premium.
     try {
       const { data: ok, error: rlErr } = await supabase.rpc('check_rate_limit', {
         p_action: 'ai',
         p_max_per_minute: AI_RATE_PER_MIN,
       });
       if (rlErr) {
-        // Fail open only if RPC missing; otherwise enforce.
         if (!/function|does not exist|schema cache/i.test(rlErr.message ?? '')) {
           return json({ error: 'rate limit check failed' }, 429);
         }
@@ -123,7 +121,7 @@ Deno.serve(async (req) => {
         return json({ error: 'rate limit exceeded' }, 429);
       }
     } catch {
-      /* continue if RPC unavailable on older DBs */
+      /* continue if RPC unavailable */
     }
 
     let body: Body;
@@ -136,12 +134,13 @@ Deno.serve(async (req) => {
     const prompt = buildPrompt(body ?? ({} as Body));
     if (!prompt) return json({ error: 'invalid action or empty input' }, 400);
 
-    const resp = await fetch(`${ANTHROPIC_BASE_URL}/v1/messages`, {
+    const resp = await fetch(`${AI_BASE_URL}/v1/messages`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'x-api-key': ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
+        'x-api-key': AI_API_KEY,
+        // Compatibility version header for Messages-compatible gateways.
+        'x-api-version': '2023-06-01',
       },
       body: JSON.stringify({
         model: MODEL,
@@ -152,9 +151,8 @@ Deno.serve(async (req) => {
     });
 
     if (!resp.ok) {
-      // Never leak provider raw body to clients.
-      console.error('[ai] provider status', resp.status);
-      return json({ error: 'AI provider error' }, 502);
+      console.error('[writing-tools] provider status', resp.status);
+      return json({ error: 'Provider error' }, 502);
     }
     const data = await resp.json();
     const out = String(data.content?.[0]?.text ?? '').trim().slice(0, 8000);
@@ -177,9 +175,9 @@ Deno.serve(async (req) => {
       return json({ suggestions: suggestions.slice(0, 3) });
     }
 
-    return json({ text: out });
+    return json({ text: out, result: out });
   } catch (e) {
-    console.error('[ai]', e instanceof Error ? e.message : 'error');
+    console.error('[writing-tools]', e instanceof Error ? e.message : 'error');
     return json({ error: 'internal error' }, 500);
   }
 });

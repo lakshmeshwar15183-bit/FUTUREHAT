@@ -6,7 +6,7 @@ and the verification status of each, so no work is lost during the build-pipelin
 outage._
 
 ## Pipeline status
-The Bash auto-mode safety classifier (`claude-opus-4-8[1m]`) has an intermittent
+The Bash auto-mode safety classifier has an intermittent
 outage. It gates **every** Bash invocation — `git commit`, `tsc`, and
 `vite build` alike — so committing and verifying are currently blocked. File
 edits, reads, and this log are not gated. Retrying continuously; will commit the

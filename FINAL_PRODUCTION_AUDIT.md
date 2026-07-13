@@ -121,7 +121,7 @@ Log: `validation/results/validation-2026-07-12T18-05-54-900Z.txt`
 
 ## Remaining issues (fixable vs platform)
 
-See `FINAL_REMAINING_LIMITATIONS.md`. Fixable residual (lower priority): web durable outbox, offline edit queue, action-queue dead-letter toast, AI rate limits, full screen-by-screen a11y.
+See `FINAL_REMAINING_LIMITATIONS.md`. Fixable residual (lower priority): web durable outbox, offline edit queue, action-queue dead-letter toast, full screen-by-screen a11y.
 
 ---
 

@@ -19,8 +19,8 @@ database, so it **survives every deployment and code update**.
 | `handle_new_user()` | Signup trigger now calls `provision_developer`, so a dev is provisioned on first login. |
 | Backfill block | Provisions any dev email that already had an account before this migration. |
 
-Because **every** premium gate (RLS for hidden/scheduled chats, the AI edge
-function, the premium-badge view, and any *future* premium feature) consults
+Because **every** premium gate (RLS for hidden/scheduled chats, optional writing
+tools, the premium-badge view, and any *future* premium feature) consults
 `is_premium()`, the override applies everywhere with **no per-feature code**.
 
 The web client (`PremiumContext`) also calls the `is_premium` / `is_admin` RPCs

@@ -74,7 +74,7 @@ Not 10/10: client-side App Lock is not SE/TEE-bound; PIN remains offline-brutefo
 | XSS elsewhere (e.g. CSS `url()` edge cases) | P2 | Continuous review; React text nodes help |
 | App Lock PIN offline brute-force after device compromise | P2 | Client crypto ceiling; need Secure Enclave / Keystore PIN |
 | No message-content E2EE | Product | Would need Signal/MLS protocol — not in stack |
-| AI function cost abuse | P2 | Premium gate only; needs rate limit table |
+| Writing-tools edge cost abuse | P2 | Premium + rate limit (see 0057 / edge) |
 | Admin JWT compromise | Inherent | service_role must stay server-only |
 | Supabase RLS footguns on new tables | Process | Require migration review checklist |
 
@@ -85,7 +85,7 @@ Not 10/10: client-side App Lock is not SE/TEE-bound; PIN remains offline-brutefo
 1. Rotate any historical secrets if admin RPC was ever client-exposed in prod.  
 2. Enable Supabase leaked password protection + MFA for admins.  
 3. Monitor `admin_activate_subscription` and payment 409s.  
-4. Schedule AI rate-limit migration.  
+4. Confirm writing-tools edge rate limits after deploy.  
 5. Pen-test notification reply + call accept cold start on real devices.
 
 ---

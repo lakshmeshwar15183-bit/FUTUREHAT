@@ -73,8 +73,8 @@ const TYPING_TIMEOUT = 2500;
 /** Windowed history: only mount the newest N messages; expand on scroll-up. */
 const MSG_WINDOW_INITIAL = 80;
 const MSG_WINDOW_STEP = 60;
-// AI assistant tools are hidden until the feature is finalized. Flip to true to restore.
-const AI_ENABLED = false;
+// Optional writing tools (premium edge function). Off until product-ready.
+const WRITING_TOOLS_ENABLED = false;
 // Videos: first-class type='video' (migration 0031) + legacy type='file' with video extension.
 const VIDEO_RE = /\.(mp4|webm|mov|m4v|ogv|ogg)(\?|#|$)/i;
 const isVideoUrl = (url?: string | null) => !!url && VIDEO_RE.test(url);
@@ -597,7 +597,7 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
     upsertMessage(optimisticFromOutbox(item, profile?.id ?? ''));
   }
 
-  // ── AI ───────────────────────────────────────────────────────────────────────
+  // ── Optional writing tools ───────────────────────────────────────────────────
   function transcript(): string {
     return messages.slice(-20).filter((m) => !m.is_deleted).map((m) => {
       const who = m.sender_id === profile?.id
@@ -609,15 +609,15 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
       return `${who}: ${m.content ?? '[media]'}`;
     }).join('\n');
   }
-  async function runAi(fn: () => Promise<void>) {
+  async function runWritingTool(fn: () => Promise<void>) {
     if (!isPremium) { setAiOpen(false); return openUpgrade(); }
     setAiBusy(true);
-    try { await fn(); } catch (e: any) { setToast(e.message || 'AI request failed'); } finally { setAiBusy(false); }
+    try { await fn(); } catch (e: any) { setToast(e.message || 'Request failed'); } finally { setAiBusy(false); }
   }
-  const doRewrite = () => runAi(async () => { if (!input.trim()) { setToast('Type a draft to rewrite'); return; } setInput(await aiRewrite(supabase, input.trim())); setAiOpen(false); });
-  const doTranslate = (lang: string) => runAi(async () => { if (!input.trim()) { setToast('Type a draft to translate'); return; } setInput(await aiTranslate(supabase, input.trim(), lang)); setTranslateOpen(false); setAiOpen(false); });
-  const doSmartReply = () => runAi(async () => { setSuggestions(await aiSmartReply(supabase, transcript())); setAiOpen(false); });
-  const doSummarize = () => runAi(async () => { setSummary(await aiSummarize(supabase, transcript())); setAiOpen(false); });
+  const doRewrite = () => runWritingTool(async () => { if (!input.trim()) { setToast('Type a draft to rewrite'); return; } setInput(await aiRewrite(supabase, input.trim())); setAiOpen(false); });
+  const doTranslate = (lang: string) => runWritingTool(async () => { if (!input.trim()) { setToast('Type a draft to translate'); return; } setInput(await aiTranslate(supabase, input.trim(), lang)); setTranslateOpen(false); setAiOpen(false); });
+  const doSmartReply = () => runWritingTool(async () => { setSuggestions(await aiSmartReply(supabase, transcript())); setAiOpen(false); });
+  const doSummarize = () => runWritingTool(async () => { setSummary(await aiSummarize(supabase, transcript())); setAiOpen(false); });
 
   // ── Scheduling ────────────────────────────────────────────────────────────────
   async function handleSchedule() {
@@ -1123,7 +1123,7 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
         )}
       </AnimatePresence>
 
-      {/* Smart reply suggestions */}
+      {/* Suggested reply chips */}
       <AnimatePresence>
         {suggestions.length > 0 && (
           <motion.div className="suggestion-bar" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
@@ -1224,8 +1224,8 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
           onClick={() => (isPremium ? (setStickersOpen((v) => !v), setAiOpen(false)) : openUpgrade())}><SmileIcon size={22} /></button>
 
         <div className="ai-wrap">
-          {AI_ENABLED && (
-          <button type="button" className={`tool-btn ${isPremium ? '' : 'locked'}`} title="AI tools" onClick={() => (isPremium ? setAiOpen((v) => !v) : openUpgrade())}>✨</button>
+          {WRITING_TOOLS_ENABLED && (
+          <button type="button" className={`tool-btn ${isPremium ? '' : 'locked'}`} title="Writing tools" onClick={() => (isPremium ? setAiOpen((v) => !v) : openUpgrade())}>✨</button>
           )}
           <AnimatePresence>
             {aiOpen && (

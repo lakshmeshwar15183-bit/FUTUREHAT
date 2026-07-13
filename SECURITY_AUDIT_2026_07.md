@@ -34,9 +34,9 @@ Messaging apps cannot be “unhackable.” Residual residual risks (no Signal-pr
 **Issue:** Policy `"read premium flags"` allowed authenticated users to `SELECT` **all active** subscription rows (amount, provider payment ids, periods).  
 **Fix (0057):** Own-row SELECT only. Badges via `premium_users` view (`user_id` only, `security_invoker=false`).
 
-### P1 — AI cost / abuse
-**Issue:** AI edge had premium check but no per-user rate limit; provider errors leaked; unbounded input.  
-**Fix:** Action whitelist, text/transcript caps, `check_rate_limit('ai', 20)`, generic errors, no `Authorization: Bearer` API key header misuse.
+### P1 — Writing-tools edge cost / abuse
+**Issue:** Optional writing-tools edge had premium check but no per-user rate limit; provider errors leaked; unbounded input.  
+**Fix:** Action whitelist, text/transcript caps, `check_rate_limit('ai', 20)`, generic errors.
 
 ### P1 — Crash report error leakage
 **Issue:** `json({ error: String(e) })` could surface internals.  
@@ -69,7 +69,7 @@ Messaging apps cannot be “unhackable.” Residual residual risks (no Signal-pr
 | Frida / root / emulator “detection” | Theater | Easily bypassed; not a primary control — server authz is |
 | Certificate pinning | P2 | Breaks with CDN/MITM corporate proxies; optional later |
 | TURN credentials in client env | P2 | Industry-typical; rotate at provider |
-| AI feature mostly disabled in UI | — | Edge still hardened if re-enabled |
+| Writing tools mostly disabled in UI | — | Edge still hardened if re-enabled |
 | Physical device compromise | Inherent | Full disk access defeats App Lock |
 
 **Not implemented as primary security:** aggressive Frida/Xposed/root kill-switches (false positives + bypasses; hurts real users). Abuse is controlled server-side (RLS, rate limits, payment verify).

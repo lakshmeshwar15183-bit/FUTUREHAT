@@ -24,7 +24,7 @@ import './HelpSupportModal.css';
 
 const FAQ: { q: string; a: string }[] = [
   { q: 'How do I start a new chat?', a: 'Tap ➕ in the sidebar, search a person by name or @username, and open the conversation.' },
-  { q: 'What is Lumixo+?', a: 'A premium membership unlocking themes, wallpapers, AI tools, message scheduling, app lock, ghost mode and more.' },
+  { q: 'What is Lumixo+?', a: 'A premium membership unlocking themes, wallpapers, message scheduling, app lock, ghost mode and more.' },
   { q: 'How do reactions and replies work?', a: 'Hover a message to react with an emoji, reply with a quote, forward, edit or delete your own messages.' },
   { q: 'Are my chats private?', a: 'Conversations are protected by row-level security — only participants can read them.' },
   { q: 'How do I block or report someone?', a: 'Open a direct chat header menu (•••) to block the user or report abuse. Reports go to our safety team.' },

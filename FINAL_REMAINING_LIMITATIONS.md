@@ -27,7 +27,7 @@
 | Web durable offline outbox | P1 | Mobile has full queue; web restores input on fail only |
 | Offline message edit queue | P2 | `editMessage` is online-only |
 | Action queue dead-letter UX | P2 | Silent drop after max attempts |
-| AI Edge rate limits | P2 | Premium-only today |
+| Writing-tools edge rate limits | P2 | Premium + per-user limits |
 | Group video / SFU | Product | 1:1 only |
 | Full a11y audit all screens | P2 | Call controls done; rest incomplete |
 | MMKV/SQLite local DB | P2 | AsyncStorage JSON limits scale |

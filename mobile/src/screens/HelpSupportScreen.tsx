@@ -61,7 +61,7 @@ const FAQ: { q: string; a: string }[] = [
   },
   {
     q: `How do I get ${APP_NAME}+?`,
-    a: `Go to Settings → ${APP_NAME}+ to subscribe. Premium unlocks themes, wallpapers, AI replies, scheduling and more.`,
+    a: `Go to Settings → ${APP_NAME}+ to subscribe. Premium unlocks themes, wallpapers, scheduling, app lock, ghost mode and more.`,
   },
   {
     q: 'I was banned — can I appeal?',

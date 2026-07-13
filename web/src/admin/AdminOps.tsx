@@ -344,7 +344,7 @@ export function AdminHealth() {
           <span>{k}</span><b>{v}</b>
         </div>
       ))}
-      <p className="admin-hint">Edge Function status is verified via the AI feature calls; realtime/storage/auth are probed live from this browser.</p>
+      <p className="admin-hint">Realtime, storage, and auth are probed live from this browser. Edge functions are checked via their public health paths when available.</p>
     </div>
   );
 }
