@@ -9,7 +9,54 @@
   box-shadow: var(--fh-shadow);
 }
 
-.settings-title { margin-bottom: 16px; font-size: 22px; }
+.settings-title { margin-bottom: 12px; font-size: 22px; font-weight: 700; letter-spacing: -0.3px; }
+
+.settings-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--fh-surface-alt, var(--fh-border));
+  border: 1px solid var(--fh-border);
+  border-radius: 12px;
+  padding: 0 12px;
+  margin-bottom: 14px;
+  min-height: 44px;
+}
+.settings-search-icon {
+  color: var(--fh-muted);
+  font-size: 16px;
+  flex: none;
+  opacity: 0.85;
+}
+.settings-search-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--fh-text);
+  font-size: 15px;
+  padding: 10px 0;
+  outline: none;
+  font-family: inherit;
+}
+.settings-search-input::placeholder { color: var(--fh-muted); }
+.settings-search-clear {
+  border: none;
+  background: transparent;
+  color: var(--fh-muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 4px 6px;
+  border-radius: 8px;
+  line-height: 1;
+}
+.settings-search-clear:hover { color: var(--fh-text); background: rgba(127,127,127,0.12); }
+.settings-search-empty {
+  text-align: center;
+  color: var(--fh-muted);
+  font-size: 14px;
+  padding: 28px 12px 12px;
+}
 
 .settings-section {
   border-top: 1px solid var(--fh-border);

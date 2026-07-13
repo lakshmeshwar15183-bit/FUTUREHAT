@@ -38,6 +38,6 @@ export default defineConfig({
   },
   // Avoid re-bundling thrash in dev for large deps.
   optimizeDeps: {
-    include: ['react', 'react-dom', '@supabase/supabase-js', 'date-fns'],
+    include: ['react', 'react-dom', '@supabase/supabase-js', 'date-fns', 'qrcode'],
   },
 });

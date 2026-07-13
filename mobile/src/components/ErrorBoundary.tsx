@@ -8,7 +8,7 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
-import { recordCrash } from '../lib/prodLog';
+import { recordCrash, logError } from '../lib/prodLog';
 import { LumixoCat } from './LumixoCat';
 
 interface Props {
@@ -28,10 +28,9 @@ export default class ErrorBoundary extends React.Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
-    // Surfaced in Metro / device logs and persisted for Diagnostics.
-    // When Sentry/Crashlytics is wired, also report here.
+    // Persist for Diagnostics; release builds never dump full stacks to logcat.
     const label = this.props.label ?? 'root';
-    console.error(`[ErrorBoundary:${label}]`, error, info.componentStack);
+    logError(`[ErrorBoundary:${label}]`, error.message);
     void recordCrash(label, error, info.componentStack);
   }
 

@@ -38,6 +38,11 @@ import './media/MediaLightbox.css';
 import { MediaComposer } from './media/MediaComposer';
 import { getStarredIds, starMessage, unstarMessage, getHiddenMessageIds, hideMessageForMe } from '@shared/messageExtras';
 import { pinGroupMessage, unpinGroupMessage, getPinnedMessageIds, canPinMessages, getMyGroupRole, permissionsFromConversation, canSendInGroup } from '@shared/groupsApi';
+import {
+  nextPinnedId,
+  activeMentionQuery,
+  applyMention,
+} from '@shared/groupChatExtras';
 import { safeHref } from './util/safeUrl';
 import { SignedImage, SignedVideo, SignedLink } from './lib/SignedMedia';
 import {
@@ -182,6 +187,12 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
   const [pollQuestion, setPollQuestion] = useState('');
   const [pollOptions, setPollOptions] = useState<string[]>(['', '']);
   const [pollMultiple, setPollMultiple] = useState(false);
+  const [pollAnonymous, setPollAnonymous] = useState(false);
+  const [pinnedCycleId, setPinnedCycleId] = useState<string | null>(null);
+  const [mentionMenu, setMentionMenu] = useState<{
+    query: string;
+    start: number;
+  } | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -367,10 +378,46 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
     notifyTypingRef.current({ userId: profile.id, name: profile.display_name || 'Someone', typing });
   }
   function handleInputChange(e: ChangeEvent<HTMLTextAreaElement>) {
-    setInput(e.target.value);
+    const val = e.target.value;
+    const cursor = e.target.selectionStart ?? val.length;
+    setInput(val);
+    if (isGroup) {
+      const m = activeMentionQuery(val, cursor);
+      setMentionMenu(m);
+    } else {
+      setMentionMenu(null);
+    }
     broadcastTyping(true);
     if (typingStopRef.current) clearTimeout(typingStopRef.current);
     typingStopRef.current = setTimeout(() => broadcastTyping(false), TYPING_TIMEOUT);
+  }
+
+  const mentionHits = useMemo(() => {
+    if (!isGroup || !mentionMenu) return [];
+    const q = mentionMenu.query.toLowerCase();
+    return conversation.participants
+      .filter((p) => p.id !== profile?.id)
+      .filter((p) => {
+        if (!q) return true;
+        const name = (p.display_name || '').toLowerCase();
+        const user = (p.username || '').toLowerCase();
+        return name.includes(q) || user.includes(q);
+      })
+      .slice(0, 8);
+  }, [isGroup, mentionMenu, conversation.participants, profile?.id]);
+
+  function pickWebMention(p: { id: string; display_name: string | null; username: string | null }) {
+    if (!mentionMenu) return;
+    const label = p.username || (p.display_name || 'member').replace(/\s+/g, '');
+    const next = applyMention(input, mentionMenu.start, label);
+    setInput(next.text);
+    setMentionMenu(null);
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(next.cursor, next.cursor);
+    });
   }
   function stopTyping() { if (typingStopRef.current) clearTimeout(typingStopRef.current); broadcastTyping(false); }
 
@@ -700,13 +747,53 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
     const options = pollOptions.map((o) => o.trim()).filter(Boolean);
     if (!question) { setToast('Add a poll question'); return; }
     if (options.length < 2) { setToast('Add at least two options'); return; }
-    const { poll, error } = await createPoll(supabase, convId, question, options, pollMultiple);
+    const { poll, error } = await createPoll(
+      supabase,
+      convId,
+      question,
+      options,
+      pollMultiple,
+      pollAnonymous,
+    );
     if (error || !poll) { setToast(error?.message || 'Could not create poll'); return; }
     setPolls((p) => [poll, ...p]);
-    setPollQuestion(''); setPollOptions(['', '']); setPollMultiple(false); setPollComposerOpen(false);
+    setPollQuestion(''); setPollOptions(['', '']); setPollMultiple(false); setPollAnonymous(false); setPollComposerOpen(false);
     setShowPolls(true);
     setToast('Poll created');
   }
+
+  function jumpToPinned() {
+    const ids = [...pinnedIds];
+    if (!ids.length) return;
+    const next = nextPinnedId(ids, pinnedCycleId);
+    if (!next) return;
+    setPinnedCycleId(next);
+    const el = document.getElementById(`m-${next}`);
+    el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    // Brief highlight via search-match-active class if present
+    el?.classList.add('search-match-active');
+    setTimeout(() => el?.classList.remove('search-match-active'), 1200);
+  }
+
+  const pinnedPreview = useMemo(() => {
+    if (!pinnedIds.size) return null;
+    const id = pinnedCycleId && pinnedIds.has(pinnedCycleId)
+      ? pinnedCycleId
+      : [...pinnedIds][0];
+    const m = messages.find((x) => x.id === id);
+    if (!m) return { id, text: 'Pinned message' };
+    const text =
+      m.type === 'text'
+        ? (m.content || '').slice(0, 80)
+        : m.type === 'image'
+          ? '📷 Photo'
+          : m.type === 'video'
+            ? '🎬 Video'
+            : m.type === 'audio'
+              ? '🎤 Voice'
+              : m.content || 'Pinned message';
+    return { id, text };
+  }, [pinnedIds, pinnedCycleId, messages]);
 
   // ── Header subtitle (presence) ─────────────────────────────────────────────────
   const typingNames = Object.values(typingUsers);
@@ -914,12 +1001,38 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
             </div>
             {showPolls && (
               <div className="poll-panel-body">
-                {polls.map((p) => <PollCard key={p.id} poll={p} myId={profile?.id} />)}
+                {polls.map((p) => (
+                  <PollCard
+                    key={p.id}
+                    poll={p}
+                    myId={profile?.id}
+                    onClosed={(next) =>
+                      setPolls((list) => list.map((x) => (x.id === next.id ? next : x)))
+                    }
+                  />
+                ))}
               </div>
             )}
           </motion.div>
         )}
       </AnimatePresence>
+
+      {isGroup && pinnedPreview && (
+        <button
+          type="button"
+          className="pinned-banner"
+          onClick={jumpToPinned}
+          title="Jump to pinned message"
+        >
+          <span className="pinned-banner-icon">📌</span>
+          <span className="pinned-banner-body">
+            <strong>
+              {pinnedIds.size} pinned{pinnedIds.size > 1 ? ' · tap to cycle' : ''}
+            </strong>
+            <span className="pinned-banner-text">{pinnedPreview.text}</span>
+          </span>
+        </button>
+      )}
 
       <div
         ref={messagesContainerRef}
@@ -1222,6 +1335,9 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
               <label className="poll-pop-multi">
                 <input type="checkbox" checked={pollMultiple} onChange={(e) => setPollMultiple(e.target.checked)} /> Multiple
               </label>
+              <label className="poll-pop-multi">
+                <input type="checkbox" checked={pollAnonymous} onChange={(e) => setPollAnonymous(e.target.checked)} /> Anonymous
+              </label>
             </div>
             <button type="button" className="poll-pop-submit" onClick={handleCreatePoll}>Create poll</button>
           </motion.div>
@@ -1283,7 +1399,26 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
           </div>
         ) : (
           <>
-            <textarea ref={textareaRef} rows={1} placeholder={editing ? 'Edit your message…' : 'Type a message'} value={input} onChange={handleInputChange} onKeyDown={handleComposerKeyDown} onBlur={stopTyping} disabled={sending || uploading} />
+            {mentionHits.length > 0 && (
+              <div className="mention-menu" role="listbox" aria-label="Mention member">
+                {mentionHits.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    className="mention-item"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      pickWebMention(p);
+                    }}
+                  >
+                    <span className="mention-av">{(p.display_name || p.username || '?')[0]}</span>
+                    <span className="mention-name">{p.display_name || p.username || 'Member'}</span>
+                    {p.username && <span className="mention-user">@{p.username}</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+            <textarea ref={textareaRef} rows={1} placeholder={editing ? 'Edit your message…' : isGroup ? 'Type a message · @ to mention' : 'Type a message'} value={input} onChange={handleInputChange} onKeyDown={handleComposerKeyDown} onBlur={stopTyping} disabled={sending || uploading} />
             {input.trim() || editing ? (
               <motion.button whileTap={{ scale: 0.9 }} type="submit" disabled={!input.trim() || sending || uploading} aria-label={editing ? 'Save' : 'Send'}>{editing ? '✓' : <SendIcon size={18} />}</motion.button>
             ) : (

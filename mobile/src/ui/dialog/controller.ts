@@ -12,7 +12,11 @@ export function bindDialogHost(h: Host | null) {
 function enqueue(r: HostRequest) {
   if (!host) {
     // Fallback if host not mounted yet (very early boot) — no-op safe.
-    console.warn('[dialog] host not ready', r.kind);
+    // Do not log in release (avoid noise + path leakage).
+    if (typeof __DEV__ !== 'undefined' && __DEV__) {
+      // eslint-disable-next-line no-console
+      console.warn('[dialog] host not ready', r.kind);
+    }
     r.resolve();
     return;
   }

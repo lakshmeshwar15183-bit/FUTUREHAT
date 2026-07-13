@@ -338,7 +338,10 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
         const { call, error } = await createCall(supabase, conversationId, me, type);
         if (!call) {
-          console.warn('[call] createCall failed:', error?.message);
+          if (typeof __DEV__ !== 'undefined' && __DEV__) {
+            // eslint-disable-next-line no-console
+            console.warn('[call] createCall failed:', error?.message);
+          }
           Alert.alert('Could not start call', error?.message ?? 'Try again.');
           return;
         }
@@ -479,7 +482,10 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
         isCaller: false,
       });
     } catch (e) {
-      console.warn('[call] acceptCallById failed', e);
+      if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        // eslint-disable-next-line no-console
+        console.warn('[call] acceptCallById failed', e);
+      }
     }
   }, [uid]);
 

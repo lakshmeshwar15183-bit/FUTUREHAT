@@ -175,7 +175,9 @@ export function startNotificationResponseListener(): () => void {
           statusId: typeof data?.statusId === 'string' ? data.statusId : undefined,
           communityId: typeof data?.communityId === 'string' ? data.communityId : undefined,
           replyText: typeof response.userText === 'string' ? response.userText : undefined,
-        }).catch(console.error);
+        }).catch(() => {
+          /* never crash notification response path */
+        });
       }
     });
     return () => {

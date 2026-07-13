@@ -32,6 +32,8 @@ export interface Poll {
   multiple: boolean;
   closes_at: string | null;
   created_at: string;
+  /** When true, clients hide voter identities (0062). Optional pre-migration. */
+  anonymous?: boolean | null;
 }
 
 export interface PollVote {
@@ -340,15 +342,76 @@ export async function createPoll(
   question: string,
   options: string[],
   multiple = false,
+  anonymous = false,
 ): Promise<{ poll: Poll | null; error: Error | null }> {
   const user = await getCurrentUser(client);
   if (!user) return { poll: null, error: new Error('not authenticated') };
-  const { data, error } = await client
+  // Prefer full insert (anonymous column from 0062). If the column is missing
+  // (migration not applied), fall back so create still works.
+  let { data, error } = await client
     .from('polls')
-    .insert({ conversation_id: conversationId, created_by: user.id, question, options, multiple })
+    .insert({
+      conversation_id: conversationId,
+      created_by: user.id,
+      question,
+      options,
+      multiple,
+      anonymous: !!anonymous,
+    })
     .select()
     .single();
+  if (error && /anonymous|column/i.test(error.message || '')) {
+    ({ data, error } = await client
+      .from('polls')
+      .insert({
+        conversation_id: conversationId,
+        created_by: user.id,
+        question,
+        options,
+        multiple,
+      })
+      .select()
+      .single());
+  }
   return { poll: data, error };
+}
+
+/** Close a poll now (creator only — RLS update own polls). */
+export async function closePoll(
+  client: SupabaseClient,
+  pollId: UUID,
+): Promise<{ error: Error | null }> {
+  const { error } = await client
+    .from('polls')
+    .update({ closes_at: new Date().toISOString() })
+    .eq('id', pollId);
+  return { error: error ? new Error(error.message) : null };
+}
+
+/** Votes for one option with optional display names (for “View voters”). */
+export async function getPollVoters(
+  client: SupabaseClient,
+  pollId: UUID,
+  optionIndex: number,
+): Promise<{ userId: UUID; displayName: string | null }[]> {
+  const { data: votes } = await client
+    .from('poll_votes')
+    .select('user_id')
+    .eq('poll_id', pollId)
+    .eq('option_index', optionIndex);
+  if (!votes?.length) return [];
+  const ids = votes.map((v) => v.user_id as UUID);
+  const { data: profiles } = await client
+    .from('public_profiles')
+    .select('id, display_name, username')
+    .in('id', ids);
+  const byId = new Map(
+    (profiles ?? []).map((p: any) => [
+      p.id as UUID,
+      (p.display_name as string | null) || (p.username as string | null),
+    ]),
+  );
+  return ids.map((id) => ({ userId: id, displayName: byId.get(id) ?? null }));
 }
 
 export async function getPolls(client: SupabaseClient, conversationId: UUID): Promise<Poll[]> {
@@ -441,6 +504,30 @@ export async function getCommunityEvents(
     .eq('community_id', communityId)
     .order('starts_at');
   return data ?? [];
+}
+
+/** Events attached to a group / channel conversation (future-ready group events). */
+export async function getConversationEvents(
+  client: SupabaseClient,
+  conversationId: UUID,
+): Promise<CommunityEvent[]> {
+  const { data } = await client
+    .from('events')
+    .select('*')
+    .eq('conversation_id', conversationId)
+    .order('starts_at', { ascending: true });
+  return data ?? [];
+}
+
+export async function getEventRsvps(
+  client: SupabaseClient,
+  eventId: UUID,
+): Promise<{ user_id: UUID; status: 'going' | 'maybe' | 'no' }[]> {
+  const { data } = await client
+    .from('event_rsvps')
+    .select('user_id, status')
+    .eq('event_id', eventId);
+  return (data ?? []) as { user_id: UUID; status: 'going' | 'maybe' | 'no' }[];
 }
 
 export async function rsvpEvent(

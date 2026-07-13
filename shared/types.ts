@@ -390,6 +390,10 @@ export interface CallSettings {
   silence_unknown: boolean;    // silence calls from people you don't share a chat with
   ringtone: boolean;           // play a ringtone on incoming calls
   vibrate: boolean;            // vibrate on incoming calls
+  /** Prefer noise suppression when the platform stack supports it (client hint). */
+  noise_suppression?: boolean;
+  /** Prefer echo cancellation when the platform stack supports it (client hint). */
+  echo_cancellation?: boolean;
 }
 
 // ── Notifications (0025) ─────────────────────────────────────────────────────
@@ -414,6 +418,10 @@ export interface NotificationSettings {
   groupTone: string;            // 'default' | uri
   groupVibrate: boolean;
   groupMute: boolean;
+  // COMMUNITIES / MENTIONS (prefs-only; push pipeline already has mention kind)
+  communitiesMute?: boolean;
+  mentionTone?: string;
+  mentionVibrate?: boolean;
 }
 
 export type PushKind = 'message' | 'group' | 'call' | 'missed_call' | 'status' | 'system' | 'mention';

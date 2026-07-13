@@ -10,6 +10,8 @@ export const DEFAULT_CALL_SETTINGS: CallSettings = {
   silence_unknown: false,
   ringtone: true,
   vibrate: true,
+  noise_suppression: true,
+  echo_cancellation: true,
 };
 
 function extraOf(prefs: any): Record<string, any> {

@@ -20,6 +20,8 @@ export interface PrivacySettings {
   groups: Visibility;
   calls: Visibility;
   avatar: Visibility;
+  /** Who can add you to communities (prefs; future server enforce). */
+  communities?: Visibility;
   readReceipts: boolean;
 }
 
@@ -37,6 +39,7 @@ export interface ChatSettings {
 export const DEFAULT_PRIVACY: PrivacySettings = {
   lastSeen: 'everyone', profilePhoto: 'everyone', about: 'everyone', links: 'everyone',
   status: 'contacts', groups: 'everyone', calls: 'everyone', avatar: 'everyone',
+  communities: 'everyone',
   readReceipts: true,
 };
 

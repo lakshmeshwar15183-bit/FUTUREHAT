@@ -54,6 +54,7 @@ export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin, onModer
   const [isModerator, setIsModerator] = useState(false);
   const [unseenMail, setUnseenMail] = useState(0);
   const [appearanceMode, setAppearanceMode] = useState<AppearanceMode>(() => getStoredAppearanceMode());
+  const [settingsQuery, setSettingsQuery] = useState('');
 
   useEffect(() => {
     getServerModerator(supabase).then(setIsModerator).catch(() => {});
@@ -91,14 +92,74 @@ export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin, onModer
   const themeList = Object.values(THEMES);
   const fontList = Object.values(FONTS);
 
+  const q = settingsQuery.trim().toLowerCase();
+  const match = useCallback(
+    (...terms: string[]) => {
+      if (!q) return true;
+      return terms.some((t) => t.toLowerCase().includes(q));
+    },
+    [q],
+  );
+
+  const showAppearance = match(
+    'appearance', 'theme', 'light', 'dark', 'system', 'wallpaper', 'font', 'bubble', 'icon', 'display',
+  );
+  const showPrivacyQuick = match('privacy', 'ghost', 'app lock', 'lock', 'hide');
+  const showAccount = match(
+    'account', 'security', '2fa', 'password', 'privacy', 'blocked', 'notifications', 'visibility',
+  );
+  const showChats = match(
+    'chat', 'streak', 'archived', 'storage', 'export', 'invite', 'data', 'backup', 'cache',
+  );
+  const showSupport = match(
+    'help', 'support', 'legal', 'terms', 'diagnostics', 'mailbox', 'moderator', 'admin', 'grievance', 'faq',
+  );
+  const showAbout = match('about', 'version', 'build', 'license', 'support', 'lumi', 'mascot');
+  const showMembership = match('premium', 'membership', 'plus', 'plan', 'razorpay', 'subscribe');
+  const showProfile = !q || match('profile', 'name', 'photo', 'username', 'account');
+
+  const anyVisible =
+    showProfile || showMembership || showAppearance || showPrivacyQuick ||
+    showAccount || showChats || showSupport || showAbout;
+
   return (
     <>
     <motion.div className="modal-backdrop" variants={modalBackdrop} initial="initial" animate="animate" exit="exit" onClick={onClose}>
       <motion.div className="settings-modal glass" variants={modalPanel} onClick={(e) => e.stopPropagation()}>
         <button className="modal-close" onClick={onClose} aria-label="Close">✕</button>
-        <h2 className="settings-title">⚙️ Settings</h2>
+        <h2 className="settings-title">Settings</h2>
+
+        <div className="settings-search" role="search">
+          <span className="settings-search-icon" aria-hidden>⌕</span>
+          <input
+            type="search"
+            className="settings-search-input"
+            placeholder="Search settings"
+            value={settingsQuery}
+            onChange={(e) => setSettingsQuery(e.target.value)}
+            aria-label="Search settings"
+            autoComplete="off"
+          />
+          {settingsQuery && (
+            <button
+              type="button"
+              className="settings-search-clear"
+              onClick={() => setSettingsQuery('')}
+              aria-label="Clear search"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+
+        {!anyVisible && (
+          <div className="settings-search-empty">
+            No settings match “{settingsQuery.trim()}”
+          </div>
+        )}
 
         {/* Profile header */}
+        {showProfile && (
         <section className="settings-section">
           <div className="settings-profile">
             <div
@@ -121,8 +182,10 @@ export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin, onModer
             </div>
           </div>
         </section>
+        )}
 
         {/* Membership */}
+        {showMembership && (
         <section className="settings-section">
           <div className="membership-row">
             <div>
@@ -143,10 +206,12 @@ export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin, onModer
             Edit profile →
           </button>
         </section>
+        )}
 
         {/* Appearance */}
+        {showAppearance && (
         <section className="settings-section">
-          <h3>🎨 Appearance</h3>
+          <h3>Appearance</h3>
 
           <label className="setting-label">Display mode</label>
           <div className="chip-row">
@@ -233,10 +298,12 @@ export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin, onModer
             ))}
           </div>
         </section>
+        )}
 
         {/* Privacy */}
+        {showPrivacyQuick && (
         <section className="settings-section">
-          <h3>🔒 Privacy {!isPremium && <span className="lock-hint">premium</span>}</h3>
+          <h3>Privacy {!isPremium && <span className="lock-hint">premium</span>}</h3>
           <div className="toggle-row" onClick={() => toggle('ghost_mode')}>
             <div>
               <div className="toggle-name">👻 Ghost mode</div>
@@ -253,66 +320,74 @@ export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin, onModer
           </div>
           <p className="hint">Hide a chat from its conversation menu (•••).</p>
         </section>
+        )}
 
         {/* Account & privacy */}
+        {showAccount && (
         <section className="settings-section">
-          <h3>👤 Account &amp; privacy</h3>
+          <h3>Account &amp; privacy</h3>
           <button className="settings-link" onClick={() => setSub('account')}>Account &amp; security · 2FA →</button>
           <button className="settings-link" onClick={() => setSub('privacy')}>Privacy · visibility · blocked →</button>
           <button className="settings-link" onClick={() => setSub('notifications')}>Notifications →</button>
         </section>
+        )}
 
         {/* Chats & data */}
+        {showChats && (
         <section className="settings-section">
-          <h3>💬 Chats &amp; data</h3>
+          <h3>Chats &amp; data</h3>
           <button className="settings-link" onClick={() => setSub('chats')}>Chat settings →</button>
-          <button className="settings-link" onClick={() => setSub('streaks')}>🎏 Streaks →</button>
+          <button className="settings-link" onClick={() => setSub('streaks')}>Streaks →</button>
           <button className="settings-link" onClick={() => setSub('archived')}>Archived chats →</button>
           <button className="settings-link" onClick={() => setSub('storage')}>Storage &amp; data →</button>
-          <button className="settings-link" onClick={() => setSub('export')}>Export my data →</button>
+          <button className="settings-link" onClick={() => setSub('export')}>Export my data · backup →</button>
           <button className="settings-link" onClick={() => setSub('invite')}>Invite friends →</button>
         </section>
+        )}
 
         {/* Support & safety */}
+        {showSupport && (
         <section className="settings-section">
-          <h3>🛟 Support &amp; safety</h3>
+          <h3>Support &amp; safety</h3>
           <button className="settings-link" onClick={() => { onClose(); onHelp(); }}>
-            Help &amp; Support · tickets · grievance →
+            Help &amp; Support · FAQ · grievance →
           </button>
-          <button className="settings-link" onClick={() => setSub('legal')}>Terms · Privacy · Guidelines →</button>
-          <button className="settings-link" onClick={() => setSub('diagnostics')}>Diagnostics &amp; app info →</button>
+          <button className="settings-link" onClick={() => setSub('legal')}>Terms · Privacy · Licenses →</button>
+          <button className="settings-link" onClick={() => setSub('diagnostics')}>Diagnostics · version · what&apos;s new →</button>
           {onMailbox && (
             <button className="settings-link" onClick={() => { onClose(); onMailbox(); }}>
-              📬 Mailbox
+              Mailbox
               {unseenMail > 0 && <span className="mailbox-count">{unseenMail}</span>} →
             </button>
           )}
-          {/* Moderator dashboard: OWNER + moderators (getServerModerator is true for
-              the owner too). Admin dashboard: OWNER only (the single permanent owner). */}
           {isModerator && onModerator && (
             <button className="settings-link" onClick={() => { onClose(); onModerator(); }}>
-              🛡️ Moderator dashboard →
+              Moderator dashboard →
             </button>
           )}
           {isOwner && onAdmin && (
             <button className="settings-link" onClick={() => { onClose(); onAdmin(); }}>
-              🛡️ Admin dashboard →
+              Admin dashboard →
             </button>
           )}
         </section>
+        )}
 
         {/* About */}
+        {showAbout && (
         <section className="settings-section about">
-          <h3>ℹ️ About</h3>
+          <h3>About</h3>
           <div className="about-mascot" aria-hidden>
             <LumixoCat mood="wave" size="sm" decorative />
           </div>
           <div className="about-row"><span>App</span><span>Lumixo</span></div>
           <div className="about-row"><span>Mascot</span><span>Lumi</span></div>
           <div className="about-row"><span>Version</span><span>{APP_VERSION}</span></div>
+          <div className="about-row"><span>Build</span><span>{String(APP_VERSION).replace(/\./g, '')}</span></div>
           <div className="about-row"><span>Support</span><span><a href={`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent('Lumixo Support Request')}`}>{SUPPORT_EMAIL}</a></span></div>
           <div className="about-credit">{CREDIT}</div>
         </section>
+        )}
       </motion.div>
     </motion.div>
 

@@ -248,7 +248,12 @@ export async function ensureMediaCached(url: string | null | undefined): Promise
       touchMem(key, uri);
       return uri;
     } catch (e) {
-      console.warn('[mediaCache] download failed', key, (e as Error)?.message);
+      try {
+        const { logWarn } = require('./prodLog') as typeof import('./prodLog');
+        logWarn('[mediaCache] download failed', key, (e as Error)?.message);
+      } catch {
+        /* ignore */
+      }
       return null;
     } finally {
       inflight.delete(key);

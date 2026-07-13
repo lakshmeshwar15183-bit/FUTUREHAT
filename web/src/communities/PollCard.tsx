@@ -1,35 +1,49 @@
-// Lumixo — inline poll card: question, options with live tallies + bars, and
-// tap-to-vote (single or multiple choice). Self-contained: fetches its own votes
-// and refetches after voting. Used inside ChatView's poll panel.
-
+// Lumixo — inline poll card: tallies, single/multi, close, view voters, anonymous.
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../supabase';
-import { getPollVotes, votePoll } from '@shared/communitiesApi';
+import {
+  getPollVotes,
+  votePoll,
+  closePoll,
+  getPollVoters,
+  unvotePoll,
+} from '@shared/communitiesApi';
 import type { Poll, PollVote } from '@shared/communitiesApi';
 import './PollCard.css';
 
-export function PollCard({ poll, myId }: { poll: Poll; myId?: string }) {
+export function PollCard({
+  poll,
+  myId,
+  onClosed,
+}: {
+  poll: Poll;
+  myId?: string;
+  onClosed?: (poll: Poll) => void;
+}) {
   const [votes, setVotes] = useState<PollVote[]>([]);
   const [busy, setBusy] = useState(false);
+  const [votersFor, setVotersFor] = useState<number | null>(null);
+  const [voters, setVoters] = useState<{ userId: string; displayName: string | null }[]>([]);
 
   const refetch = useCallback(() => {
     getPollVotes(supabase, poll.id).then(setVotes).catch(() => {});
   }, [poll.id]);
 
-  useEffect(() => { refetch(); }, [refetch]);
+  useEffect(() => {
+    refetch();
+  }, [refetch]);
 
   const total = votes.length;
   const myVotes = new Set(votes.filter((v) => v.user_id === myId).map((v) => v.option_index));
   const closed = poll.closes_at ? new Date(poll.closes_at).getTime() < Date.now() : false;
+  const isCreator = !!myId && poll.created_by === myId;
+  const anonymous = !!poll.anonymous;
 
   async function cast(optionIndex: number) {
     if (busy || closed) return;
-    // toggle off if single-choice re-tap on the same option is not supported by API;
-    // for multiple, allow toggling our own vote off by deleting it.
     if (poll.multiple && myVotes.has(optionIndex)) {
       setBusy(true);
-      await supabase.from('poll_votes').delete()
-        .eq('poll_id', poll.id).eq('user_id', myId).eq('option_index', optionIndex);
+      await unvotePoll(supabase, poll.id, optionIndex);
       setBusy(false);
       refetch();
       return;
@@ -38,6 +52,29 @@ export function PollCard({ poll, myId }: { poll: Poll; myId?: string }) {
     await votePoll(supabase, poll.id, optionIndex, poll.multiple);
     setBusy(false);
     refetch();
+  }
+
+  async function doClose() {
+    if (!isCreator || closed || busy) return;
+    if (!confirm('Close this poll? No more votes will be accepted.')) return;
+    setBusy(true);
+    const { error } = await closePoll(supabase, poll.id);
+    setBusy(false);
+    if (!error) {
+      const next = { ...poll, closes_at: new Date().toISOString() };
+      onClosed?.(next);
+    }
+  }
+
+  async function showVoters(optionIndex: number) {
+    if (anonymous) return;
+    if (votersFor === optionIndex) {
+      setVotersFor(null);
+      return;
+    }
+    setVotersFor(optionIndex);
+    const list = await getPollVoters(supabase, poll.id, optionIndex);
+    setVoters(list);
   }
 
   return (
@@ -49,17 +86,56 @@ export function PollCard({ poll, myId }: { poll: Poll; myId?: string }) {
           const pct = total ? Math.round((count / total) * 100) : 0;
           const mine = myVotes.has(i);
           return (
-            <button key={i} className={`poll-option ${mine ? 'mine' : ''}`} onClick={() => cast(i)} disabled={busy || closed}>
-              <span className="poll-bar" style={{ width: `${pct}%` }} />
-              <span className="poll-opt-label">{mine ? '✓ ' : ''}{opt}</span>
-              <span className="poll-opt-count">{pct}% · {count}</span>
-            </button>
+            <div key={i} className="poll-option-wrap">
+              <button
+                type="button"
+                className={`poll-option ${mine ? 'mine' : ''}`}
+                onClick={() => cast(i)}
+                disabled={busy || closed}
+              >
+                <span className="poll-bar" style={{ width: `${pct}%` }} />
+                <span className="poll-opt-label">
+                  {mine ? '✓ ' : ''}
+                  {opt}
+                </span>
+                <span className="poll-opt-count">
+                  {pct}% · {count}
+                </span>
+              </button>
+              {!anonymous && count > 0 && (
+                <button
+                  type="button"
+                  className="poll-voters-toggle"
+                  onClick={() => showVoters(i)}
+                >
+                  {votersFor === i ? 'Hide voters' : 'View voters'}
+                </button>
+              )}
+              {votersFor === i && !anonymous && (
+                <ul className="poll-voters">
+                  {voters.map((v) => (
+                    <li key={v.userId}>{v.displayName || 'Member'}</li>
+                  ))}
+                  {voters.length === 0 && <li>No voters</li>}
+                </ul>
+              )}
+            </div>
           );
         })}
       </div>
       <div className="poll-foot">
-        {total} vote{total === 1 ? '' : 's'} · {poll.multiple ? 'multiple choice' : 'single choice'}
+        {total} vote{total === 1 ? '' : 's'} ·{' '}
+        {poll.multiple ? 'multiple choice' : 'single choice'}
+        {anonymous ? ' · anonymous' : ''}
         {closed && ' · closed'}
+        {isCreator && !closed && (
+          <>
+            {' · '}
+            <button type="button" className="poll-close-btn" onClick={doClose} disabled={busy}>
+              Close poll
+            </button>
+          </>
+        )}
       </div>
     </div>
   );

@@ -14,6 +14,7 @@ export * from '../../../shared/adminApi';
 export * from '../../../shared/callsApi';
 export * from '../../../shared/callSettingsApi';
 export * from '../../../shared/communitiesApi';
+export * from '../../../shared/groupChatExtras';
 export * from '../../../shared/supportApi';
 export * from '../../../shared/accountApi';
 export * from '../../../shared/authApi';

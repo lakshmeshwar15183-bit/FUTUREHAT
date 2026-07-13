@@ -98,6 +98,17 @@ export function NotificationSettingsModal({ onClose }: { onClose: () => void }) 
             </section>
 
             <section className="sp-section">
+              <h3>Communities</h3>
+              <Toggle k="communitiesMute" name="Mute communities" desc="Silence community channel notifications" />
+            </section>
+
+            <section className="sp-section">
+              <h3>Mentions</h3>
+              <ToneRow name="Mention tone" value={n.mentionTone || 'default'} />
+              <Toggle k="mentionVibrate" name="Vibrate on mentions" />
+            </section>
+
+            <section className="sp-section">
               <h3>Groups</h3>
               <Toggle k="groupMute" name="Mute" desc="Silence group-message notifications" />
               <ToneRow name="Notification tone" value={n.groupTone} />

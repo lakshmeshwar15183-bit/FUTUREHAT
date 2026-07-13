@@ -36,3 +36,31 @@
 .poll-opt-label { position: relative; z-index: 1; font-weight: 600; }
 .poll-opt-count { position: relative; z-index: 1; font-size: 12px; color: var(--fh-muted); flex: none; }
 .poll-foot { margin-top: 10px; font-size: 12px; color: var(--fh-muted); }
+.poll-option-wrap { display: flex; flex-direction: column; gap: 2px; }
+.poll-voters-toggle {
+  align-self: flex-start;
+  border: none;
+  background: none;
+  color: var(--fh-accent, #00a884);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+.poll-voters {
+  margin: 0 0 4px 8px;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  color: var(--fh-muted);
+}
+.poll-voters li { padding: 2px 0; }
+.poll-close-btn {
+  border: none;
+  background: none;
+  color: var(--fh-accent, #00a884);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+}

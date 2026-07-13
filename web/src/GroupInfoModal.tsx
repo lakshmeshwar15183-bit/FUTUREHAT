@@ -36,6 +36,12 @@ import {
   setConversationDisappearing,
   isVideoMessage,
 } from '@shared/api';
+import {
+  getSharedLinks,
+  formatGroupCreatedAt,
+  linkHostname,
+  type SharedLink,
+} from '@shared/groupChatExtras';
 import { deleteConversationForMe } from '@shared/messageExtras';
 import {
   getMutedIds,
@@ -55,6 +61,7 @@ import type {
 } from '@shared/types';
 import { useEscapeToClose } from './useEscapeToClose';
 import { safeHref, safeMediaSrc } from './util/safeUrl';
+import { QrCode } from './components/QrCode';
 import './GroupInfoModal.css';
 import './GroupModal.css';
 
@@ -74,7 +81,10 @@ type Panel =
   | 'disappear'
   | 'media'
   | 'docs'
+  | 'links'
   | 'member';
+
+const MEMBERS_PREVIEW = 40;
 
 const DISAPPEAR = [
   { secs: 0, label: 'Off' },
@@ -97,10 +107,12 @@ export function GroupInfoModal({ conversationId, onClose, onLeft, onUpdated }: P
   const [joinRequests, setJoinRequests] = useState<GroupJoinRequest[]>([]);
   const [media, setMedia] = useState<Message[]>([]);
   const [docs, setDocs] = useState<Message[]>([]);
+  const [links, setLinks] = useState<SharedLink[]>([]);
   const [disappearSecs, setDisappearSecs] = useState(0);
   const [panel, setPanel] = useState<Panel>('main');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [memberQuery, setMemberQuery] = useState('');
 
   const [editName, setEditName] = useState('');
   const [editDesc, setEditDesc] = useState('');
@@ -127,13 +139,14 @@ export function GroupInfoModal({ conversationId, onClose, onLeft, onUpdated }: P
     try {
       const user = await getCurrentUser(supabase);
       setMyId(user?.id ?? null);
-      const [conv, mems, role, mids, shared, dsecs] = await Promise.all([
+      const [conv, mems, role, mids, shared, dsecs, sharedLinks] = await Promise.all([
         getGroupConversation(supabase, conversationId),
         getGroupMembers(supabase, conversationId),
         getMyGroupRole(supabase, conversationId),
         getMutedIds(supabase),
         getSharedMedia(supabase, conversationId, 80),
         getDisappearing(supabase, conversationId),
+        getSharedLinks(supabase, conversationId, 60),
       ]);
       setConversation(conv);
       setMembers(mems);
@@ -141,6 +154,7 @@ export function GroupInfoModal({ conversationId, onClose, onLeft, onUpdated }: P
       setPerms(permissionsFromConversation(conv));
       setMuted(mids.includes(conversationId));
       setDisappearSecs(dsecs);
+      setLinks(sharedLinks);
       setMedia(shared.filter((m) => m.type === 'image' || isVideoMessage(m)));
       setDocs(shared.filter((m) => m.type === 'file' && !isVideoMessage(m)));
       if (isGroupAdminRole(role)) {
@@ -358,6 +372,18 @@ export function GroupInfoModal({ conversationId, onClose, onLeft, onUpdated }: P
 
   const inviteLink = inviteToken ? groupInviteUrl(inviteToken) : '';
 
+  const filteredMembers = useMemo(() => {
+    const q = memberQuery.trim().toLowerCase();
+    if (!q) return members;
+    return members.filter(
+      (m) =>
+        (m.profile.display_name || '').toLowerCase().includes(q) ||
+        (m.profile.username || '').toLowerCase().includes(q),
+    );
+  }, [members, memberQuery]);
+
+  const visibleMembers = filteredMembers.slice(0, MEMBERS_PREVIEW);
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-card gi-modal" onClick={(e) => e.stopPropagation()}>
@@ -378,6 +404,7 @@ export function GroupInfoModal({ conversationId, onClose, onLeft, onUpdated }: P
             {panel === 'disappear' && 'Disappearing messages'}
             {panel === 'media' && 'Media'}
             {panel === 'docs' && 'Documents'}
+            {panel === 'links' && 'Links'}
             {panel === 'member' && (selectedMember?.profile.display_name || 'Member')}
           </h2>
           <span style={{ width: 28 }} />
@@ -403,6 +430,11 @@ export function GroupInfoModal({ conversationId, onClose, onLeft, onUpdated }: P
               <div className="gi-meta">
                 Group · {members.length} member{members.length === 1 ? '' : 's'}
               </div>
+              {formatGroupCreatedAt(conversation.created_at) && (
+                <div className="gi-created">
+                  Created {formatGroupCreatedAt(conversation.created_at)}
+                </div>
+              )}
               {conversation.description && (
                 <div className="gi-desc">{conversation.description}</div>
               )}
@@ -434,6 +466,10 @@ export function GroupInfoModal({ conversationId, onClose, onLeft, onUpdated }: P
                 <span>📄 Docs</span>
                 <span className="gi-val">{docs.length}</span>
               </button>
+              <button type="button" className="gi-row" onClick={() => setPanel('links')}>
+                <span>🔗 Links</span>
+                <span className="gi-val">{links.length}</span>
+              </button>
             </section>
 
             {isAdmin && joinRequests.length > 0 && (
@@ -459,7 +495,14 @@ export function GroupInfoModal({ conversationId, onClose, onLeft, onUpdated }: P
 
             <section className="gi-section">
               <h3>{members.length} members</h3>
-              {members.map((m) => (
+              <input
+                className="gi-member-search"
+                placeholder="Search members…"
+                value={memberQuery}
+                onChange={(e) => setMemberQuery(e.target.value)}
+                aria-label="Search members"
+              />
+              {visibleMembers.map((m) => (
                 <button
                   type="button"
                   key={m.userId}
@@ -484,6 +527,11 @@ export function GroupInfoModal({ conversationId, onClose, onLeft, onUpdated }: P
                   </div>
                 </button>
               ))}
+              {filteredMembers.length > MEMBERS_PREVIEW && (
+                <div className="gi-more-members">
+                  Showing {MEMBERS_PREVIEW} of {filteredMembers.length} — refine search to find more
+                </div>
+              )}
             </section>
 
             <section className="gi-section">
@@ -537,6 +585,10 @@ export function GroupInfoModal({ conversationId, onClose, onLeft, onUpdated }: P
                 }
               >
                 Encryption
+              </button>
+              <button type="button" className="gi-row" onClick={toggleMute}>
+                <span>Notifications</span>
+                <span className="gi-val">{muted ? 'Muted' : 'On'}</span>
               </button>
               <button type="button" className="gi-row" onClick={onExport}>
                 Export chat
@@ -682,9 +734,9 @@ export function GroupInfoModal({ conversationId, onClose, onLeft, onUpdated }: P
                 </div>
                 <div className="gi-qr">
                   <div className="gi-qr-box">
-                    <code>{inviteToken}</code>
+                    <QrCode value={inviteLink} size={200} />
                   </div>
-                  <p className="gi-desc">Share the link or show this invite code (QR payload).</p>
+                  <p className="gi-desc">Scan to join this group on Lumixo</p>
                 </div>
                 <button
                   type="button"
@@ -781,6 +833,28 @@ export function GroupInfoModal({ conversationId, onClose, onLeft, onUpdated }: P
                 {disappearSecs === o.secs && <span className="gi-val">✓</span>}
               </button>
             ))}
+          </div>
+        ) : panel === 'links' ? (
+          <div className="gi-body">
+            {links.length === 0 ? (
+              <div className="gi-loading">No shared links yet</div>
+            ) : (
+              links.map((l, i) => (
+                <a
+                  key={`${l.messageId}-${i}`}
+                  className="gi-row"
+                  href={safeHref(l.url) || undefined}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={(e) => {
+                    if (!safeHref(l.url)) e.preventDefault();
+                  }}
+                >
+                  <span className="gi-link-host">🔗 {linkHostname(l.url)}</span>
+                  <span className="gi-val gi-link-url">{l.url}</span>
+                </a>
+              ))
+            )}
           </div>
         ) : panel === 'media' || panel === 'docs' ? (
           <div className="gi-body">

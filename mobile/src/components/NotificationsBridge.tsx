@@ -265,8 +265,8 @@ export default function NotificationsBridge({
               void recordDelivery({ kind: 'message', messageId: m.id, sentAt: Date.now() });
 
               refreshBadge();
-            } catch (e) {
-              console.warn('[notify] message handler', e);
+            } catch {
+              /* never crash FCM message handler */
             }
           },
         )

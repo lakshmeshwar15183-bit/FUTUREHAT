@@ -27,6 +27,10 @@ export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
   groupTone: 'default',
   groupVibrate: true,
   groupMute: false,
+  // COMMUNITIES / MENTIONS
+  communitiesMute: false,
+  mentionTone: 'default',
+  mentionVibrate: true,
 };
 
 function extraOf(prefs: any): Record<string, any> {

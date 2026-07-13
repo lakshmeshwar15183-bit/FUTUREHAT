@@ -67,8 +67,18 @@ import {
   createPoll,
   getPolls,
   getPollVotes,
+  getPollVoters,
   votePoll,
   unvotePoll,
+  closePoll,
+  createEvent,
+  getGroupMembers,
+  nextPinnedId,
+  activeMentionQuery,
+  filterMentionMembers,
+  applyMention,
+  resolveMentionedUserIds,
+  type GroupMember,
   messageMatchesKind,
   getStarredIds,
   starMessage,
@@ -150,6 +160,7 @@ import { requestMediaDownload } from '../lib/mediaDownloadManager';
 import ForwardSheet, { type ForwardPreview } from '../components/ForwardSheet';
 import PollCard from '../components/PollCard';
 import ScheduleMessageModal from '../components/ScheduleMessageModal';
+import EventComposerModal, { type EventDraft } from '../components/EventComposerModal';
 import ErrorBoundary from '../components/ErrorBoundary';
 import Avatar from '../components/Avatar';
 import ProfileAvatar from '../components/ProfileAvatar';
@@ -342,6 +353,11 @@ function ChatScreenInner() {
   const [groupSendBlocked, setGroupSendBlocked] = useState(false);
   const [groupPerms, setGroupPerms] = useState(permissionsFromConversation(null));
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
+  const [pinnedCycleId, setPinnedCycleId] = useState<string | null>(null);
+  const [groupMembers, setGroupMembers] = useState<GroupMember[]>([]);
+  const [mentionOpen, setMentionOpen] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState('');
+  const [mentionStart, setMentionStart] = useState(0);
   const [onlineIds, setOnlineIds] = useState<Set<string>>(new Set());
   const [typingName, setTypingName] = useState<string | null>(null);
 
@@ -426,6 +442,14 @@ function ChatScreenInner() {
   const [pollQuestion, setPollQuestion] = useState('');
   const [pollOptions, setPollOptions] = useState<string[]>(['', '']);
   const [pollMultiple, setPollMultiple] = useState(false);
+  const [pollAnonymous, setPollAnonymous] = useState(false);
+  const [pollVotersOption, setPollVotersOption] = useState<{
+    pollId: string;
+    option: number;
+  } | null>(null);
+  const [pollVoters, setPollVoters] = useState<{ userId: string; displayName: string | null }[]>([]);
+  const [pollClosingId, setPollClosingId] = useState<string | null>(null);
+  const [eventBuilder, setEventBuilder] = useState(false);
 
   const listRef = useRef<FlatList<TimelineItem>>(null);
   const typingChannel = useRef<ReturnType<typeof createTypingChannel> | null>(null);
@@ -571,7 +595,14 @@ function ChatScreenInner() {
       return;
     }
     setPollBuilder(false);
-    const { error } = await createPoll(supabase, conversationId, q, opts, pollMultiple);
+    const { error } = await createPoll(
+      supabase,
+      conversationId,
+      q,
+      opts,
+      pollMultiple,
+      pollAnonymous,
+    );
     if (error) {
       Alert.alert('Could not create poll', error.message);
       return;
@@ -579,6 +610,7 @@ function ChatScreenInner() {
     setPollQuestion('');
     setPollOptions(['', '']);
     setPollMultiple(false);
+    setPollAnonymous(false);
     await loadPolls();
     requestAnimationFrame(() => listRef.current?.scrollToOffset({ offset: 0, animated: true }));
   }
@@ -632,14 +664,16 @@ function ChatScreenInner() {
               getMyGroupRole(supabase, conversationId),
               getGroupConversation(supabase, conversationId),
               getPinnedMessageIds(supabase, conversationId),
+              getGroupMembers(supabase, conversationId).catch(() => [] as GroupMember[]),
             ])
-              .then(([role, gconv, pins]) => {
+              .then(([role, gconv, pins, mems]) => {
                 if (!active) return;
                 setMyGroupRole(role);
                 const perms = permissionsFromConversation(gconv ?? cs.conversation);
                 setGroupPerms(perms);
                 setGroupSendBlocked(!canSendInGroup(role, perms));
                 setPinnedIds(new Set(pins));
+                setGroupMembers(mems || []);
               })
               .catch(() => {});
           } else {
@@ -647,6 +681,7 @@ function ChatScreenInner() {
             setGroupSendBlocked(false);
             setGroupPerms(permissionsFromConversation(null));
             setPinnedIds(new Set());
+            setGroupMembers([]);
           }
         }
       }
@@ -1176,6 +1211,19 @@ function ChatScreenInner() {
   function onChangeText(t: string) {
     setText(t);
     setDraft(conversationId, t).catch(() => {}); // persist draft so it survives close/offline
+    // Group mentions: open picker when trailing `@query` is active.
+    if (isGroup) {
+      const m = activeMentionQuery(t);
+      if (m) {
+        setMentionOpen(true);
+        setMentionQuery(m.query);
+        setMentionStart(m.start);
+      } else {
+        setMentionOpen(false);
+      }
+    } else {
+      setMentionOpen(false);
+    }
     // Ghost mode: never broadcast typing.
     if (!ghostRef.current) {
       typingChannel.current?.notify({
@@ -1184,6 +1232,50 @@ function ChatScreenInner() {
         typing: t.length > 0,
       });
     }
+  }
+
+  function pickMention(member: GroupMember) {
+    const label =
+      member.profile.username ||
+      (member.profile.display_name || 'member').replace(/\s+/g, '');
+    const next = applyMention(text, mentionStart, label);
+    setText(next.text);
+    setDraft(conversationId, next.text).catch(() => {});
+    setMentionOpen(false);
+  }
+
+  const mentionCandidates = useMemo(() => {
+    if (!mentionOpen || !isGroup) return [];
+    return filterMentionMembers(groupMembers, mentionQuery, uid, 8);
+  }, [mentionOpen, isGroup, groupMembers, mentionQuery, uid]);
+
+  const pinnedPreview = useMemo(() => {
+    if (!isGroup || pinnedIds.size === 0) return null;
+    const id =
+      pinnedCycleId && pinnedIds.has(pinnedCycleId)
+        ? pinnedCycleId
+        : [...pinnedIds][0];
+    const m = messages.find((x) => x.id === id);
+    const text = m
+      ? m.type === 'text'
+        ? (m.content || '').slice(0, 80)
+        : m.type === 'image'
+          ? '📷 Photo'
+          : m.type === 'video'
+            ? '🎬 Video'
+            : m.type === 'audio'
+              ? '🎤 Voice'
+              : m.content || 'Pinned message'
+      : 'Pinned message';
+    return { id, text };
+  }, [isGroup, pinnedIds, pinnedCycleId, messages]);
+
+  function jumpPinned() {
+    const ids = [...pinnedIds];
+    const next = nextPinnedId(ids, pinnedCycleId);
+    if (!next) return;
+    setPinnedCycleId(next);
+    scrollToMessage(next);
   }
 
   // WhatsApp-style Return-to-send. On a hardware keyboard, Enter without Shift
@@ -2596,6 +2688,42 @@ function ChatScreenInner() {
           votes={pollVotes.get(item.poll.id) ?? []}
           myUserId={uid}
           onVote={(optionIndex) => onVotePoll(item.poll, optionIndex)}
+          closing={pollClosingId === item.poll.id}
+          votersOption={
+            pollVotersOption?.pollId === item.poll.id ? pollVotersOption.option : null
+          }
+          voters={pollVotersOption?.pollId === item.poll.id ? pollVoters : []}
+          onClose={async () => {
+            if (pollClosingId) return;
+            setPollClosingId(item.poll.id);
+            const { error } = await closePoll(supabase, item.poll.id);
+            setPollClosingId(null);
+            if (error) {
+              Alert.alert('Could not close poll', error.message);
+              return;
+            }
+            setPolls((prev) =>
+              prev.map((p) =>
+                p.id === item.poll.id
+                  ? { ...p, closes_at: new Date().toISOString() }
+                  : p,
+              ),
+            );
+          }}
+          onViewVoters={async (optionIndex) => {
+            if (item.poll.anonymous) return;
+            if (
+              pollVotersOption?.pollId === item.poll.id &&
+              pollVotersOption.option === optionIndex
+            ) {
+              setPollVotersOption(null);
+              setPollVoters([]);
+              return;
+            }
+            setPollVotersOption({ pollId: item.poll.id, option: optionIndex });
+            const list = await getPollVoters(supabase, item.poll.id, optionIndex);
+            setPollVoters(list);
+          }}
         />
       );
     }
@@ -2925,6 +3053,20 @@ function ChatScreenInner() {
         </View>
       )}
 
+      {isGroup && pinnedPreview && (
+        <Pressable style={styles.pinnedBanner} onPress={jumpPinned}>
+          <Ionicons name="pin" size={16} color={colors.primary} />
+          <View style={styles.pinnedBannerBody}>
+            <Text style={styles.pinnedBannerTitle}>
+              {pinnedIds.size} pinned{pinnedIds.size > 1 ? ' · tap to cycle' : ''}
+            </Text>
+            <Text style={styles.pinnedBannerText} numberOfLines={1}>
+              {pinnedPreview.text}
+            </Text>
+          </View>
+        </Pressable>
+      )}
+
       <FlatList
         ref={listRef}
         style={[styles.list, { backgroundColor: chatCanvasBg }]}
@@ -3022,6 +3164,37 @@ function ChatScreenInner() {
         >
           <Ionicons name="chevron-down" size={24} color={colors.text} />
         </Pressable>
+      )}
+
+      {/* @mention picker (groups) */}
+      {mentionOpen && mentionCandidates.length > 0 && (
+        <View style={styles.mentionSheet}>
+          {mentionCandidates.map((m) => (
+            <Pressable
+              key={m.userId}
+              style={styles.mentionRow}
+              onPress={() => pickMention(m)}
+            >
+              <ProfileAvatar
+                uri={m.profile.avatar_url}
+                name={m.profile.display_name || m.profile.username}
+                size={32}
+                userId={m.userId}
+                mode="auto"
+              />
+              <View style={{ marginLeft: 10, flex: 1 }}>
+                <Text style={styles.mentionName} numberOfLines={1}>
+                  {m.profile.display_name || m.profile.username || 'Member'}
+                </Text>
+                {!!m.profile.username && (
+                  <Text style={styles.mentionUser} numberOfLines={1}>
+                    @{m.profile.username}
+                  </Text>
+                )}
+              </View>
+            </Pressable>
+          ))}
+        </View>
       )}
 
       {/* Reply / edit preview bar (WhatsApp-class: sender + snippet + media thumb) */}
@@ -3186,6 +3359,17 @@ function ChatScreenInner() {
                   setPollBuilder(true);
                 }}
               />
+              {isGroup && (
+                <AttachTile
+                  icon="calendar"
+                  label="Event"
+                  color="#9B59B6"
+                  onPress={() => {
+                    setAttachOpen(false);
+                    setEventBuilder(true);
+                  }}
+                />
+              )}
             </View>
             <View style={styles.attachMore}>
               <AttachOption
@@ -3240,6 +3424,34 @@ function ChatScreenInner() {
         onConfirm={doSchedule}
       />
 
+      {/* Group event (date/time + RSVP via communities events table) */}
+      <EventComposerModal
+        visible={eventBuilder}
+        onCancel={() => setEventBuilder(false)}
+        onSubmit={async (draft: EventDraft) => {
+          setEventBuilder(false);
+          const { event, error } = await createEvent(supabase, {
+            conversationId,
+            title: draft.title,
+            location: draft.location || undefined,
+            startsAt: draft.startsAt,
+          });
+          if (error || !event) {
+            Alert.alert('Could not create event', error?.message || 'Try again');
+            return;
+          }
+          // Surface in chat as a system-style text so members see it without a new message type.
+          const when = new Date(draft.startsAt).toLocaleString();
+          const body = `📅 Event: ${draft.title}${draft.location ? ` · ${draft.location}` : ''} · ${when}`;
+          try {
+            await sendMessage(supabase, conversationId, body);
+          } catch {
+            /* event row still exists */
+          }
+          Alert.alert('Event created', 'Members can see it in this group chat.');
+        }}
+      />
+
       {/* Poll builder */}
       <Modal visible={pollBuilder} transparent animationType="slide" onRequestClose={() => setPollBuilder(false)}>
         <Pressable style={styles.backdrop} onPress={() => setPollBuilder(false)}>
@@ -3268,6 +3480,10 @@ function ChatScreenInner() {
                 <Text style={styles.pollAddOptText}>Add option</Text>
               </Pressable>
             )}
+            <Pressable style={styles.pollToggle} onPress={() => setPollAnonymous((v) => !v)}>
+              <Ionicons name={pollAnonymous ? 'checkbox' : 'square-outline'} size={20} color={colors.primary} />
+              <Text style={styles.pollToggleText}>Anonymous votes</Text>
+            </Pressable>
             <Pressable style={styles.pollToggle} onPress={() => setPollMultiple((v) => !v)}>
               <Ionicons name={pollMultiple ? 'checkbox' : 'square-outline'} size={20} color={colors.primary} />
               <Text style={styles.pollToggleText}>Allow multiple answers</Text>
@@ -3614,6 +3830,42 @@ const makeStyles = (colors: Palette) =>
     list: { flex: 1 },
     // Padding values come from invertedListContentPadding() at render time.
     listContent: { flexGrow: 0 },
+    pinnedBanner: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingHorizontal: spacing(3),
+      paddingVertical: spacing(2),
+      backgroundColor: colors.surface,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.border,
+    },
+    pinnedBannerBody: { flex: 1, minWidth: 0 },
+    pinnedBannerTitle: {
+      color: colors.primary,
+      fontSize: font.tiny,
+      fontWeight: '700',
+    },
+    pinnedBannerText: {
+      color: colors.textMuted,
+      fontSize: font.small,
+      marginTop: 1,
+    },
+    mentionSheet: {
+      backgroundColor: colors.surface,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: colors.border,
+      maxHeight: 220,
+      paddingVertical: 4,
+    },
+    mentionRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: spacing(3),
+      paddingVertical: spacing(2),
+    },
+    mentionName: { color: colors.text, fontSize: font.body, fontWeight: '600' },
+    mentionUser: { color: colors.textMuted, fontSize: font.tiny },
     encNote: {
       flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
       gap: 5, paddingHorizontal: 16, paddingTop: 10, paddingBottom: 6,

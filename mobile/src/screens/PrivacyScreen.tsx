@@ -22,13 +22,14 @@ import { Alert } from '../ui/dialog';
 
 const AUTO_LOCK_OPTIONS: ChatLockAutoLock[] = [0, 60000, 300000, 1800000];
 
-const VIS_ROWS: { key: keyof PrivacySettings; label: string }[] = [
+const VIS_ROWS: { key: keyof PrivacySettings; label: string; desc?: string }[] = [
   { key: 'lastSeen', label: 'Last seen & online' },
   { key: 'profilePhoto', label: 'Profile photo' },
   { key: 'about', label: 'About' },
   { key: 'links', label: 'Links' },
   { key: 'status', label: 'Status' },
-  { key: 'groups', label: 'Groups' },
+  { key: 'groups', label: 'Groups', desc: 'Who can add you to groups' },
+  { key: 'communities', label: 'Communities', desc: 'Who can add you to communities' },
   { key: 'calls', label: 'Calls' },
   { key: 'avatar', label: 'Avatar' },
 ];
@@ -95,13 +96,25 @@ export default function PrivacyScreen() {
     <ScrollView style={styles.container}>
       <Text style={styles.sectionLabel}>WHO CAN SEE</Text>
       <View style={styles.group}>
-        {p && VIS_ROWS.map((row) => (
-          <Pressable key={row.key} style={styles.row} onPress={() => pickVisibility(row.key)}>
-            <Text style={styles.rowLabel}>{row.label}</Text>
-            <Text style={styles.rowValue}>{VIS_LABEL[p[row.key] as Visibility]}</Text>
-            <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
-          </Pressable>
-        ))}
+        {p && VIS_ROWS.map((row) => {
+          const vis = (p[row.key] as Visibility | undefined) ?? 'everyone';
+          return (
+            <Pressable
+              key={row.key}
+              style={styles.row}
+              onPress={() => pickVisibility(row.key)}
+              accessibilityRole="button"
+              accessibilityLabel={`${row.label}, ${VIS_LABEL[vis]}`}
+            >
+              <View style={{ flex: 1, marginRight: spacing(2) }}>
+                <Text style={styles.rowLabel}>{row.label}</Text>
+                {!!row.desc && <Text style={styles.rowDesc}>{row.desc}</Text>}
+              </View>
+              <Text style={styles.rowValue}>{VIS_LABEL[vis]}</Text>
+              <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
+            </Pressable>
+          );
+        })}
       </View>
 
       <Text style={styles.sectionLabel}>PREMIUM</Text>
@@ -154,6 +167,19 @@ export default function PrivacyScreen() {
             onValueChange={(v) => update({ readReceipts: v })}
             trackColor={{ true: colors.primary, false: colors.border }}
           />
+        </View>
+      </View>
+
+      <Text style={styles.sectionLabel}>SECURITY</Text>
+      <View style={styles.group}>
+        <View style={styles.row}>
+          <View style={{ flex: 1, marginRight: spacing(3) }}>
+            <Text style={styles.rowLabel}>Two-step verification</Text>
+            <Text style={styles.rowDesc}>
+              Extra PIN when registering your number again. Coming soon — use App lock for device security today.
+            </Text>
+          </View>
+          <Text style={styles.rowValue}>Soon</Text>
         </View>
       </View>
 

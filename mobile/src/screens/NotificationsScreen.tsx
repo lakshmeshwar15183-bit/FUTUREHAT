@@ -217,9 +217,53 @@ export default function NotificationsScreen() {
         <Toggle label="Vibrate" value={n.groupVibrate} onChange={(v) => update({ groupVibrate: v })} />
       </View>
 
+      {/* COMMUNITIES */}
+      <Text style={styles.sectionLabel}>COMMUNITIES</Text>
+      <View style={styles.group}>
+        <Toggle
+          label="Mute communities"
+          desc="Silence community channel notifications"
+          value={!!n.communitiesMute}
+          onChange={(v) => update({ communitiesMute: v })}
+        />
+      </View>
+
+      {/* MENTIONS */}
+      <Text style={styles.sectionLabel}>MENTIONS</Text>
+      <View style={styles.group}>
+        <ToneRow
+          label="Mention tone"
+          value={n.mentionTone || 'default'}
+          channel={CHANNELS.mentions}
+        />
+        <Toggle
+          label="Vibrate on mentions"
+          value={n.mentionVibrate !== false}
+          onChange={(v) => update({ mentionVibrate: v })}
+        />
+      </View>
+
+      {/* LED / lights — Android channel native */}
+      {Platform.OS === 'android' && (
+        <>
+          <Text style={styles.sectionLabel}>LIGHTS</Text>
+          <View style={styles.group}>
+            <Pressable style={styles.row} onPress={() => openChannelSettings(CHANNELS.messages)}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.rowLabel}>LED / notification light</Text>
+                <Text style={styles.rowDesc}>
+                  On supported devices, customize light color in the system channel settings
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
+            </Pressable>
+          </View>
+        </>
+      )}
+
       <Text style={styles.footnote}>
         Notification tones use your device’s default sound. Tap a tone to customize its sound,
-        vibration and light in Android settings. Preferences sync to your account.
+        vibration and light (LED) in Android settings. Preferences sync to your account.
       </Text>
       <View style={{ height: spacing(8) }} />
     </ScrollView>

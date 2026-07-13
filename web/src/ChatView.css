@@ -6,6 +6,93 @@
   height: 100%;
 }
 
+/* @mention picker above composer */
+.mention-menu {
+  position: absolute;
+  left: 56px;
+  right: 56px;
+  bottom: 100%;
+  margin-bottom: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+  background: var(--fh-panel, #202c33);
+  border: 1px solid var(--fh-border, #2a3942);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  z-index: 20;
+}
+.mention-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--fh-text, #e9edef);
+  padding: 10px 12px;
+  cursor: pointer;
+  text-align: left;
+  font-size: 14px;
+}
+.mention-item:hover {
+  background: color-mix(in srgb, var(--fh-accent, #00a884) 12%, transparent);
+}
+.mention-av {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--fh-surface-alt, #2a3942);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 12px;
+  flex: none;
+}
+.mention-name { font-weight: 600; }
+.mention-user { color: var(--fh-muted, #8696a0); font-size: 12px; }
+
+/* WhatsApp-style pinned messages strip */
+.pinned-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-bottom: 1px solid var(--fh-border, #2a3942);
+  background: var(--fh-panel, #202c33);
+  color: var(--fh-text, #e9edef);
+  padding: 8px 14px;
+  cursor: pointer;
+}
+.pinned-banner:hover {
+  background: color-mix(in srgb, var(--fh-accent, #00a884) 8%, var(--fh-panel, #202c33));
+}
+.pinned-banner-icon {
+  font-size: 16px;
+  flex: none;
+}
+.pinned-banner-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.pinned-banner-body strong {
+  font-size: 12px;
+  color: var(--fh-accent, #00a884);
+  font-weight: 700;
+}
+.pinned-banner-text {
+  font-size: 13px;
+  color: var(--fh-muted, #8696a0);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .chat-header {
   display: flex;
   align-items: center;
@@ -365,6 +452,7 @@
 }
 
 .message-input-form {
+  position: relative;
   display: flex;
   align-items: flex-end;
   gap: 12px;

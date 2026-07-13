@@ -24,6 +24,7 @@ const VIS_ROWS: { key: keyof PrivacySettings; name: string; desc: string }[] = [
   { key: 'links', name: 'Links', desc: 'Who can see your social links' },
   { key: 'status', name: 'Status', desc: 'Who can see your status updates' },
   { key: 'groups', name: 'Groups', desc: 'Who can add you to groups' },
+  { key: 'communities', name: 'Communities', desc: 'Who can add you to communities' },
   { key: 'calls', name: 'Calls', desc: 'Who can call you' },
   { key: 'avatar', name: 'Avatar', desc: 'Who can see your avatar in chats' },
 ];
@@ -85,8 +86,12 @@ export function PrivacySettingsModal({ onClose }: { onClose: () => void }) {
                     <div className="sp-row-name">{row.name}</div>
                     <div className="sp-row-desc">{row.desc}</div>
                   </div>
-                  <select className="sp-select" value={p[row.key] as Visibility}
-                    onChange={(e) => update({ [row.key]: e.target.value as Visibility } as Partial<PrivacySettings>)}>
+                  <select
+                    className="sp-select"
+                    value={(p[row.key] as Visibility | undefined) ?? 'everyone'}
+                    onChange={(e) => update({ [row.key]: e.target.value as Visibility } as Partial<PrivacySettings>)}
+                    aria-label={row.name}
+                  >
                     <option value="everyone">Everyone</option>
                     <option value="contacts">My contacts</option>
                     <option value="nobody">Nobody</option>
@@ -103,6 +108,17 @@ export function PrivacySettingsModal({ onClose }: { onClose: () => void }) {
                   <div className="sp-row-desc">If off, you won’t send or see blue ticks</div>
                 </div>
                 <button className={`sp-switch ${p.readReceipts ? 'on' : ''}`} onClick={() => update({ readReceipts: !p.readReceipts })} aria-label="Toggle read receipts"><i /></button>
+              </div>
+            </section>
+
+            <section className="sp-section">
+              <h3>Security</h3>
+              <div className="sp-row">
+                <div className="sp-row-main">
+                  <div className="sp-row-name">Two-step verification</div>
+                  <div className="sp-row-desc">Extra PIN when re-registering — coming soon. Use App lock for device security today.</div>
+                </div>
+                <span className="sp-row-desc">Soon</span>
               </div>
             </section>
 

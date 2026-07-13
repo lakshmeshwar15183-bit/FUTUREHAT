@@ -50,6 +50,7 @@ import {
   isGroupAdminRole,
   isGroupOwnerRole,
   getSharedMedia,
+  getSharedLinks,
   getDisappearing,
   setConversationDisappearing,
   getMutedIds,
@@ -60,6 +61,8 @@ import {
   deleteConversationForMe,
   submitReport,
   isVideoMessage,
+  formatGroupCreatedAt,
+  linkHostname,
   type Conversation,
   type GroupMember,
   type GroupJoinRequest,
@@ -68,12 +71,17 @@ import {
   type Profile,
   type Message,
   type UUID,
+  type SharedLink,
 } from '../lib/shared';
 import { uploadAvatarFromUri } from '../lib/media';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import Avatar from '../components/Avatar';
+import QrCode from '../components/QrCode';
 import type { RootStackParamList } from '../navigation/types';
 import { Alert } from '../ui/dialog';
+
+/** Cap inline member rows so Group Info stays smooth with 1000+ members. */
+const MEMBERS_PREVIEW = 40;
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'GroupInfo'>;
 type Rt = RouteProp<RootStackParamList, 'GroupInfo'>;
@@ -103,6 +111,7 @@ export default function GroupInfoScreen() {
   const [joinRequests, setJoinRequests] = useState<GroupJoinRequest[]>([]);
   const [media, setMedia] = useState<Message[]>([]);
   const [docs, setDocs] = useState<Message[]>([]);
+  const [links, setLinks] = useState<SharedLink[]>([]);
   const [disappearSecs, setDisappearSecs] = useState(0);
 
   // Sub-panels
@@ -130,13 +139,14 @@ export default function GroupInfoScreen() {
     try {
       const user = await getCurrentUser(supabase);
       setMyId(user?.id ?? null);
-      const [conv, mems, role, mutedIds, shared, dsecs] = await Promise.all([
+      const [conv, mems, role, mutedIds, shared, dsecs, sharedLinks] = await Promise.all([
         getGroupConversation(supabase, conversationId),
         getGroupMembers(supabase, conversationId),
         getMyGroupRole(supabase, conversationId),
         getMutedIds(supabase),
         getSharedMedia(supabase, conversationId, 80),
         getDisappearing(supabase, conversationId),
+        getSharedLinks(supabase, conversationId, 60),
       ]);
       setConversation(conv);
       setMembers(mems);
@@ -144,6 +154,7 @@ export default function GroupInfoScreen() {
       setPerms(permissionsFromConversation(conv));
       setMuted(mutedIds.includes(conversationId));
       setDisappearSecs(dsecs);
+      setLinks(sharedLinks);
       setMedia(shared.filter((m) => m.type === 'image' || isVideoMessage(m)));
       setDocs(shared.filter((m) => m.type === 'file' && !isVideoMessage(m)));
       if (isGroupAdminRole(role)) {
@@ -152,7 +163,13 @@ export default function GroupInfoScreen() {
         setJoinRequests([]);
       }
     } catch (e) {
-      console.error('GroupInfo load', e);
+      // Graceful: keep last good state; do not crash Settings/Group info.
+      try {
+        const { logError } = require('../lib/prodLog') as typeof import('../lib/prodLog');
+        logError('GroupInfo load', e instanceof Error ? e.message : 'failed');
+      } catch {
+        /* ignore */
+      }
     } finally {
       setLoading(false);
     }
@@ -562,6 +579,11 @@ export default function GroupInfoScreen() {
           <Text style={styles.memberCount}>
             Group · {members.length} {members.length === 1 ? 'member' : 'members'}
           </Text>
+          {!!formatGroupCreatedAt(conversation.created_at) && (
+            <Text style={styles.createdAt}>
+              Created {formatGroupCreatedAt(conversation.created_at)}
+            </Text>
+          )}
           {!!conversation.description && (
             <Text style={styles.description}>{conversation.description}</Text>
           )}
@@ -619,13 +641,8 @@ export default function GroupInfoScreen() {
           <MenuRow
             icon="link-outline"
             label="Links"
-            value="Search"
-            onPress={() => {
-              navigation.navigate('Chat', {
-                conversationId,
-                title: conversation.name || 'Group',
-              });
-            }}
+            value={`${links.length}`}
+            onPress={() => setMediaTab('links')}
             colors={colors}
           />
         </View>
@@ -662,10 +679,19 @@ export default function GroupInfoScreen() {
           </View>
         )}
 
-        {/* Members */}
+        {/* Members — preview only; full list is virtualized in Search */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>{members.length} members</Text>
-          {filteredMembers.map((m) => (
+          <View style={styles.sectionHeadRow}>
+            <Text style={styles.sectionTitle}>{members.length} members</Text>
+            {members.length > MEMBERS_PREVIEW && (
+              <Pressable onPress={() => setSearchOpen(true)} hitSlop={8}>
+                <Text style={{ color: colors.primary, fontWeight: '600', fontSize: font.small }}>
+                  See all
+                </Text>
+              </Pressable>
+            )}
+          </View>
+          {filteredMembers.slice(0, MEMBERS_PREVIEW).map((m) => (
             <Pressable
               key={m.userId}
               style={styles.memberRow}
@@ -695,6 +721,14 @@ export default function GroupInfoScreen() {
               )}
             </Pressable>
           ))}
+          {members.length > MEMBERS_PREVIEW && (
+            <MenuRow
+              icon="people-outline"
+              label={`View all ${members.length} members`}
+              onPress={() => setSearchOpen(true)}
+              colors={colors}
+            />
+          )}
         </View>
 
         {/* Settings */}
@@ -763,8 +797,21 @@ export default function GroupInfoScreen() {
           />
           <MenuRow
             icon="color-palette-outline"
-            label="Chat theme"
+            label="Wallpaper"
             onPress={() => navigation.navigate('Appearance')}
+            colors={colors}
+          />
+          <MenuRow
+            icon="notifications-outline"
+            label="Custom notifications"
+            value={muted ? 'Muted' : 'Default'}
+            onPress={toggleMute}
+            colors={colors}
+          />
+          <MenuRow
+            icon="download-outline"
+            label="Media auto-download"
+            onPress={() => navigation.navigate('StorageData')}
             colors={colors}
           />
           <MenuRow
@@ -973,13 +1020,9 @@ export default function GroupInfoScreen() {
                   {groupInviteUrl(inviteToken)}
                 </Text>
                 <View style={styles.qrBox}>
-                  {/* Lightweight QR: visual token grid (no external QR lib dependency). */}
-                  <Text style={styles.qrHint}>QR data</Text>
-                  <Text style={styles.qrToken} numberOfLines={3}>
-                    {inviteToken}
-                  </Text>
+                  <QrCode value={groupInviteUrl(inviteToken)} size={200} />
                   <Text style={styles.qrHint}>
-                    Share the link or show this code. Recipients open the invite link to join.
+                    Scan to join this group on Lumixo
                   </Text>
                 </View>
                 <MenuRow icon="copy-outline" label="Copy link" onPress={copyInvite} colors={colors} />
@@ -1175,7 +1218,7 @@ export default function GroupInfoScreen() {
         </View>
       </Modal>
 
-      {/* Media gallery simple list */}
+      {/* Media / docs / links gallery */}
       <Modal visible={!!mediaTab} animationType="slide" onRequestClose={() => setMediaTab(null)}>
         <View style={styles.container}>
           <View style={styles.modalHeader}>
@@ -1183,15 +1226,56 @@ export default function GroupInfoScreen() {
               <Ionicons name="close" size={26} color={colors.text} />
             </Pressable>
             <Text style={styles.modalTitle}>
-              {mediaTab === 'docs' ? 'Documents' : 'Media'}
+              {mediaTab === 'docs' ? 'Documents' : mediaTab === 'links' ? 'Links' : 'Media'}
             </Text>
             <View style={{ width: 26 }} />
           </View>
+          {mediaTab === 'links' ? (
+            <FlatList
+              data={links}
+              keyExtractor={(l, i) => `${l.messageId}-${i}`}
+              contentContainerStyle={{ padding: 8 }}
+              initialNumToRender={16}
+              maxToRenderPerBatch={12}
+              windowSize={7}
+              ListEmptyComponent={
+                <Text style={{ color: colors.textMuted, textAlign: 'center', marginTop: 40 }}>
+                  No shared links yet
+                </Text>
+              }
+              renderItem={({ item }) => (
+                <Pressable
+                  style={styles.memberRow}
+                  onPress={async () => {
+                    try {
+                      await Clipboard.setStringAsync(item.url);
+                      Alert.alert('Copied', item.url);
+                    } catch {
+                      /* ignore */
+                    }
+                  }}
+                >
+                  <Ionicons name="link" size={22} color={colors.primary} />
+                  <View style={[styles.memberInfo, { marginLeft: 12 }]}>
+                    <Text style={styles.memberName} numberOfLines={1}>
+                      {linkHostname(item.url)}
+                    </Text>
+                    <Text style={styles.memberRole} numberOfLines={1}>
+                      {item.url}
+                    </Text>
+                  </View>
+                </Pressable>
+              )}
+            />
+          ) : (
           <FlatList
             data={mediaTab === 'docs' ? docs : media}
             keyExtractor={(m) => m.id}
             numColumns={mediaTab === 'docs' ? 1 : 3}
             contentContainerStyle={{ padding: 8 }}
+            initialNumToRender={18}
+            maxToRenderPerBatch={12}
+            windowSize={7}
             ListEmptyComponent={
               <Text style={{ color: colors.textMuted, textAlign: 'center', marginTop: 40 }}>
                 Nothing here yet
@@ -1216,6 +1300,7 @@ export default function GroupInfoScreen() {
               )
             }
           />
+          )}
         </View>
       </Modal>
     </View>
@@ -1370,6 +1455,7 @@ const makeStyles = (colors: Palette) =>
       paddingHorizontal: spacing(4),
     },
     memberCount: { color: colors.textMuted, fontSize: font.small, marginTop: spacing(1) },
+    createdAt: { color: colors.textFaint, fontSize: font.tiny, marginTop: spacing(1) },
     description: {
       color: colors.textMuted,
       fontSize: font.body,
@@ -1382,6 +1468,12 @@ const makeStyles = (colors: Palette) =>
       paddingHorizontal: spacing(3),
       paddingVertical: spacing(3),
       gap: 4,
+    },
+    sectionHeadRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingRight: spacing(4),
     },
     section: {
       backgroundColor: colors.surface,
