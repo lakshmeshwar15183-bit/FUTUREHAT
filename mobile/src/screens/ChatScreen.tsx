@@ -286,15 +286,20 @@ function ChatScreenInner() {
   // leaves a blank band between the last bubble and the composer.
   const keyboard = useAnimatedKeyboard();
   const safeBottom = insets.bottom;
+  // Opaque chat fill — never leave the previous Main tab translucent underneath.
+  // Soft WhatsApp-like paper for light mode so white incoming bubbles stay readable.
+  const chatCanvasBg =
+    wallpaperColor ?? (colors.isLight ? '#EFEAE2' : colors.bg);
   // CRITICAL (Android crash): never call non-worklet JS helpers from
-  // useAnimatedStyle — Hermes UI runtime throws "Object is not a function"
-  // and kills the app when opening a chat. Pure numbers only on UI thread.
-  // Rule matches threadColumnBottomPad() / KEYBOARD_CLOSED_EPSILON_PX (=2).
+  // useAnimatedStyle. Pure numbers only on UI thread.
+  // Android OEMs sometimes leave a non-zero residual "keyboard" height when
+  // closed (nav bar / IME ghost) — treat anything under ~80px as closed.
   const keyboardStyle = useAnimatedStyle(() => {
     'worklet';
     const kb = keyboard.height.value;
-    const pad = kb > 2 ? kb : safeBottom;
-    return { paddingBottom: pad };
+    const closedThreshold = 80;
+    const pad = kb > closedThreshold ? kb : safeBottom;
+    return { paddingBottom: pad, flex: 1 };
   });
 
   const [uid, setUid] = useState<string | null>(null);
@@ -2629,6 +2634,29 @@ function ChatScreenInner() {
 
   const inverted = useMemo(() => [...timeline].reverse(), [timeline]);
 
+  // Pin newest messages to the composer after load (inverted list can leave a
+  // blank band if offset is non-zero on first paint).
+  useEffect(() => {
+    if (loading) return;
+    let cancelled = false;
+    const id1 = requestAnimationFrame(() => {
+      const id2 = requestAnimationFrame(() => {
+        if (cancelled) return;
+        try {
+          listRef.current?.scrollToOffset({ offset: 0, animated: false });
+        } catch {
+          /* ignore */
+        }
+      });
+      // stash for cleanup via outer cancel flag only
+      void id2;
+    });
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(id1);
+    };
+  }, [loading, conversationId, inverted.length]);
+
   // In-chat search: jump between matching messages (no filtering).
   const search = searchTerm.trim().toLowerCase();
   const searchActive = searchOpen && (!!search || searchKind !== 'all');
@@ -2679,16 +2707,17 @@ function ChatScreenInner() {
 
   if (loading) {
     return (
-      <View style={styles.center}>
+      <View style={[styles.center, { backgroundColor: chatCanvasBg }]}>
         <ActivityIndicator color={colors.primary} />
       </View>
     );
   }
 
   return (
-    <Animated.View
-      style={[styles.flex, wallpaperColor ? { backgroundColor: wallpaperColor } : null, keyboardStyle]}
-    >
+    // Outer View paints an opaque canvas so the chat list never shows through.
+    // Animated.View only owns keyboard padding (Reanimated can drop bg on some OEMs).
+    <View style={[styles.flex, { backgroundColor: chatCanvasBg }]}>
+    <Animated.View style={keyboardStyle}>
       {searchOpen && (
         <View style={styles.searchBar}>
           <View style={styles.searchRow}>
@@ -3274,6 +3303,7 @@ function ChatScreenInner() {
         />
       )}
     </Animated.View>
+    </View>
   );
 }
 

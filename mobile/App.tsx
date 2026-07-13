@@ -394,7 +394,16 @@ function RootNavigator() {
           {signedIn ? (
             <>
               <Stack.Screen name="Main" component={MainTabs} options={{ headerShown: false }} />
-              <Stack.Screen name="Chat" component={ChatScreen} options={{ title: '' }} />
+              <Stack.Screen
+                name="Chat"
+                component={ChatScreen}
+                options={{
+                  title: '',
+                  // Opaque canvas — previous Main tabs must never show through.
+                  contentStyle: { backgroundColor: colors.bg },
+                  animation: 'slide_from_right',
+                }}
+              />
               <Stack.Screen name="NewChat" component={NewChatScreen} options={{ title: 'New chat' }} />
               <Stack.Screen name="NewGroup" component={NewGroupScreen} options={{ title: 'New group' }} />
               <Stack.Screen name="GroupInfo" component={GroupInfoScreen} options={{ title: 'Group info' }} />

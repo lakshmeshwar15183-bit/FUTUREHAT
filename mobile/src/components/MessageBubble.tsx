@@ -401,6 +401,18 @@ const makeStyles = (colors: Palette) =>
       borderRadius: 14,
       paddingHorizontal: 9,
       paddingVertical: 6,
+      // Light mode: white-on-white bubbles need elevation to stay readable.
+      ...(colors.isLight
+        ? {
+            borderWidth: StyleSheet.hairlineWidth,
+            borderColor: 'rgba(0,0,0,0.08)',
+            shadowColor: '#000',
+            shadowOpacity: 0.06,
+            shadowRadius: 1.5,
+            shadowOffset: { width: 0, height: 0.5 },
+            elevation: 1,
+          }
+        : null),
     },
     bubbleMine: { backgroundColor: colors.bubbleOut, borderTopRightRadius: 4 },
     bubbleTheirs: { backgroundColor: colors.bubbleIn, borderTopLeftRadius: 4 },

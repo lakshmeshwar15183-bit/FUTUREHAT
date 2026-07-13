@@ -96,7 +96,13 @@ describe('source contract: ChatScreen must not reintroduce gap bugs', () => {
     // Pad rule must run inside a worklet with pure math (no JS helper call).
     expect(src).toMatch(/useAnimatedStyle/);
     expect(src).toMatch(/'worklet'/);
-    expect(src).toMatch(/kb > 2/);
+    // Closed threshold ignores OEM residual keyboard height (< ~80px).
+    expect(src).toMatch(/closedThreshold|kb > 80|kb > closedThreshold/);
+  });
+
+  it('paints an opaque chat canvas (no Main tab bleed-through)', () => {
+    expect(src).toMatch(/chatCanvasBg|EFEAE2/);
+    expect(src).toMatch(/Outer View paints an opaque canvas|backgroundColor: chatCanvasBg/);
   });
 
   it('gives FlatList explicit flex:1 list style', () => {
