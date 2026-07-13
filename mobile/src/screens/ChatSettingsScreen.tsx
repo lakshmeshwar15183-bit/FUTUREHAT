@@ -84,10 +84,28 @@ export default function ChatSettingsScreen() {
             </View>
             <Switch value={c.autoDownload} onValueChange={(v) => update({ autoDownload: v })} trackColor={{ true: colors.primary, false: colors.border }} />
           </View>
-          <View style={[styles.row, styles.rowLast]}>
+          <View style={styles.row}>
             <Text style={styles.rowLabel}>Voice message transcripts</Text>
             <Switch value={c.voiceTranscripts} onValueChange={(v) => update({ voiceTranscripts: v })} trackColor={{ true: colors.primary, false: colors.border }} />
           </View>
+          <Pressable
+            style={[styles.row, styles.rowLast]}
+            onPress={() => {
+              Alert.alert('Default double-tap reaction', 'Used when you double-tap a message.', [
+                { text: '❤️ Heart', onPress: () => update({ defaultReaction: '❤️' }) },
+                { text: '👍 Like', onPress: () => update({ defaultReaction: '👍' }) },
+                { text: '😂 Laugh', onPress: () => update({ defaultReaction: '😂' }) },
+                { text: '😮 Wow', onPress: () => update({ defaultReaction: '😮' }) },
+                { text: '😢 Sad', onPress: () => update({ defaultReaction: '😢' }) },
+                { text: '🙏 Pray', onPress: () => update({ defaultReaction: '🙏' }) },
+                { text: 'Cancel', style: 'cancel' },
+              ]);
+            }}
+          >
+            <Text style={styles.rowLabel}>Double-tap reaction</Text>
+            <Text style={styles.rowValue}>{c.defaultReaction || '❤️'}</Text>
+            <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
+          </Pressable>
         </View>
       )}
       <View style={{ height: spacing(8) }} />

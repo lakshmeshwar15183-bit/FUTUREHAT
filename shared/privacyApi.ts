@@ -30,6 +30,8 @@ export interface ChatSettings {
   mediaUploadQuality: MediaQuality;
   autoDownload: boolean;
   voiceTranscripts: boolean;
+  /** Double-tap reaction emoji (prefs.extra only — no DB migration). */
+  defaultReaction?: string;
 }
 
 export const DEFAULT_PRIVACY: PrivacySettings = {
@@ -43,6 +45,7 @@ export const DEFAULT_CHAT: ChatSettings = {
   // Default OFF — WhatsApp/Telegram-class: no mass auto-download after reinstall.
   // Granular Wi‑Fi / cellular rules live in Storage & Data (mediaPolicy).
   mediaUploadQuality: 'auto', autoDownload: false, voiceTranscripts: false,
+  defaultReaction: '❤️',
 };
 
 function extraOf(prefs: any): Record<string, any> {

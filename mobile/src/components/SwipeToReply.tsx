@@ -1,12 +1,15 @@
-// Lumixo mobile — WhatsApp-style swipe + long-press.
+// Lumixo mobile — WhatsApp-style swipe + long-press + double-tap.
 //
-// • Swipe right → reply (normal bubbles)
-// • Swipe left  → delete (call history)
-// • Long-press  → selection / actions menu
+// • Swipe right (short distance) → reply, haptic at arm threshold, fires on release
+// • Swipe left → optional delete (call history)
+// • Long-press → selection / actions
+// • Double-tap → default reaction (optional)
 //
-// Callbacks are always invoked via stable runOnJS wrappers (never optional
-// functions directly inside worklets — that crashed chat on open/swipe).
-import React, { useCallback } from 'react';
+// Gesture isolation:
+//  - Pan uses activeOffsetX + failOffsetY so vertical scroll wins.
+//  - Long-press / double-tap Exclusive with pan (no accidental archive/dismiss).
+//  - Callbacks always via stable runOnJS wrappers (never optional in worklets).
+import React, { useCallback, useEffect } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
@@ -16,13 +19,15 @@ import Animated, {
   useAnimatedStyle,
   useSharedValue,
   withSpring,
+  withTiming,
 } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 
-const THRESHOLD = 56;
-const MAX = 92;
-const LONG_PRESS_MS = 300;
+/** Short WhatsApp-like arm distance (px). */
+const THRESHOLD = 48;
+const MAX_DRAG = 80;
+const LONG_PRESS_MS = 320;
 
 interface Props {
   children: React.ReactNode;
@@ -32,14 +37,22 @@ interface Props {
   onSwipeDelete?: () => void;
   /** Press-and-hold the whole row. */
   onLongPress?: () => void;
+  /** Double-tap → quick reaction (e.g. ❤️). */
+  onDoubleTap?: () => void;
   /** Enables horizontal swipe gestures. */
   enabled?: boolean;
   tint?: string;
   deleteTint?: string;
 }
 
-function buzz() {
+function hapticArm() {
+  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+}
+function hapticFire() {
   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+}
+function hapticSelect() {
+  Haptics.selectionAsync().catch(() => {});
 }
 
 export default function SwipeToReply({
@@ -47,6 +60,7 @@ export default function SwipeToReply({
   onReply,
   onSwipeDelete,
   onLongPress,
+  onDoubleTap,
   enabled = true,
   tint = '#25d366',
   deleteTint = '#EF4444',
@@ -54,47 +68,67 @@ export default function SwipeToReply({
   const tx = useSharedValue(0);
   const armedReply = useSharedValue(false);
   const armedDelete = useSharedValue(false);
+  const iconPulse = useSharedValue(1);
 
-  // Stable JS-thread callbacks for runOnJS (never pass maybe-undefined into worklets).
   const fireReply = useCallback(() => {
     try {
+      hapticFire();
       onReply?.();
     } catch {
-      /* never crash the UI thread */
+      /* never crash */
     }
   }, [onReply]);
 
   const fireDelete = useCallback(() => {
     try {
+      hapticFire();
       onSwipeDelete?.();
     } catch {
-      /* never crash the UI thread */
+      /* never crash */
     }
   }, [onSwipeDelete]);
 
   const fireLongPress = useCallback(() => {
     try {
+      hapticSelect();
       onLongPress?.();
     } catch {
-      /* never crash the UI thread */
+      /* never crash */
     }
   }, [onLongPress]);
+
+  const fireDoubleTap = useCallback(() => {
+    try {
+      hapticArm();
+      onDoubleTap?.();
+    } catch {
+      /* never crash */
+    }
+  }, [onDoubleTap]);
 
   const canReply = enabled && typeof onReply === 'function';
   const canDelete = enabled && typeof onSwipeDelete === 'function';
   const canLongPress = typeof onLongPress === 'function';
+  const canDouble = typeof onDoubleTap === 'function';
 
-  // Capture direction flags as shared values so worklets never read React props.
   const allowReply = useSharedValue(canReply ? 1 : 0);
   const allowDelete = useSharedValue(canDelete ? 1 : 0);
-  allowReply.value = canReply ? 1 : 0;
-  allowDelete.value = canDelete ? 1 : 0;
+  useEffect(() => {
+    allowReply.value = canReply ? 1 : 0;
+    allowDelete.value = canDelete ? 1 : 0;
+  }, [canReply, canDelete, allowReply, allowDelete]);
 
-  // Directional activation: only arm the axes we support (avoids scroll fights).
+  // Directional pan — fails if user scrolls vertically first.
   const pan = Gesture.Pan()
     .enabled(canReply || canDelete)
-    .activeOffsetX(canReply && canDelete ? [-14, 14] : canReply ? [14, 10000] : [-10000, -14])
-    .failOffsetY([-14, 14])
+    .activeOffsetX(
+      canReply && canDelete
+        ? [-12, 12]
+        : canReply
+          ? [12, 10000]
+          : [-10000, -12],
+    )
+    .failOffsetY([-12, 12])
     .onUpdate((e) => {
       'worklet';
       let x = e.translationX;
@@ -103,23 +137,30 @@ export default function SwipeToReply({
 
       if (x >= 0) {
         const raw = x;
-        tx.value = raw <= THRESHOLD ? raw : THRESHOLD + (raw - THRESHOLD) * 0.35;
+        // Rubber-band after threshold (short swipe feel).
+        tx.value =
+          raw <= THRESHOLD ? raw : THRESHOLD + (raw - THRESHOLD) * 0.28;
+        if (tx.value > MAX_DRAG) tx.value = MAX_DRAG;
         if (tx.value >= THRESHOLD && !armedReply.value) {
           armedReply.value = true;
           armedDelete.value = false;
-          runOnJS(buzz)();
-        } else if (tx.value < THRESHOLD && armedReply.value) {
+          iconPulse.value = withTiming(1.15, { duration: 80 }, () => {
+            iconPulse.value = withTiming(1, { duration: 100 });
+          });
+          runOnJS(hapticArm)();
+        } else if (tx.value < THRESHOLD * 0.85 && armedReply.value) {
           armedReply.value = false;
         }
       } else {
         const raw = -x;
-        const mag = raw <= THRESHOLD ? raw : THRESHOLD + (raw - THRESHOLD) * 0.35;
-        tx.value = -mag;
+        const mag =
+          raw <= THRESHOLD ? raw : THRESHOLD + (raw - THRESHOLD) * 0.28;
+        tx.value = -Math.min(mag, MAX_DRAG);
         if (mag >= THRESHOLD && !armedDelete.value) {
           armedDelete.value = true;
           armedReply.value = false;
-          runOnJS(buzz)();
-        } else if (mag < THRESHOLD && armedDelete.value) {
+          runOnJS(hapticArm)();
+        } else if (mag < THRESHOLD * 0.85 && armedDelete.value) {
           armedDelete.value = false;
         }
       }
@@ -128,58 +169,107 @@ export default function SwipeToReply({
       'worklet';
       if (armedReply.value) {
         runOnJS(fireReply)();
-      }
-      if (armedDelete.value) {
+      } else if (armedDelete.value) {
         runOnJS(fireDelete)();
       }
       armedReply.value = false;
       armedDelete.value = false;
-      tx.value = withSpring(0, { damping: 20, stiffness: 220, mass: 0.5 });
+      tx.value = withSpring(0, { damping: 22, stiffness: 260, mass: 0.45 });
+    })
+    .onFinalize(() => {
+      'worklet';
+      // Cancel mid-swipe (interrupted by scroll) — reset cleanly.
+      if (tx.value !== 0 && !armedReply.value && !armedDelete.value) {
+        tx.value = withSpring(0, { damping: 22, stiffness: 260, mass: 0.45 });
+      }
     });
 
   const longPress = Gesture.LongPress()
     .enabled(canLongPress)
     .minDuration(LONG_PRESS_MS)
-    .maxDistance(10)
+    .maxDistance(12)
     .onStart(() => {
       'worklet';
       runOnJS(fireLongPress)();
     });
 
-  const gesture = Gesture.Simultaneous(pan, longPress);
+  const doubleTap = Gesture.Tap()
+    .enabled(canDouble)
+    .numberOfTaps(2)
+    .maxDuration(280)
+    .onEnd(() => {
+      'worklet';
+      runOnJS(fireDoubleTap)();
+    });
+
+  // Double-tap Exclusive with long-press; both Simultaneous with pan so
+  // horizontal swipe still works when vertical scroll isn't competing.
+  const taps = Gesture.Exclusive(doubleTap, longPress);
+  const gesture = Gesture.Simultaneous(pan, taps);
 
   const rowStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: tx.value }],
   }));
   const replyIconStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(tx.value, [8, THRESHOLD], [0, 1], Extrapolation.CLAMP),
+    opacity: interpolate(tx.value, [6, THRESHOLD], [0, 1], Extrapolation.CLAMP),
     transform: [
-      { scale: interpolate(tx.value, [0, THRESHOLD], [0.4, 1], Extrapolation.CLAMP) },
-      { translateX: interpolate(tx.value, [0, THRESHOLD], [-8, 0], Extrapolation.CLAMP) },
+      {
+        scale:
+          iconPulse.value *
+          interpolate(tx.value, [0, THRESHOLD], [0.45, 1], Extrapolation.CLAMP),
+      },
+      {
+        translateX: interpolate(
+          tx.value,
+          [0, THRESHOLD],
+          [-6, 0],
+          Extrapolation.CLAMP,
+        ),
+      },
     ],
   }));
   const deleteIconStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(tx.value, [-8, -THRESHOLD], [0, 1], Extrapolation.CLAMP),
+    opacity: interpolate(tx.value, [-6, -THRESHOLD], [0, 1], Extrapolation.CLAMP),
     transform: [
-      { scale: interpolate(tx.value, [0, -THRESHOLD], [0.4, 1], Extrapolation.CLAMP) },
-      { translateX: interpolate(tx.value, [0, -THRESHOLD], [8, 0], Extrapolation.CLAMP) },
+      {
+        scale: interpolate(
+          tx.value,
+          [0, -THRESHOLD],
+          [0.45, 1],
+          Extrapolation.CLAMP,
+        ),
+      },
+      {
+        translateX: interpolate(
+          tx.value,
+          [0, -THRESHOLD],
+          [6, 0],
+          Extrapolation.CLAMP,
+        ),
+      },
     ],
   }));
 
   return (
-    <View>
+    <View collapsable={false}>
       {canReply ? (
         <Animated.View style={[styles.iconLeft, replyIconStyle]} pointerEvents="none">
-          <Ionicons name="arrow-undo" size={20} color={tint} />
+          <View style={[styles.iconCircle, { backgroundColor: tint + '22' }]}>
+            <Ionicons name="arrow-undo" size={18} color={tint} />
+          </View>
         </Animated.View>
       ) : null}
       {canDelete ? (
         <Animated.View style={[styles.iconRight, deleteIconStyle]} pointerEvents="none">
-          <Ionicons name="trash" size={20} color={deleteTint} />
+          <View style={[styles.iconCircle, { backgroundColor: deleteTint + '22' }]}>
+            <Ionicons name="trash" size={18} color={deleteTint} />
+          </View>
         </Animated.View>
       ) : null}
       <GestureDetector gesture={gesture}>
-        <Animated.View style={rowStyle}>{children}</Animated.View>
+        <Animated.View style={rowStyle} collapsable={false}>
+          {children}
+        </Animated.View>
       </GestureDetector>
     </View>
   );
@@ -188,19 +278,28 @@ export default function SwipeToReply({
 const styles = StyleSheet.create({
   iconLeft: {
     position: 'absolute',
-    left: 14,
+    left: 12,
     top: 0,
     bottom: 0,
-    width: Math.min(MAX, 40),
+    width: 40,
     alignItems: 'center',
     justifyContent: 'center',
+    zIndex: 0,
   },
   iconRight: {
     position: 'absolute',
-    right: 14,
+    right: 12,
     top: 0,
     bottom: 0,
-    width: Math.min(MAX, 40),
+    width: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 0,
+  },
+  iconCircle: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     alignItems: 'center',
     justifyContent: 'center',
   },
