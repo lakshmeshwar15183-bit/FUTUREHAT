@@ -4,7 +4,7 @@
 // View Once, then Sends. Image tools: crop/rotate/flip, draw (incl. blur + undo),
 // text, stickers. Video trim/mute is preview-intent only until a native transcoder
 // is added (metadata is recorded; original file is uploaded).
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -37,6 +37,8 @@ import VideoEditor, { type VideoEditResult } from '../media/tools/VideoEditor';
 import { flattenOverlays } from '../media/tools/mediaFlatten';
 import type { Overlay } from '../media/tools/overlays';
 import { prepareImageForSend } from '../media/prepareImage';
+import PreviewImage from '../media/PreviewImage';
+import { resolvePickedUri } from '../media/resolveLocalMedia';
 import type { MediaMeta } from '../lib/shared';
 import { Alert } from '../ui/dialog';
 
@@ -71,8 +73,10 @@ export default function MediaPreviewScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(colors), [colors]);
-  const { width } = useWindowDimensions();
+  const { width, height: winH } = useWindowDimensions();
 
+  // Local working copy of assets so we can re-resolve URIs if still content://.
+  const [workAssets, setWorkAssets] = useState<PickedAsset[]>(() => assets);
   const [index, setIndex] = useState(startIndex);
   const [edits, setEdits] = useState<EditState[]>(
     () => assets.map(() => ({ caption: '', quality: 'standard' as Quality, viewOnce: false })),
@@ -81,23 +85,68 @@ export default function MediaPreviewScreen() {
   const [showVO, setShowVO] = useState(false);   // View-Once onboarding dialog
   const [tool, setTool] = useState<ActiveTool>(null);
   const pagerRef = useRef<FlatList<PickedAsset>>(null);
+  // Measured pager height — critical: Image height:'100%' needs a real parent height
+  // (horizontal FlatList items otherwise collapse → pure black canvas).
+  const [pagerH, setPagerH] = useState(0);
 
-  const cur = assets[index];
-  const curEdit = edits[index];
+  // Safety net: if picker handed us content:// / opaque URIs, materialize here too.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const next = await Promise.all(
+        assets.map(async (a) => {
+          if (a.uri.startsWith('file://') || a.uri.startsWith('data:')) return a;
+          try {
+            const r = await resolvePickedUri(a.uri, {
+              id: a.id,
+              fileName: a.fileName,
+              mediaType: a.type,
+              width: a.width,
+              height: a.height,
+            });
+            return {
+              ...a,
+              uri: r.uri,
+              width: r.width || a.width,
+              height: r.height || a.height,
+            };
+          } catch {
+            return a;
+          }
+        }),
+      );
+      if (alive) setWorkAssets(next);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [assets]);
+
+  const cur = workAssets[index] ?? workAssets[0];
+  const curEdit = edits[index] ?? edits[0];
   // Current working image for the active asset (edited if crop/draw applied).
-  const curUri = curEdit.editedUri ?? cur.uri;
-  const curW = curEdit.editedW ?? cur.width;
-  const curH = curEdit.editedH ?? cur.height;
-  const isVideo = cur.type === 'video';
+  const curUri = curEdit?.editedUri ?? cur?.uri ?? '';
+  const curW = curEdit?.editedW ?? cur?.width ?? 0;
+  const curH = curEdit?.editedH ?? cur?.height ?? 0;
+  const isVideo = cur?.type === 'video';
 
   function patch(p: Partial<EditState>) {
     setEdits((prev) => prev.map((e, i) => (i === index ? { ...e, ...p } : e)));
   }
 
-  const estBytes = useMemo(
-    () => estimateBytes({ width: cur.width, height: cur.height, type: cur.type, durationMs: cur.durationMs, originalBytes: cur.fileSize }, curEdit.quality),
-    [cur, curEdit.quality],
-  );
+  const estBytes = useMemo(() => {
+    if (!cur || !curEdit) return 0;
+    return estimateBytes(
+      {
+        width: cur.width,
+        height: cur.height,
+        type: cur.type,
+        durationMs: cur.durationMs,
+        originalBytes: cur.fileSize,
+      },
+      curEdit.quality,
+    );
+  }, [cur, curEdit]);
 
   // ── View Once toggle (with one-time onboarding) ─────────────────────────────
   async function toggleViewOnce() {
@@ -132,9 +181,10 @@ export default function MediaPreviewScreen() {
     setSending(true);
     try {
       const items: OutgoingMedia[] = [];
-      for (let i = 0; i < assets.length; i++) {
-        const a = assets[i];
+      for (let i = 0; i < workAssets.length; i++) {
+        const a = workAssets[i];
         const e = edits[i];
+        if (!a || !e) continue;
         let uri = e.editedUri ?? a.uri;
         let w = e.editedW ?? a.width;
         let h = e.editedH ?? a.height;
@@ -216,18 +266,50 @@ export default function MediaPreviewScreen() {
     setTool(null);
   }
 
-  const renderPage = ({ item, index: i }: { item: PickedAsset; index: number }) => {
-    const shownUri = edits[i]?.editedUri ?? item.uri;   // reflect crop/draw edits
+  // Prefer measured pager height; fall back so first paint is still non-zero.
+  const pageH = pagerH > 0 ? pagerH : Math.max(240, winH * 0.55);
+
+  if (!cur || !curEdit) {
     return (
-      <View style={{ width, alignItems: 'center', justifyContent: 'center' }}>
+      <View
+        style={[
+          styles.container,
+          { paddingTop: insets.top, alignItems: 'center', justifyContent: 'center' },
+        ]}
+      >
+        <ActivityIndicator color="#fff" />
+        <Text style={{ color: '#fff', marginTop: 12 }}>Loading media…</Text>
+      </View>
+    );
+  }
+
+  const renderPage = ({ item, index: i }: { item: PickedAsset; index: number }) => {
+    const shownUri = edits[i]?.editedUri ?? item.uri; // reflect crop/draw edits
+    return (
+      <View style={{ width, height: pageH, backgroundColor: '#000' }}>
         {item.type === 'video' ? (
-          <Video source={{ uri: item.uri }} style={styles.media} resizeMode={ResizeMode.CONTAIN} useNativeControls shouldPlay={false} isLooping />
+          <Video
+            source={{ uri: item.uri }}
+            style={styles.media}
+            resizeMode={ResizeMode.CONTAIN}
+            useNativeControls
+            shouldPlay={false}
+            isLooping
+          />
         ) : (
-          <Image source={{ uri: shownUri }} style={styles.media} contentFit="contain" transition={120} />
+          <PreviewImage
+            uri={shownUri}
+            width={edits[i]?.editedW ?? item.width}
+            height={edits[i]?.editedH ?? item.height}
+            style={styles.media}
+            zoomable={tool === null}
+          />
         )}
-        {/* overlay preview badge (baked at send) */}
         {edits[i]?.overlays && edits[i].overlays!.length > 0 && (
-          <View style={styles.editBadge}><Ionicons name="layers" size={12} color="#fff" /><Text style={styles.editBadgeText}>{edits[i].overlays!.length}</Text></View>
+          <View style={styles.editBadge}>
+            <Ionicons name="layers" size={12} color="#fff" />
+            <Text style={styles.editBadgeText}>{edits[i].overlays!.length}</Text>
+          </View>
         )}
       </View>
     );
@@ -256,20 +338,34 @@ export default function MediaPreviewScreen() {
         </View>
       </View>
 
-      {/* Pager */}
-      <FlatList
-        ref={pagerRef}
-        data={assets}
-        keyExtractor={(a) => a.id}
-        renderItem={renderPage}
-        horizontal
-        pagingEnabled
-        showsHorizontalScrollIndicator={false}
-        initialScrollIndex={startIndex}
-        getItemLayout={(_, i) => ({ length: width, offset: width * i, index: i })}
-        onMomentumScrollEnd={(e) => setIndex(Math.round(e.nativeEvent.contentOffset.x / width))}
-        style={{ flex: 1 }}
-      />
+      {/* Pager — onLayout gives items a real height so images fill the canvas */}
+      <View
+        style={{ flex: 1, backgroundColor: '#000' }}
+        onLayout={(e) => {
+          const h = Math.round(e.nativeEvent.layout.height);
+          if (h > 0 && h !== pagerH) setPagerH(h);
+        }}
+      >
+        <FlatList
+          ref={pagerRef}
+          data={workAssets}
+          keyExtractor={(a) => a.id}
+          renderItem={renderPage}
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          initialScrollIndex={Math.min(startIndex, Math.max(0, workAssets.length - 1))}
+          getItemLayout={(_, i) => ({ length: width, offset: width * i, index: i })}
+          onMomentumScrollEnd={(e) =>
+            setIndex(Math.round(e.nativeEvent.contentOffset.x / Math.max(1, width)))
+          }
+          style={{ flex: 1 }}
+          // Avoid blank first frame when initialScrollIndex is set.
+          initialNumToRender={Math.min(3, workAssets.length)}
+          windowSize={3}
+          removeClippedSubviews={false}
+        />
+      </View>
 
       {/* Quality + size line */}
       <View style={styles.qualityRow}>
@@ -282,17 +378,26 @@ export default function MediaPreviewScreen() {
       </View>
 
       {/* Thumbnail strip (multi-asset) */}
-      {assets.length > 1 && (
+      {workAssets.length > 1 && (
         <FlatList
-          data={assets}
+          data={workAssets}
           keyExtractor={(a) => 'strip_' + a.id}
           horizontal
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={{ paddingHorizontal: spacing(3), gap: 6 }}
           style={styles.strip}
           renderItem={({ item, index: i }) => (
-            <Pressable onPress={() => { setIndex(i); pagerRef.current?.scrollToIndex({ index: i, animated: true }); }}>
-              <Image source={{ uri: item.uri }} style={[styles.stripThumb, i === index && styles.stripThumbOn]} contentFit="cover" />
+            <Pressable
+              onPress={() => {
+                setIndex(i);
+                pagerRef.current?.scrollToIndex({ index: i, animated: true });
+              }}
+            >
+              <Image
+                source={{ uri: edits[i]?.editedUri ?? item.uri }}
+                style={[styles.stripThumb, i === index && styles.stripThumbOn]}
+                contentFit="cover"
+              />
             </Pressable>
           )}
         />
@@ -381,7 +486,7 @@ const makeStyles = (colors: Palette) =>
     hdChipOn: { backgroundColor: '#F5C518', borderColor: '#F5C518' },
     hdText: { color: '#fff', fontSize: 12, fontWeight: '800' },
     hdTextOn: { color: '#1a1a1a' },
-    media: { width: '100%', height: '100%' },
+    media: { width: '100%', height: '100%', backgroundColor: '#000' },
     editBadge: { position: 'absolute', top: 10, left: 12, flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 },
     editBadgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
     qualityRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: spacing(4), paddingVertical: spacing(2) },

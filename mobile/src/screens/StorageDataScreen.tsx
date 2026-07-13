@@ -256,6 +256,45 @@ export default function StorageDataScreen() {
         />
       </View>
 
+      <Text style={styles.sectionLabel}>WHEN AUTO-DOWNLOAD IS ON</Text>
+      <Text style={styles.sectionHint}>
+        Choose which media types may download automatically. Photos &amp; voice stay light; videos/docs stay off by default.
+      </Text>
+      <View style={styles.group}>
+        {([
+          { key: 'photos' as const, label: 'Photos' },
+          { key: 'videos' as const, label: 'Videos' },
+          { key: 'audio' as const, label: 'Voice notes' },
+          { key: 'documents' as const, label: 'Documents' },
+          { key: 'gifs' as const, label: 'GIFs' },
+        ]).map((row, i, arr) => (
+          <ToggleRow
+            key={row.key}
+            styles={styles}
+            label={row.label}
+            desc=""
+            value={s.kindAuto?.[row.key] ?? true}
+            onChange={(v) =>
+              update({
+                kindAuto: {
+                  ...(s.kindAuto ?? {
+                    photos: true,
+                    videos: false,
+                    audio: true,
+                    documents: false,
+                    gifs: true,
+                  }),
+                  [row.key]: v,
+                },
+              })
+            }
+            colors={colors}
+            disabled={s.downloadOnlyWhenTapped}
+            last={i === arr.length - 1}
+          />
+        ))}
+      </View>
+
       <Text style={styles.sectionLabel}>MAXIMUM MEDIA CACHE</Text>
       <View style={styles.chipRow}>
         {CACHE_PRESETS.map((p) => {
@@ -338,7 +377,7 @@ function ToggleRow({
     <View style={[styles.row, last && styles.rowLast, disabled && { opacity: 0.45 }]}>
       <View style={{ flex: 1 }}>
         <Text style={styles.rowLabel}>{label}</Text>
-        <Text style={styles.rowDesc}>{desc}</Text>
+        {!!desc && <Text style={styles.rowDesc}>{desc}</Text>}
       </View>
       <Switch
         value={value}

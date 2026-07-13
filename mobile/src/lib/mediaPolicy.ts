@@ -13,6 +13,15 @@ export type MediaQualityPref = 'auto' | 'high' | 'data_saver';
 
 export type NetworkClass = 'wifi' | 'cellular' | 'none' | 'unknown';
 
+/** Per-type auto-download (WhatsApp Storage & Data). Device-local only. */
+export interface MediaKindAutoDownload {
+  photos: boolean;
+  videos: boolean;
+  audio: boolean;
+  documents: boolean;
+  gifs: boolean;
+}
+
 /** WhatsApp-style Storage & Data preferences (device-local + optional prefs.extra). */
 export interface MediaStorageSettings {
   /** Auto-download photos/media when on Wi‑Fi. Default OFF (no reinstall flood). */
@@ -29,7 +38,17 @@ export interface MediaStorageSettings {
   mediaQuality: MediaQualityPref;
   dataSaverCalls: boolean;
   lowDataMode: boolean;
+  /** Which media types may auto-download when network rules allow. */
+  kindAuto: MediaKindAutoDownload;
 }
+
+export const DEFAULT_KIND_AUTO: MediaKindAutoDownload = {
+  photos: true,
+  videos: false,
+  audio: true,
+  documents: false,
+  gifs: true,
+};
 
 export const DEFAULT_MEDIA_STORAGE: MediaStorageSettings = {
   autoDownloadWifi: false,
@@ -40,6 +59,7 @@ export const DEFAULT_MEDIA_STORAGE: MediaStorageSettings = {
   mediaQuality: 'auto',
   dataSaverCalls: false,
   lowDataMode: false,
+  kindAuto: { ...DEFAULT_KIND_AUTO },
 };
 
 const STORAGE_KEY = 'fh:media-storage:v1';
@@ -61,7 +81,35 @@ function notify() {
 
 function mergeSettings(raw: unknown): MediaStorageSettings {
   if (!raw || typeof raw !== 'object') return { ...DEFAULT_MEDIA_STORAGE };
-  return { ...DEFAULT_MEDIA_STORAGE, ...(raw as Partial<MediaStorageSettings>) };
+  const partial = raw as Partial<MediaStorageSettings>;
+  return {
+    ...DEFAULT_MEDIA_STORAGE,
+    ...partial,
+    kindAuto: { ...DEFAULT_KIND_AUTO, ...(partial.kindAuto ?? {}) },
+  };
+}
+
+function kindAllowed(
+  kind: MediaKind,
+  settings: MediaStorageSettings,
+): boolean {
+  const k = settings.kindAuto ?? DEFAULT_KIND_AUTO;
+  switch (kind) {
+    case 'image':
+      return k.photos;
+    case 'video':
+      return k.videos;
+    case 'audio':
+      return k.audio;
+    case 'document':
+      return k.documents;
+    case 'gif':
+      return k.gifs;
+    case 'avatar':
+      return true;
+    default:
+      return true;
+  }
 }
 
 export function getMediaStorageSettings(): MediaStorageSettings {
@@ -146,6 +194,8 @@ export function shouldAutoDownload(
 
   // Avatars are tiny — allow on any live network (not bulk history).
   if (kind === 'avatar') return true;
+
+  if (!kindAllowed(kind, settings)) return false;
 
   if (net === 'wifi') return settings.autoDownloadWifi;
   if (net === 'cellular') {

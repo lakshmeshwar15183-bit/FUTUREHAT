@@ -7,12 +7,13 @@
 // see mobile/BUILD_ANDROID.md). Degrades to a clear permission state if denied.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator, FlatList, Modal, Pressable, StyleSheet, Text, View,
+  ActivityIndicator, FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View,
   useWindowDimensions, Platform,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import * as MediaLibrary from 'expo-media-library';
+import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -20,6 +21,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import type { RootStackParamList } from '../navigation/types';
+import { resolveMediaLibraryAsset, resolvePickedUri } from '../media/resolveLocalMedia';
+import { Alert } from '../ui/dialog';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'MediaPicker'>;
 type R = RouteProp<RootStackParamList, 'MediaPicker'>;
@@ -56,6 +59,8 @@ export default function MediaPickerScreen() {
   const [albums, setAlbums] = useState<MediaLibrary.Album[]>([]);
   const [album, setAlbum] = useState<MediaLibrary.Album | null>(null); // null = Recent (all)
   const [albumOpen, setAlbumOpen] = useState(false);
+  const [albumQuery, setAlbumQuery] = useState('');
+  const [mediaFilter, setMediaFilter] = useState<'all' | 'photo' | 'video'>('all');
   const [assets, setAssets] = useState<MediaLibrary.Asset[]>([]);
   const [endCursor, setEndCursor] = useState<string | undefined>(undefined);
   const [hasMore, setHasMore] = useState(true);
@@ -65,30 +70,59 @@ export default function MediaPickerScreen() {
   const [selected, setSelected] = useState<string[]>([]);
   const assetById = useRef(new Map<string, MediaLibrary.Asset>());
 
-  // ── Permissions + first page ────────────────────────────────────────────────
+  // ── Permissions + first page (check existing grant first for instant open) ─
   useEffect(() => {
     (async () => {
-      const res = await MediaLibrary.requestPermissionsAsync();
-      if (!res.granted) { setPerm('denied'); setLoading(false); return; }
+      let granted = false;
+      try {
+        const existing = await MediaLibrary.getPermissionsAsync();
+        granted = existing.granted;
+      } catch {
+        granted = false;
+      }
+      if (!granted) {
+        const res = await MediaLibrary.requestPermissionsAsync();
+        granted = res.granted;
+      }
+      if (!granted) {
+        setPerm('denied');
+        setLoading(false);
+        return;
+      }
       setPerm('granted');
       // Album list for the "Recent ▼" switcher (dynamic; only non-empty ones).
       MediaLibrary.getAlbumsAsync({ includeSmartAlbums: true })
-        .then((list) => setAlbums(list.filter((a) => a.assetCount > 0)
-          .sort((a, b) => b.assetCount - a.assetCount)))
+        .then((list) =>
+          setAlbums(
+            list
+              .filter((a) => a.assetCount > 0)
+              .sort((a, b) => b.assetCount - a.assetCount),
+          ),
+        )
         .catch(() => {});
       loadPage(null, true);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const loadPage = useCallback(async (alb: MediaLibrary.Album | null, reset: boolean) => {
+  const loadPage = useCallback(async (
+    alb: MediaLibrary.Album | null,
+    reset: boolean,
+    filter: 'all' | 'photo' | 'video' = mediaFilter,
+  ) => {
     if (reset) { setLoading(true); }
     try {
+      const mediaType =
+        filter === 'photo'
+          ? [MediaLibrary.MediaType.photo]
+          : filter === 'video'
+            ? [MediaLibrary.MediaType.video]
+            : [MediaLibrary.MediaType.photo, MediaLibrary.MediaType.video];
       const res = await MediaLibrary.getAssetsAsync({
         first: PAGE,
         after: reset ? undefined : endCursor,
         album: alb ?? undefined,
-        mediaType: [MediaLibrary.MediaType.photo, MediaLibrary.MediaType.video],
+        mediaType,
         sortBy: [MediaLibrary.SortBy.creationTime],   // newest first (default desc)
       });
       res.assets.forEach((a) => assetById.current.set(a.id, a));
@@ -101,7 +135,7 @@ export default function MediaPickerScreen() {
       setLoading(false);
       setLoadingMore(false);
     }
-  }, [endCursor]);
+  }, [endCursor, mediaFilter]);
 
   const onEndReached = useCallback(() => {
     if (loadingMore || loading || !hasMore) return;
@@ -111,11 +145,21 @@ export default function MediaPickerScreen() {
 
   function switchAlbum(a: MediaLibrary.Album | null) {
     setAlbumOpen(false);
+    setAlbumQuery('');
     setAlbum(a);
     setAssets([]);
     setEndCursor(undefined);
     setHasMore(true);
     loadPage(a, true);
+  }
+
+  function setFilter(f: 'all' | 'photo' | 'video') {
+    if (f === mediaFilter) return;
+    setMediaFilter(f);
+    setAssets([]);
+    setEndCursor(undefined);
+    setHasMore(true);
+    loadPage(album, true, f);
   }
 
   // ── Selection (ordered) ─────────────────────────────────────────────────────
@@ -124,36 +168,112 @@ export default function MediaPickerScreen() {
     setSelected((prev) => {
       const i = prev.indexOf(id);
       if (i >= 0) return prev.filter((x) => x !== id);         // deselect
-      if (prev.length >= maxSelection) return prev;             // cap
+      if (prev.length >= maxSelection) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+        Alert.alert('Limit reached', `You can select up to ${maxSelection} items.`);
+        return prev;
+      }
       return [...prev, id];                                     // append (keeps order)
     });
   }, [maxSelection]);
 
-  const toPicked = useCallback((a: MediaLibrary.Asset): PickedAsset => ({
-    id: a.id,
-    uri: a.uri,
-    type: a.mediaType === MediaLibrary.MediaType.video ? 'video' : 'image',
-    fileName: a.filename || `${a.mediaType === 'video' ? 'video' : 'photo'}_${a.id}.${a.mediaType === 'video' ? 'mp4' : 'jpg'}`,
-    width: a.width,
-    height: a.height,
-    durationMs: a.duration ? Math.round(a.duration * 1000) : undefined,
-  }), []);
+  async function openCamera() {
+    try {
+      const perm = await ImagePicker.requestCameraPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert('Camera', 'Camera permission is required.');
+        return;
+      }
+      const res = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.All,
+        quality: 0.85,
+        videoMaxDuration: 60,
+        allowsEditing: false,
+      });
+      if (res.canceled || !res.assets?.length) return;
+      const a = res.assets[0];
+      const isVid = a.type === 'video' || /\.(mp4|mov|m4v)(\?|$)/i.test(a.uri);
+      const resolved = await resolvePickedUri(a.uri, {
+        id: `cam_${Date.now()}`,
+        fileName: a.fileName ?? undefined,
+        mediaType: isVid ? 'video' : 'image',
+        width: a.width,
+        height: a.height,
+      });
+      const picked: PickedAsset = {
+        id: `cam_${Date.now()}`,
+        uri: resolved.uri,
+        type: isVid ? 'video' : 'image',
+        fileName:
+          a.fileName ??
+          (isVid ? `video_${Date.now()}.mp4` : `photo_${Date.now()}.jpg`),
+        width: a.width || resolved.width || 0,
+        height: a.height || resolved.height || 0,
+        durationMs: a.duration ? Math.round(a.duration * 1000) : undefined,
+        fileSize: a.fileSize,
+      };
+      navigation.navigate('MediaPreview', {
+        conversationId,
+        assets: [picked],
+        startIndex: 0,
+      });
+    } catch {
+      Alert.alert('Camera', 'Could not open the camera.');
+    }
+  }
 
-  function proceed(ids: string[]) {
-    const picked = ids
+  const [resolving, setResolving] = useState(false);
+
+  // Resolve localUri / materialize content:// so MediaPreview never opens black.
+  const toPicked = useCallback(async (a: MediaLibrary.Asset): Promise<PickedAsset> => {
+    const resolved = await resolveMediaLibraryAsset(a);
+    return {
+      id: a.id,
+      uri: resolved.uri,
+      type: a.mediaType === MediaLibrary.MediaType.video ? 'video' : 'image',
+      fileName:
+        a.filename ||
+        `${a.mediaType === 'video' ? 'video' : 'photo'}_${a.id}.${
+          a.mediaType === 'video' ? 'mp4' : 'jpg'
+        }`,
+      width: resolved.width || a.width || 0,
+      height: resolved.height || a.height || 0,
+      durationMs: a.duration ? Math.round(a.duration * 1000) : undefined,
+    };
+  }, []);
+
+  async function proceed(ids: string[]) {
+    if (resolving) return;
+    const assets = ids
       .map((id) => assetById.current.get(id))
-      .filter((a): a is MediaLibrary.Asset => !!a)
-      .map(toPicked);
-    if (!picked.length) return;
-    navigation.navigate('MediaPreview', { conversationId, assets: picked, startIndex: 0 });
+      .filter((a): a is MediaLibrary.Asset => !!a);
+    if (!assets.length) return;
+    setResolving(true);
+    try {
+      const picked = await Promise.all(assets.map((a) => toPicked(a)));
+      if (!picked.length) return;
+      navigation.navigate('MediaPreview', {
+        conversationId,
+        assets: picked,
+        startIndex: 0,
+      });
+    } finally {
+      setResolving(false);
+    }
   }
 
   // Tapping a tile with no active selection → straight to preview for that one.
-  const onTilePress = useCallback((a: MediaLibrary.Asset) => {
-    if (selected.length > 0) { toggle(a.id); return; }
-    proceed([a.id]);
+  const onTilePress = useCallback(
+    (a: MediaLibrary.Asset) => {
+      if (selected.length > 0) {
+        toggle(a.id);
+        return;
+      }
+      void proceed([a.id]);
+    },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected.length, toggle]);
+    [selected.length, toggle, resolving],
+  );
 
   const keyExtractor = useCallback((a: MediaLibrary.Asset) => a.id, []);
   const getItemLayout = useCallback((_: unknown, index: number) => {
@@ -213,16 +333,42 @@ export default function MediaPickerScreen() {
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
-      {/* Header: close · album switcher · counter */}
+      {/* Header: close · album switcher · camera */}
       <View style={styles.header}>
-        <Pressable hitSlop={10} onPress={() => navigation.goBack()}>
+        <Pressable hitSlop={10} onPress={() => navigation.goBack()} accessibilityLabel="Close">
           <Ionicons name="close" size={26} color={colors.text} />
         </Pressable>
         <Pressable style={styles.albumBtn} onPress={() => setAlbumOpen(true)}>
           <Text style={styles.albumTitle} numberOfLines={1}>{albumTitle}</Text>
           <Ionicons name="chevron-down" size={16} color={colors.text} />
         </Pressable>
-        <View style={{ width: 26 }} />
+        <Pressable hitSlop={10} onPress={() => void openCamera()} accessibilityLabel="Camera">
+          <Ionicons name="camera-outline" size={24} color={colors.text} />
+        </Pressable>
+      </View>
+
+      {/* Photos / Videos filter chips */}
+      <View style={styles.filterRow}>
+        {([
+          { id: 'all' as const, label: 'All' },
+          { id: 'photo' as const, label: 'Photos' },
+          { id: 'video' as const, label: 'Videos' },
+        ]).map((f) => (
+          <Pressable
+            key={f.id}
+            onPress={() => setFilter(f.id)}
+            style={[styles.filterChip, mediaFilter === f.id && styles.filterChipOn]}
+          >
+            <Text style={[styles.filterChipText, mediaFilter === f.id && styles.filterChipTextOn]}>
+              {f.label}
+            </Text>
+          </Pressable>
+        ))}
+        {selected.length > 0 && (
+          <Text style={styles.selCap}>
+            {selected.length}/{maxSelection}
+          </Text>
+        )}
       </View>
 
       {loading && assets.length === 0 ? (
@@ -253,22 +399,75 @@ export default function MediaPickerScreen() {
       {selected.length > 0 && (
         <View style={[styles.sendBar, { paddingBottom: insets.bottom + 10 }]}>
           <Text style={styles.sendCount}>{selected.length} selected</Text>
-          <Pressable style={styles.sendBtn} onPress={() => proceed(selected)}>
-            <Ionicons name="arrow-forward" size={22} color="#fff" />
+          <Pressable
+            style={[styles.sendBtn, resolving && { opacity: 0.7 }]}
+            onPress={() => void proceed(selected)}
+            disabled={resolving}
+          >
+            {resolving ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Ionicons name="arrow-forward" size={22} color="#fff" />
+            )}
           </Pressable>
         </View>
       )}
 
-      {/* Album switcher sheet */}
+      {/* Opening editor: resolve local files (prevents black preview). */}
+      {resolving && (
+        <View style={styles.resolveOverlay} pointerEvents="auto">
+          <ActivityIndicator size="large" color="#fff" />
+          <Text style={styles.resolveText}>Opening…</Text>
+        </View>
+      )}
+
+      {/* Album switcher sheet + search */}
       <Modal visible={albumOpen} transparent animationType="slide" onRequestClose={() => setAlbumOpen(false)}>
-        <Pressable style={styles.backdrop} onPress={() => setAlbumOpen(false)}>
-          <View style={[styles.albumSheet, { paddingBottom: insets.bottom + 12 }]}>
+        <Pressable style={styles.backdrop} onPress={() => { setAlbumOpen(false); setAlbumQuery(''); }}>
+          <Pressable style={[styles.albumSheet, { paddingBottom: insets.bottom + 12 }]} onPress={() => {}}>
             <Text style={styles.albumSheetTitle}>Albums</Text>
-            <AlbumRow label="Recent" count={null} active={!album} onPress={() => switchAlbum(null)} colors={colors} />
-            {albums.map((a) => (
-              <AlbumRow key={a.id} label={a.title} count={a.assetCount} active={album?.id === a.id} onPress={() => switchAlbum(a)} colors={colors} />
-            ))}
-          </View>
+            <View style={styles.albumSearch}>
+              <Ionicons name="search" size={16} color={colors.textFaint} />
+              <TextInput
+                style={styles.albumSearchInput}
+                placeholder="Search albums"
+                placeholderTextColor={colors.textFaint}
+                value={albumQuery}
+                onChangeText={setAlbumQuery}
+                autoCorrect={false}
+              />
+            </View>
+            <FlatList
+              data={[
+                { id: '__recent', title: 'Recent', assetCount: null as number | null },
+                ...albums
+                  .filter((a) =>
+                    !albumQuery.trim()
+                      ? true
+                      : a.title.toLowerCase().includes(albumQuery.trim().toLowerCase()),
+                  )
+                  .map((a) => ({ id: a.id, title: a.title, assetCount: a.assetCount as number | null })),
+              ]}
+              keyExtractor={(a) => a.id}
+              style={{ maxHeight: 420 }}
+              keyboardShouldPersistTaps="handled"
+              renderItem={({ item }) => (
+                <AlbumRow
+                  label={item.title}
+                  count={item.assetCount}
+                  active={item.id === '__recent' ? !album : album?.id === item.id}
+                  onPress={() => {
+                    if (item.id === '__recent') switchAlbum(null);
+                    else {
+                      const found = albums.find((x) => x.id === item.id) ?? null;
+                      switchAlbum(found);
+                    }
+                  }}
+                  colors={colors}
+                />
+              )}
+            />
+          </Pressable>
         </Pressable>
       </Modal>
     </View>
@@ -301,6 +500,35 @@ const makeStyles = (colors: Palette) =>
     header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing(4), height: 52 },
     albumBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, maxWidth: '60%' },
     albumTitle: { color: colors.text, fontSize: font.heading, fontWeight: '700' },
+    filterRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingHorizontal: spacing(4),
+      paddingBottom: spacing(2),
+    },
+    filterChip: {
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: radius.pill,
+      backgroundColor: colors.surfaceAlt,
+    },
+    filterChipOn: { backgroundColor: colors.primary },
+    filterChipText: { color: colors.textMuted, fontSize: font.small, fontWeight: '600' },
+    filterChipTextOn: { color: '#fff' },
+    selCap: { marginLeft: 'auto', color: colors.textMuted, fontSize: font.small, fontWeight: '600' },
+    albumSearch: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginHorizontal: spacing(4),
+      marginBottom: spacing(2),
+      paddingHorizontal: 12,
+      height: 40,
+      borderRadius: radius.pill,
+      backgroundColor: colors.bg,
+    },
+    albumSearchInput: { flex: 1, color: colors.text, fontSize: font.body, paddingVertical: 0 },
     thumb: { width: '100%', height: '100%', backgroundColor: colors.surfaceAlt },
     videoTag: { position: 'absolute', left: 4, bottom: 4, flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1 },
     videoDur: { color: '#fff', fontSize: 10, fontWeight: '600' },
@@ -318,4 +546,13 @@ const makeStyles = (colors: Palette) =>
     backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
     albumSheet: { backgroundColor: colors.surface, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, paddingTop: spacing(4), maxHeight: '70%' },
     albumSheetTitle: { color: colors.text, fontSize: font.heading, fontWeight: '700', paddingHorizontal: spacing(4), paddingBottom: spacing(2) },
+    resolveOverlay: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: 'rgba(0,0,0,0.55)',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 12,
+      zIndex: 20,
+    },
+    resolveText: { color: '#fff', fontSize: font.body, fontWeight: '600' },
   });
