@@ -29,6 +29,8 @@ class MainApplication : Application(), ReactApplication {
             packages.add(IncomingCallPackage())
             // Battery optimization status + OEM settings deep-links.
             packages.add(BatteryAssistantPackage())
+            // Reliable system light/dark (UI_MODE_NIGHT) → JS for Follow System.
+            packages.add(SystemThemePackage())
             return packages
           }
 
@@ -57,5 +59,7 @@ class MainApplication : Application(), ReactApplication {
   override fun onConfigurationChanged(newConfig: Configuration) {
     super.onConfigurationChanged(newConfig)
     ApplicationLifecycleDispatcher.onConfigurationChanged(this, newConfig)
+    // Broadcast night-mode to JS even if RN Appearance misses the OEM event.
+    SystemThemeModule.emitConfiguration(newConfig)
   }
 }

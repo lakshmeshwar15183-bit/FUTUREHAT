@@ -2,7 +2,6 @@
 // auth gate, bottom tabs, and the full navigation stack.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, Platform, StyleSheet, Text, View } from 'react-native';
-import { StatusBar } from 'expo-status-bar';
 import * as Linking from 'expo-linking';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -28,6 +27,7 @@ import { PremiumProvider, ActivatingPremiumBanner } from './src/premium';
 import { AppLockProvider, useAppLock } from './src/security/AppLock';
 import { ChatLockProvider } from './src/security/ChatLock';
 import { CallProvider } from './src/calls/CallContext';
+import { StatusPresenceProvider } from './src/components/status/StatusPresenceContext';
 import LockScreen from './src/security/LockScreen';
 import { APP_NAME } from './src/branding';
 import type { RootStackParamList } from './src/navigation/types';
@@ -338,39 +338,47 @@ function RootNavigator() {
     };
   }, []);
 
-  const navTheme = {
-    ...DefaultTheme,
-    dark: !colors.isLight,
-    colors: {
-      ...DefaultTheme.colors,
-      background: colors.bg,
-      card: colors.header,
-      text: colors.text,
-      border: colors.border,
-      primary: colors.primary,
-      notification: colors.primary,
-    },
-  };
+  // Rebuild when palette flips (Follow System live update) so native headers,
+  // cards, and content backgrounds retheme without remounting the stack.
+  const navTheme = useMemo(
+    () => ({
+      ...DefaultTheme,
+      dark: !colors.isLight,
+      colors: {
+        ...DefaultTheme.colors,
+        background: colors.bg,
+        card: colors.header,
+        text: colors.text,
+        border: colors.border,
+        primary: colors.primary,
+        notification: colors.primary,
+      },
+    }),
+    [colors],
+  );
 
-  const screenOptions = {
-    headerStyle: {
-      backgroundColor: colors.header,
-    },
-    headerTintColor: colors.isLight ? '#fff' : colors.text,
-    headerTitleStyle: {
-      color: colors.isLight ? '#fff' : colors.text,
-      fontWeight: '600' as const,
-      fontSize: 17,
-      letterSpacing: -0.2,
-    },
-    headerShadowVisible: false,
-    contentStyle: { backgroundColor: colors.bg },
-    // Native stack: snappy messenger push (not default slow iOS-ish slide).
-    animation: 'slide_from_right' as const,
-    animationDuration: 220,
-    gestureEnabled: true,
-    fullScreenGestureEnabled: true,
-  };
+  const screenOptions = useMemo(
+    () => ({
+      headerStyle: {
+        backgroundColor: colors.header,
+      },
+      headerTintColor: colors.isLight ? '#fff' : colors.text,
+      headerTitleStyle: {
+        color: colors.isLight ? '#fff' : colors.text,
+        fontWeight: '600' as const,
+        fontSize: 17,
+        letterSpacing: -0.2,
+      },
+      headerShadowVisible: false,
+      contentStyle: { backgroundColor: colors.bg },
+      // Native stack: snappy messenger push (not default slow iOS-ish slide).
+      animation: 'slide_from_right' as const,
+      animationDuration: 220,
+      gestureEnabled: true,
+      fullScreenGestureEnabled: true,
+    }),
+    [colors],
+  );
 
   if (loading) {
     return (
@@ -382,8 +390,7 @@ function RootNavigator() {
   }
 
   return (
-    <View style={{ flex: 1 }}>
-      <StatusBar style={colors.isLight ? 'dark' : 'light'} />
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <NavigationContainer theme={navTheme} ref={navRef} linking={linkingConfig}>
         <Stack.Navigator screenOptions={screenOptions}>
           {/* ResetPassword is registered on BOTH sides of the auth split.
@@ -496,7 +503,9 @@ export default function App() {
               <AppLockProvider>
                 <ChatLockProvider>
                   <CallProvider>
-                    <RootNavigator />
+                    <StatusPresenceProvider>
+                      <RootNavigator />
+                    </StatusPresenceProvider>
                   </CallProvider>
                 </ChatLockProvider>
               </AppLockProvider>

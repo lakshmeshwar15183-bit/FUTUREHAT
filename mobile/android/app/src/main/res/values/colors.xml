@@ -1,0 +1,9 @@
+<resources>
+  <color name="splashscreen_background">#0B141A</color>
+  <color name="iconBackground">#FFFFFF</color>
+  <color name="colorPrimary">#023c69</color>
+  <color name="colorPrimaryDark">#0B141A</color>
+  <color name="notification_icon_color">#00A884</color>
+  <!-- Follow System: light window canvas (matches palettes.light.bg). -->
+  <color name="window_background">#FFFFFF</color>
+</resources>

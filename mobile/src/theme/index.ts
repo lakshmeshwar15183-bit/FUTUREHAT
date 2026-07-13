@@ -27,6 +27,7 @@ export {
   ThemeProvider,
   useTheme,
   useColors,
+  useSystemScheme,
 } from './ThemeContext';
 export {
   resolveThemeMode,
@@ -34,6 +35,13 @@ export {
   isValidThemePreference,
   type ThemePreference,
 } from './themeMode';
+export {
+  subscribeSystemScheme,
+  readSystemScheme,
+  readAppearanceScheme,
+  applySystemChrome,
+  type SystemScheme,
+} from './systemScheme';
 export {
   COLOR_THEMES,
   WALLPAPERS,

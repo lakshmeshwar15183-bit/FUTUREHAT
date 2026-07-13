@@ -1,15 +1,29 @@
 // Lumixo mobile — theme provider.
 //
 // DEFAULT: Follow System (WhatsApp-class). First launch matches the device
-// appearance with no manual step. Runtime OS light/dark changes update live
-// without remounting navigation or auth.
+// appearance with no manual step. Runtime OS light/dark changes update LIVE
+// without remounting navigation, auth, chat drafts, or media.
 //
 // Dimensions:
 //  1. MODE preference: system | light | dark | amoled (device-local AsyncStorage)
 //  2. COLOR THEME + WALLPAPER (server prefs, premium-gated)
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { Appearance, useColorScheme, type ColorSchemeName } from 'react-native';
+//
+// System scheme sources (merged, debounced):
+//  • Native Android UI_MODE_NIGHT (LumixoSystemTheme) — primary on Android
+//  • React Native Appearance + useColorScheme
+//  • AppState resume re-poll
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+import { useColorScheme } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { StatusBar } from 'expo-status-bar';
 
 import { palettes, type Palette, type ThemeMode } from './palettes';
 import {
@@ -20,6 +34,13 @@ import {
   type ThemePreference,
 } from './themeMode';
 import { resolveThemePalette, resolveWallpaperColor } from './appearance';
+import {
+  applySystemChrome,
+  readAppearanceScheme,
+  readSystemScheme,
+  subscribeSystemScheme,
+  type SystemScheme,
+} from './systemScheme';
 import { supabase } from '../lib/supabase';
 import { getPreferences, updatePreferences } from '../lib/shared';
 import { usePremiumOptional } from '../premium';
@@ -38,8 +59,11 @@ const WALLPAPER_KEY = 'futurehat.theme.wallpaper';
 interface ThemeContextValue {
   colors: Palette;
   mode: ThemeMode;
+  /** Explicit user setting: system | light | dark | amoled */
   preference: ThemePreference;
   setPreference: (p: ThemePreference) => void;
+  /** Live OS light/dark (even when preference is forced light/dark). */
+  systemScheme: SystemScheme;
   colorTheme: string;
   setColorTheme: (id: string) => void;
   wallpaper: string;
@@ -50,45 +74,50 @@ interface ThemeContextValue {
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
-function readOsScheme(
-  hookValue?: ColorSchemeName | null,
-): 'light' | 'dark' {
-  // Prefer the live hook, then Appearance. Null/undefined → light (never invent dark).
-  const raw = hookValue ?? Appearance.getColorScheme();
-  return normalizeSystemScheme(raw);
-}
-
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  // Live system scheme — updates when the user toggles OS appearance.
-  const systemFromHook = useColorScheme();
-  const [systemScheme, setSystemScheme] = useState<'light' | 'dark'>(() =>
-    readOsScheme(Appearance.getColorScheme()),
+  // Hook value — still useful on iOS and as a secondary Android signal.
+  const hookScheme = useColorScheme();
+
+  const [systemScheme, setSystemScheme] = useState<SystemScheme>(() =>
+    readAppearanceScheme(),
   );
 
-  // Keep in sync with Appearance API (belt + useColorScheme for all platforms).
+  // Live multi-source subscription (native + Appearance + AppState).
   useEffect(() => {
-    setSystemScheme(readOsScheme(systemFromHook));
-  }, [systemFromHook]);
-
-  useEffect(() => {
-    const sub = Appearance.addChangeListener(({ colorScheme }) => {
-      setSystemScheme(readOsScheme(colorScheme));
+    const unsub = subscribeSystemScheme((scheme) => {
+      setSystemScheme((prev) => (prev === scheme ? prev : scheme));
     });
-    return () => sub.remove();
+    return unsub;
+  }, []);
+
+  // Keep aligned with useColorScheme when it does update (iOS / stock Android).
+  useEffect(() => {
+    if (hookScheme == null) return;
+    const next = normalizeSystemScheme(hookScheme);
+    setSystemScheme((prev) => (prev === next ? prev : next));
+  }, [hookScheme]);
+
+  // Initial native poll (async) — fixes cold start on OEMs where Appearance is stale.
+  useEffect(() => {
+    let alive = true;
+    void readSystemScheme().then((s) => {
+      if (alive) setSystemScheme((prev) => (prev === s ? prev : s));
+    });
+    return () => {
+      alive = false;
+    };
   }, []);
 
   const premiumCtx = usePremiumOptional();
   const isPremium = premiumCtx?.isPremium ?? false;
 
-  // DEFAULT = Follow System (WhatsApp). First open matches the phone.
-  // Light / Dark / AMOLED are only applied after an explicit Settings choice.
+  // DEFAULT = Follow System (WhatsApp). Light / Dark / AMOLED only after explicit choice.
   const [preference, setPreferenceState] = useState<ThemePreference>(DEFAULT_THEME_PREFERENCE);
   const [colorTheme, setColorThemeState] = useState('default');
   const [wallpaper, setWallpaperState] = useState('default');
   const [hydrated, setHydrated] = useState(false);
 
   // Instant local hydrate — restore only if the user previously chose a mode.
-  // Missing key → stay on Follow System. Never auto-write dark/light on launch.
   useEffect(() => {
     let alive = true;
     AsyncStorage.multiGet([STORAGE_KEY, THEME_KEY, WALLPAPER_KEY])
@@ -96,7 +125,6 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
         if (!alive) return;
         const map = Object.fromEntries(entries);
         const m = map[STORAGE_KEY];
-        // Only apply a stored override; empty/invalid → keep DEFAULT_THEME_PREFERENCE.
         if (isValidThemePreference(m)) setPreferenceState(m);
         else setPreferenceState(DEFAULT_THEME_PREFERENCE);
         if (map[THEME_KEY]) setColorThemeState(map[THEME_KEY]!);
@@ -114,7 +142,6 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   // Server reconcile: color theme + wallpaper only (never display mode).
-  // Display mode stays device-local so first open can always Follow System.
   useEffect(() => {
     let alive = true;
     getPreferences(supabase)
@@ -136,23 +163,24 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   /** Explicit user choice from Appearance settings — only path that persists mode. */
-  const setPreference = (p: ThemePreference) => {
+  const setPreference = useCallback((p: ThemePreference) => {
     setPreferenceState(p);
     AsyncStorage.setItem(STORAGE_KEY, p).catch(() => {});
-  };
+  }, []);
 
-  const setColorTheme = (id: string) => {
+  const setColorTheme = useCallback((id: string) => {
     setColorThemeState(id);
     AsyncStorage.setItem(THEME_KEY, id).catch(() => {});
     updatePreferences(supabase, { theme: id }).catch(() => {});
-  };
+  }, []);
 
-  const setWallpaper = (id: string) => {
+  const setWallpaper = useCallback((id: string) => {
     setWallpaperState(id);
     AsyncStorage.setItem(WALLPAPER_KEY, id).catch(() => {});
     updatePreferences(supabase, { wallpaper: id }).catch(() => {});
-  };
+  }, []);
 
+  // Forced Light/Dark/AMOLED ignore systemScheme; Follow System tracks it live.
   const mode = resolveThemeMode(preference, systemScheme);
 
   const value = useMemo<ThemeContextValue>(() => {
@@ -163,6 +191,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       mode,
       preference,
       setPreference,
+      systemScheme,
       colorTheme,
       setColorTheme,
       wallpaper,
@@ -170,10 +199,42 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       wallpaperColor: resolveWallpaperColor(wallpaper, isPremium),
       isPremium,
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, preference, colorTheme, wallpaper, isPremium, hydrated]);
+  }, [
+    mode,
+    preference,
+    systemScheme,
+    colorTheme,
+    wallpaper,
+    isPremium,
+    hydrated,
+    setPreference,
+    setColorTheme,
+    setWallpaper,
+  ]);
 
-  return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
+  // Native system bars — update whenever the effective palette flips.
+  // Avoids white/black flash on the nav bar when Follow System toggles.
+  const chromeKey = useRef<string>('');
+  useEffect(() => {
+    const { colors } = value;
+    const key = `${mode}|${colors.header}|${colors.bg}|${colors.isLight}`;
+    if (chromeKey.current === key) return;
+    chromeKey.current = key;
+    void applySystemChrome({
+      isLightSurfaces: colors.isLight,
+      // Header green in light (WhatsApp) / dark header surface in dark.
+      statusBarColor: colors.header,
+      navigationBarColor: colors.bg,
+    });
+  }, [value, mode]);
+
+  return (
+    <ThemeContext.Provider value={value}>
+      {/* Animated status-bar glyph flip; Android colors come from setSystemChrome. */}
+      <StatusBar style={value.colors.isLight ? 'dark' : 'light'} animated />
+      {children}
+    </ThemeContext.Provider>
+  );
 }
 
 export function useTheme(): ThemeContextValue {
@@ -185,4 +246,9 @@ export function useTheme(): ThemeContextValue {
 /** Convenience: most screens only need the active palette. */
 export function useColors(): Palette {
   return useTheme().colors;
+}
+
+/** Live OS scheme (for Appearance screen swatches even when forced mode). */
+export function useSystemScheme(): SystemScheme {
+  return useTheme().systemScheme;
 }

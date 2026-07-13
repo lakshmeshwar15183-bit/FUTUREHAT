@@ -91,7 +91,7 @@ android {
         applicationId 'dev.lakshmeshwar.futurehat'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 65
+        versionCode 70
         versionName "4.6.3"
     }
     signingConfigs {

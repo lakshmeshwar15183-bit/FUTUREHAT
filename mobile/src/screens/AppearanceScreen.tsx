@@ -11,7 +11,6 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  useColorScheme,
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -80,11 +79,20 @@ const BUBBLES: { id: string; label: string; premium: boolean }[] = [
 type AppearancePrefs = { font: string; bubble_style: string; app_icon: string };
 
 export default function AppearanceScreen() {
-  const { preference, setPreference, colors, mode, colorTheme, setColorTheme, wallpaper, setWallpaper } = useTheme();
-  const systemScheme = useColorScheme();
+  const {
+    preference,
+    setPreference,
+    colors,
+    mode,
+    systemScheme,
+    colorTheme,
+    setColorTheme,
+    wallpaper,
+    setWallpaper,
+  } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const navigation = useNavigation<Nav>();
-  // Preview swatch for Follow System = current phone light/dark (not always dark).
+  // Preview swatch for Follow System = live phone light/dark (updates with OS).
   const systemSwatchMode = resolveThemeMode('system', systemScheme);
 
   const { isPremium: premium } = usePremium();

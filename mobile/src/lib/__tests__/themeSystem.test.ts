@@ -1,10 +1,11 @@
 /**
- * Follow System theme resolution (WhatsApp-class default).
+ * Follow System theme resolution + live-sync contracts (WhatsApp-class).
  */
 import {
   DEFAULT_THEME_PREFERENCE,
   resolveThemeMode,
   isValidThemePreference,
+  normalizeSystemScheme,
 } from '../../theme/themeMode';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -29,10 +30,19 @@ describe('resolveThemeMode', () => {
     expect(resolveThemeMode('system', undefined)).toBe('light');
   });
 
-  it('honors forced light/dark/amoled (user Settings choice)', () => {
+  it('honors forced light/dark/amoled (user Settings choice) and IGNORES OS', () => {
     expect(resolveThemeMode('light', 'dark')).toBe('light');
     expect(resolveThemeMode('dark', 'light')).toBe('dark');
     expect(resolveThemeMode('amoled', 'light')).toBe('amoled');
+  });
+});
+
+describe('normalizeSystemScheme', () => {
+  it('only returns dark for explicit dark', () => {
+    expect(normalizeSystemScheme('dark')).toBe('dark');
+    expect(normalizeSystemScheme('light')).toBe('light');
+    expect(normalizeSystemScheme(null)).toBe('light');
+    expect(normalizeSystemScheme(undefined)).toBe('light');
   });
 });
 
@@ -58,9 +68,21 @@ describe('default preference source contract', () => {
       'utf8',
     );
     expect(src).toMatch(/useState<ThemePreference>\(DEFAULT_THEME_PREFERENCE\)/);
-    expect(src).toMatch(/Appearance\.addChangeListener/);
+    expect(src).toMatch(/subscribeSystemScheme/);
     // Display mode must not come from server (device-local like WhatsApp).
     expect(src).toMatch(/never display mode/i);
+  });
+
+  it('systemScheme bridge listens to native + Appearance + AppState', () => {
+    const src = fs.readFileSync(
+      path.join(__dirname, '../../theme/systemScheme.ts'),
+      'utf8',
+    );
+    expect(src).toMatch(/LumixoSystemTheme/);
+    expect(src).toMatch(/systemColorSchemeChanged/);
+    expect(src).toMatch(/Appearance\.addChangeListener/);
+    expect(src).toMatch(/AppState\.addEventListener/);
+    expect(src).toMatch(/setSystemChrome/);
   });
 
   it('app.json uses automatic userInterfaceStyle', () => {
@@ -69,6 +91,27 @@ describe('default preference source contract', () => {
       'utf8',
     );
     expect(src).toMatch(/"userInterfaceStyle":\s*"automatic"/);
+  });
+
+  it('Android MainActivity forwards uiMode config changes', () => {
+    const src = fs.readFileSync(
+      path.join(
+        __dirname,
+        '../../../android/app/src/main/java/dev/lakshmeshwar/futurehat/MainActivity.kt',
+      ),
+      'utf8',
+    );
+    expect(src).toMatch(/onConfigurationChanged/);
+    expect(src).toMatch(/SystemThemeModule\.emitConfiguration/);
+    expect(src).toMatch(/onResume/);
+  });
+
+  it('AndroidManifest keeps uiMode in configChanges (no activity recreate)', () => {
+    const src = fs.readFileSync(
+      path.join(__dirname, '../../../android/app/src/main/AndroidManifest.xml'),
+      'utf8',
+    );
+    expect(src).toMatch(/android:configChanges="[^"]*uiMode/);
   });
 
   it('does not force dark premium palettes over light mode', () => {
