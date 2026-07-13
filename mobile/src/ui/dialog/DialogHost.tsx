@@ -226,15 +226,19 @@ export default function DialogHost() {
   const open = !!req;
   const kind = req?.kind ?? null;
 
+  // When idle, render nothing — a full-screen host with 0-opacity backdrop was
+  // still stacking over Chat on some OEMs and washing out message opacity.
+  if (!open) return null;
+
   return (
     <View
       style={styles.host}
-      pointerEvents={open ? 'auto' : 'none'}
+      pointerEvents="auto"
       collapsable={false}
     >
       <Animated.View
         style={[styles.backdropFill, backdropStyle]}
-        pointerEvents={open ? 'auto' : 'none'}
+        pointerEvents="auto"
       >
         <Pressable
           style={StyleSheet.absoluteFill}

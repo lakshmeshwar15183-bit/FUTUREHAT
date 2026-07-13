@@ -90,23 +90,28 @@ describe('source contract: ChatScreen must not reintroduce gap bugs', () => {
     'utf8',
   );
 
-  it('keyboard pad is worklet-safe (no Math.max keyboard/inset double-count)', () => {
+  it('keyboard pad uses Keyboard events (no Reanimated root opacity bugs)', () => {
     // Must not reintroduce Math.max(ime, inset) which leaves a blank band on OEMs.
     expect(src).not.toMatch(/Math\.max\(\s*keyboard\.height/);
-    // Pad rule must run inside a worklet with pure math (no JS helper call).
-    expect(src).toMatch(/useAnimatedStyle/);
-    expect(src).toMatch(/'worklet'/);
-    // Closed threshold ignores OEM residual keyboard height (< ~80px).
-    expect(src).toMatch(/closedThreshold|kb > 80|kb > closedThreshold/);
+    // No Reanimated useAnimatedKeyboard on chat root (was translucent on OEMs).
+    expect(src).not.toMatch(/useAnimatedKeyboard/);
+    expect(src).toMatch(/keyboardDidShow|keyboardWillShow/);
+    expect(src).toMatch(/columnPadBottom|imePad/);
   });
 
   it('paints an opaque chat canvas (no Main tab bleed-through)', () => {
     expect(src).toMatch(/chatCanvasBg|EFEAE2/);
-    expect(src).toMatch(/Outer View paints an opaque canvas|backgroundColor: chatCanvasBg/);
+    expect(src).toMatch(/collapsable=\{false\}/);
+    expect(src).toMatch(/backgroundColor: chatCanvasBg/);
+  });
+
+  it('uses white header chrome on green header', () => {
+    expect(src).toMatch(/headerOnGreen/);
+    expect(src).toMatch(/headerTitle:.*#FFFFFF/);
   });
 
   it('gives FlatList explicit flex:1 list style', () => {
-    expect(src).toMatch(/style=\{styles\.list\}/);
+    expect(src).toMatch(/styles\.list/);
     expect(src).toMatch(/list:\s*\{\s*flex:\s*1\s*\}/);
   });
 

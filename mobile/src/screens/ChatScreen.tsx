@@ -20,7 +20,7 @@ import {
   View,
 } from 'react-native';
 import * as Sharing from 'expo-sharing';
-import Animated, { useAnimatedKeyboard, useAnimatedStyle } from 'react-native-reanimated';
+
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
@@ -273,34 +273,32 @@ function ChatScreenInner() {
     return () => { alive = false; };
   }, [conversationId]);
 
-  // WhatsApp-identical keyboard handling. We do NOT use KeyboardAvoidingView:
-  // targetSdk 35 forces edge-to-edge on Android 15+, which makes the manifest's
-  // `adjustResize` a no-op (the window no longer shrinks for the IME), so the
-  // composer would sit BEHIND the keyboard. Instead we read the live IME height
-  // from reanimated's useAnimatedKeyboard (driven off the system WindowInsets
-  // animation, so it tracks the keyboard 1:1 with matching speed/curve) and pad
-  // the whole thread up by it — works under forced edge-to-edge and on iOS.
-  //
-  // CRITICAL: when IME is open, pad by IME height ONLY. When closed, pad by
-  // safe-area only. Math.max(ime, inset) double-counts nav/IME on some OEMs and
-  // leaves a blank band between the last bubble and the composer.
-  const keyboard = useAnimatedKeyboard();
+  // Keyboard pad without Reanimated roots (Reanimated Animated.View as screen
+  // root caused translucent/washed chat on Realme — Main list showed through).
+  // Plain View + Keyboard events = full opacity, no worklet crash path.
   const safeBottom = insets.bottom;
-  // Opaque chat fill — never leave the previous Main tab translucent underneath.
-  // Soft WhatsApp-like paper for light mode so white incoming bubbles stay readable.
+  const [imePad, setImePad] = useState(0);
+  useEffect(() => {
+    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const onShow = Keyboard.addListener(showEvt, (e) => {
+      const h = e?.endCoordinates?.height ?? 0;
+      // Ignore tiny residuals (nav-bar ghost heights on OEMs).
+      setImePad(h > 80 ? h : 0);
+    });
+    const onHide = Keyboard.addListener(hideEvt, () => setImePad(0));
+    return () => {
+      onShow.remove();
+      onHide.remove();
+    };
+  }, []);
+  // Opaque paper canvas — never translucent over Main tabs.
   const chatCanvasBg =
     wallpaperColor ?? (colors.isLight ? '#EFEAE2' : colors.bg);
-  // CRITICAL (Android crash): never call non-worklet JS helpers from
-  // useAnimatedStyle. Pure numbers only on UI thread.
-  // Android OEMs sometimes leave a non-zero residual "keyboard" height when
-  // closed (nav bar / IME ghost) — treat anything under ~80px as closed.
-  const keyboardStyle = useAnimatedStyle(() => {
-    'worklet';
-    const kb = keyboard.height.value;
-    const closedThreshold = 80;
-    const pad = kb > closedThreshold ? kb : safeBottom;
-    return { paddingBottom: pad, flex: 1 };
-  });
+  // When IME open: pad by IME only. When closed: safe-area only.
+  const columnPadBottom = imePad > 0 ? imePad : safeBottom;
+  // Green header chrome: always white glyphs (not muted palette text).
+  const headerOnGreen = '#FFFFFF';
 
   const [uid, setUid] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -438,7 +436,7 @@ function ChatScreenInner() {
   }, []);
 
   // Keep the latest message in view as the keyboard opens. The composer already
-  // follows the keyboard via useAnimatedKeyboard (padding), which shrinks the
+  // follows the keyboard via columnPadBottom (IME/safe-area), which shrinks the
   // inverted list from the bottom; if the user was at the newest message we nudge
   // it back to offset 0 so the last bubble stays visible above the composer.
   /** Message held for reaction while the action sheet is fully dismissed. */
@@ -1014,14 +1012,21 @@ function ChatScreenInner() {
               </Text>
               {/* Disappearing-messages indicator (WhatsApp parity). */}
               {disappearSecs > 0 && (
-                <Ionicons name="timer-outline" size={14} color={colors.textMuted} style={{ marginLeft: 5 }} />
+                <Ionicons name="timer-outline" size={14} color="rgba(255,255,255,0.9)" style={{ marginLeft: 5 }} />
               )}
               {ghost && (
-                <Ionicons name="eye-off-outline" size={13} color={colors.textMuted} style={{ marginLeft: 5 }} />
+                <Ionicons name="eye-off-outline" size={13} color="rgba(255,255,255,0.9)" style={{ marginLeft: 5 }} />
               )}
             </View>
             {!!subtitle && (
-              <Text style={[styles.headerSub, typingName ? styles.headerSubTyping : null]} numberOfLines={1}>
+              <Text
+                style={[
+                  styles.headerSub,
+                  typingName ? styles.headerSubTyping : null,
+                  { color: typingName ? '#B8F5E0' : 'rgba(255,255,255,0.88)' },
+                ]}
+                numberOfLines={1}
+              >
                 {subtitle}
               </Text>
             )}
@@ -1039,7 +1044,7 @@ function ChatScreenInner() {
                 accessibilityLabel="Voice call"
                 style={{ marginLeft: 12 }}
               >
-                <Ionicons name="call-outline" size={22} color={colors.text} />
+                <Ionicons name="call-outline" size={22} color={headerOnGreen} />
               </Pressable>
               <Pressable
                 hitSlop={10}
@@ -1047,7 +1052,7 @@ function ChatScreenInner() {
                 accessibilityLabel="Video call"
                 style={{ marginLeft: 14 }}
               >
-                <Ionicons name="videocam-outline" size={23} color={colors.text} />
+                <Ionicons name="videocam-outline" size={23} color={headerOnGreen} />
               </Pressable>
             </>
           )}
@@ -1057,12 +1062,17 @@ function ChatScreenInner() {
             accessibilityLabel="More options"
             style={{ marginLeft: 12, padding: 2 }}
           >
-            <Ionicons name="ellipsis-vertical" size={20} color={colors.text} />
+            <Ionicons name="ellipsis-vertical" size={20} color={headerOnGreen} />
           </Pressable>
         </View>
       ),
+      headerTintColor: headerOnGreen,
+      headerStyle: { backgroundColor: colors.header },
+      headerShadowVisible: false,
+      // Solid content under the native header (prevents list bleed during push).
+      contentStyle: { backgroundColor: chatCanvasBg },
     });
-  }, [navigation, params.title, headerTitle, headerAvatarName, subtitle, peers, colors, styles, selectionMode, selectedIds, isGroup, ghost, disappearSecs, conversationId, headerAvatarUri, typingName, chatMuted, chatLock, starredIds, peerNickname]);
+  }, [navigation, params.title, headerTitle, headerAvatarName, subtitle, peers, colors, styles, selectionMode, selectedIds, isGroup, ghost, disappearSecs, conversationId, headerAvatarUri, typingName, chatMuted, chatLock, starredIds, peerNickname, headerOnGreen, chatCanvasBg]);
 
   function placeCall(kind: 'audio' | 'video') {
     // Only reachable from direct chats (call buttons are hidden in groups).
@@ -2714,10 +2724,17 @@ function ChatScreenInner() {
   }
 
   return (
-    // Outer View paints an opaque canvas so the chat list never shows through.
-    // Animated.View only owns keyboard padding (Reanimated can drop bg on some OEMs).
-    <View style={[styles.flex, { backgroundColor: chatCanvasBg }]}>
-    <Animated.View style={keyboardStyle}>
+    // Single opaque column — no Reanimated root (was translucent on some OEMs).
+    <View
+      style={[
+        styles.flex,
+        {
+          backgroundColor: chatCanvasBg,
+          paddingBottom: columnPadBottom,
+        },
+      ]}
+      collapsable={false}
+    >
       {searchOpen && (
         <View style={styles.searchBar}>
           <View style={styles.searchRow}>
@@ -2766,18 +2783,18 @@ function ChatScreenInner() {
 
       <FlatList
         ref={listRef}
-        style={styles.list}
+        style={[styles.list, { backgroundColor: chatCanvasBg }]}
         data={inverted}
         inverted
         keyExtractor={(it) => it.id}
         renderItem={renderItem}
         // inverted: paddingTop = near composer (keep tiny); paddingBottom = thread top.
         // Never flexGrow:1 here — it creates a permanent blank band above the composer.
-        contentContainerStyle={[styles.listContent, listContentPad]}
+        contentContainerStyle={[styles.listContent, listContentPad, { backgroundColor: chatCanvasBg }]}
         // "handled" lets long-press land while the keyboard is open (WhatsApp parity).
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
-        // iOS: do not auto-inset for nav bars — we own bottom chrome via keyboardStyle.
+        // iOS: do not auto-inset for nav bars — we own bottom chrome via paddingBottom.
         {...(Platform.OS === 'ios'
           ? { contentInsetAdjustmentBehavior: 'never' as const }
           : null)}
@@ -3302,7 +3319,6 @@ function ChatScreenInner() {
           onDelete={deleteFromViewer}
         />
       )}
-    </Animated.View>
     </View>
   );
 }
@@ -3440,26 +3456,33 @@ const makeStyles = (colors: Palette) =>
     listContent: { flexGrow: 0 },
     encNote: {
       flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-      gap: 5, paddingHorizontal: 16, paddingTop: 10, paddingBottom: 6, opacity: 0.72,
+      gap: 5, paddingHorizontal: 16, paddingTop: 10, paddingBottom: 6,
     },
-    encNoteText: { color: colors.textMuted, fontSize: font.tiny },
+    encNoteText: { color: colors.textMuted, fontSize: font.tiny, fontWeight: '500' },
     daySep: { alignItems: 'center', marginVertical: 8 },
     daySepText: {
-      color: colors.textMuted, fontSize: 11.5, fontWeight: '600',
-      backgroundColor: colors.surface, paddingHorizontal: 10, paddingVertical: 4,
+      color: colors.text, fontSize: 11.5, fontWeight: '600',
+      backgroundColor: colors.isLight ? 'rgba(255,255,255,0.95)' : colors.surface,
+      paddingHorizontal: 10, paddingVertical: 4,
       borderRadius: radius.sm, overflow: 'hidden',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.isLight ? 'rgba(0,0,0,0.06)' : colors.border,
     },
     headerPerson: { flexDirection: 'row', alignItems: 'center', maxWidth: 220 },
     headerTextCol: { marginLeft: 9, flexShrink: 1, minWidth: 0 },
-    headerTitle: { color: colors.text, fontSize: font.heading, fontWeight: '600', flexShrink: 1, letterSpacing: -0.15 },
+    // White on green header (WhatsApp) — never palette text (was washed-out).
+    headerTitle: { color: '#FFFFFF', fontSize: font.heading, fontWeight: '600', flexShrink: 1, letterSpacing: -0.15 },
     headerTitleRow: { flexDirection: 'row', alignItems: 'center' },
-    headerSub: { color: colors.textMuted, fontSize: font.tiny, marginTop: 0 },
-    headerSubTyping: { color: colors.primary, fontWeight: '600' },
+    headerSub: { color: 'rgba(255,255,255,0.88)', fontSize: font.tiny, marginTop: 0 },
+    headerSubTyping: { color: '#B8F5E0', fontWeight: '600' },
     systemNotice: { alignItems: 'center', marginVertical: 6, paddingHorizontal: 24 },
     systemPill: {
       flexDirection: 'row', alignItems: 'center', maxWidth: '90%',
-      backgroundColor: colors.surface, paddingHorizontal: 11, paddingVertical: 5,
+      backgroundColor: colors.isLight ? 'rgba(255,255,255,0.96)' : colors.surface,
+      paddingHorizontal: 11, paddingVertical: 5,
       borderRadius: radius.md, overflow: 'hidden',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.isLight ? 'rgba(0,0,0,0.08)' : colors.border,
     },
     callHistoryPill: {
       minHeight: 32,
@@ -3471,7 +3494,13 @@ const makeStyles = (colors: Palette) =>
       borderColor: colors.primary,
       backgroundColor: colors.primary + '18',
     },
-    systemNoticeText: { color: colors.textMuted, fontSize: font.tiny, textAlign: 'center', flexShrink: 1 },
+    systemNoticeText: {
+      color: colors.text,
+      fontSize: font.tiny,
+      textAlign: 'center',
+      flexShrink: 1,
+      fontWeight: '500',
+    },
     lockGateText: { color: colors.text, fontSize: font.heading, fontWeight: '600', marginTop: 14 },
     lockGateBtn: {
       flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 16,
@@ -3512,9 +3541,10 @@ const makeStyles = (colors: Palette) =>
       alignItems: 'flex-end',
       paddingHorizontal: 8,
       paddingTop: 5,
-      backgroundColor: colors.surface,
+      // Fully opaque bar — never let chat paper show through icons/input.
+      backgroundColor: colors.isLight ? '#F0F2F5' : colors.surface,
       borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: colors.isLight ? 'rgba(0,0,0,0.06)' : colors.border,
+      borderTopColor: colors.isLight ? 'rgba(0,0,0,0.08)' : colors.border,
     },
     searchNoResults: { color: colors.textMuted, fontSize: font.small, paddingTop: 6, paddingBottom: 2 },
     jumpLatest: {
