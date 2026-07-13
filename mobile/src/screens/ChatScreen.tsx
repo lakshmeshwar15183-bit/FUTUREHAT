@@ -5,6 +5,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   AppState,
+  BackHandler,
   FlatList,
   Keyboard,
   Dimensions,
@@ -173,6 +174,35 @@ const QUICK_EMOJI = [...QUICK_REACTIONS];
 // WhatsApp-style one-line summary for the reply/edit preview bar — delegates to
 // the shared helper so the composer bar and in-bubble quote read identically.
 const previewLabel = (m: Message | null | undefined): string => (m ? replySummary(m) : '');
+
+/** Parse call-history system lines ("Missed voice call [call:uuid]"). */
+function parseCallHistory(msg: Message): {
+  isCall: boolean;
+  label: string;
+  callId: string | null;
+  isMissed: boolean;
+  isVideo: boolean;
+} {
+  if (msg.type !== 'system') {
+    return { isCall: false, label: msg.content ?? '', callId: null, isMissed: false, isVideo: false };
+  }
+  const raw = msg.content ?? '';
+  const callMatch = raw.match(/\[call:([0-9a-f-]{36})\]\s*$/i);
+  const label = callMatch ? raw.replace(/\s*\[call:[0-9a-f-]{36}\]\s*$/i, '').trim() : raw;
+  const isCall =
+    !!callMatch || /^(missed|declined|cancelled|canceled|voice|video)\b/i.test(label);
+  return {
+    isCall,
+    label,
+    callId: callMatch?.[1] ?? null,
+    isMissed: /^missed\b/i.test(label),
+    isVideo: /\bvideo\b/i.test(label),
+  };
+}
+
+function isCallHistoryMessage(msg: Message): boolean {
+  return parseCallHistory(msg).isCall;
+}
 
 // Merge two message arrays by id (server rows win over optimistic ones with the
 // same id), then sort chronologically for the (inverted) thread. Used to reconcile
@@ -879,24 +909,83 @@ function ChatScreenInner() {
 
   useEffect(() => {
     if (selectionMode) {
+      // Call-history-only selection → WhatsApp-style Delete + Info (no copy/forward).
+      const selectedMsgs = messagesRef.current.filter((m) => selectedIds.has(m.id));
+      const onlyCallHistory =
+        selectedMsgs.length > 0 && selectedMsgs.every((m) => isCallHistoryMessage(m));
+      const single = selectedMsgs.length === 1 ? selectedMsgs[0] : null;
+
       navigation.setOptions({
-        headerTitle: () => <Text style={styles.headerTitle}>{selectedIds.size} selected</Text>,
+        headerTitle: () => (
+          <Text style={styles.headerTitle}>
+            {selectedIds.size} selected
+          </Text>
+        ),
         headerLeft: () => (
-          <Pressable hitSlop={8} onPress={exitSelection}>
+          <Pressable
+            hitSlop={8}
+            onPress={exitSelection}
+            accessibilityLabel="Cancel selection"
+          >
             <Ionicons name="close" size={24} color={colors.text} />
           </Pressable>
         ),
         headerRight: () => (
           <View style={styles.headerActions}>
-            <Pressable hitSlop={8} onPress={copySelected}>
-              <Ionicons name="copy-outline" size={21} color={colors.text} />
-            </Pressable>
-            <Pressable hitSlop={8} onPress={forwardSelectedMany} style={{ marginLeft: 18 }}>
-              <Ionicons name="arrow-redo-outline" size={22} color={colors.text} />
-            </Pressable>
-            <Pressable hitSlop={8} onPress={() => deleteMany([...selectedIds])} style={{ marginLeft: 18 }}>
-              <Ionicons name="trash-outline" size={21} color={colors.danger} />
-            </Pressable>
+            {onlyCallHistory ? (
+              <>
+                {single && (
+                  <Pressable
+                    hitSlop={8}
+                    onPress={() => showInfoForMessage(single)}
+                    accessibilityLabel="Message info"
+                    style={{ marginLeft: 4 }}
+                  >
+                    <Ionicons name="information-circle-outline" size={23} color={colors.text} />
+                  </Pressable>
+                )}
+                <Pressable
+                  hitSlop={8}
+                  onPress={() => deleteMany([...selectedIds])}
+                  accessibilityLabel="Delete"
+                  style={{ marginLeft: 18 }}
+                >
+                  <Ionicons name="trash-outline" size={21} color={colors.danger} />
+                </Pressable>
+              </>
+            ) : (
+              <>
+                <Pressable hitSlop={8} onPress={copySelected} accessibilityLabel="Copy">
+                  <Ionicons name="copy-outline" size={21} color={colors.text} />
+                </Pressable>
+                <Pressable
+                  hitSlop={8}
+                  onPress={forwardSelectedMany}
+                  accessibilityLabel="Forward"
+                  style={{ marginLeft: 18 }}
+                >
+                  <Ionicons name="arrow-redo-outline" size={22} color={colors.text} />
+                </Pressable>
+                {single && (
+                  <Pressable
+                    hitSlop={8}
+                    onPress={() => showInfoForMessage(single)}
+                    accessibilityLabel="Message info"
+                    style={{ marginLeft: 18 }}
+                  >
+                    <Ionicons name="information-circle-outline" size={23} color={colors.text} />
+                  </Pressable>
+                )}
+                <Pressable
+                  hitSlop={8}
+                  onPress={() => deleteMany([...selectedIds])}
+                  accessibilityLabel="Delete"
+                  style={{ marginLeft: 18 }}
+                >
+                  <Ionicons name="trash-outline" size={21} color={colors.danger} />
+                </Pressable>
+              </>
+            )}
           </View>
         ),
       });
@@ -1528,6 +1617,16 @@ function ChatScreenInner() {
     setSelectionMode(false);
     setSelectedIds(new Set());
   }
+
+  // Hardware / gesture back exits multi-select (restore normal chat header).
+  useEffect(() => {
+    if (!selectionMode) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      exitSelection();
+      return true;
+    });
+    return () => sub.remove();
+  }, [selectionMode]);
   async function copySelected() {
     const texts = messagesRef.current.filter((m) => selectedIds.has(m.id) && m.content).map((m) => m.content as string);
     if (texts.length) await Clipboard.setStringAsync(texts.join('\n'));
@@ -1963,28 +2062,71 @@ function ChatScreenInner() {
     queueAction('hideMessage', { messageId });
   }
 
+  /** Message details for any message (call history included). */
+  function showInfoForMessage(target: Message) {
+    const call = parseCallHistory(target);
+    if (call.isCall) {
+      const lines = [
+        call.label || 'Call',
+        `Time: ${new Date(target.created_at).toLocaleString()}`,
+        call.isVideo ? 'Type: Video call' : 'Type: Voice call',
+        call.callId ? `Call ID: ${call.callId.slice(0, 8)}…` : null,
+      ].filter(Boolean).join('\n');
+      Alert.alert('Call details', lines);
+      return;
+    }
+    const mine = target.sender_id === uid;
+    const tick = computeOutboundTick({
+      messageId: target.id,
+      pending: target.pending,
+      failed: !!(target as { failed?: boolean }).failed,
+      senderId: uid,
+      tickMap: receipts,
+    });
+    const status = tickLabel(tick);
+    const lines = [
+      `Sent: ${new Date(target.created_at).toLocaleString()}`,
+      target.edited_at ? `Edited: ${new Date(target.edited_at).toLocaleString()}` : null,
+      mine ? `Status: ${status}` : null,
+      starredIds.has(target.id) ? 'Starred: yes' : null,
+    ].filter(Boolean).join('\n');
+    Alert.alert('Message info', lines || 'No details available.');
+  }
+
   // Message info — delivery/read status + timestamps, mirroring web's info view.
   function showInfo() {
     if (!selected) return;
     const target = selected;
     afterMessageSheetClosed(() => {
-      const mine = target.sender_id === uid;
-      const tick = computeOutboundTick({
-        messageId: target.id,
-        pending: target.pending,
-        failed: !!(target as { failed?: boolean }).failed,
-        senderId: uid,
-        tickMap: receipts,
-      });
-      const status = tickLabel(tick);
-      const lines = [
-        `Sent: ${new Date(target.created_at).toLocaleString()}`,
-        target.edited_at ? `Edited: ${new Date(target.edited_at).toLocaleString()}` : null,
-        mine ? `Status: ${status}` : null,
-        starredIds.has(target.id) ? 'Starred: yes' : null,
-      ].filter(Boolean).join('\n');
-      Alert.alert('Message info', lines || 'No details available.');
+      showInfoForMessage(target);
     });
+  }
+
+  /** Confirm + hide call history (delete for me only — does not touch other messages). */
+  function confirmDeleteCallHistory(msg: Message) {
+    const call = parseCallHistory(msg);
+    Alert.alert(
+      'Delete call history?',
+      `Remove "${call.label || 'this call'}" from your chat only. Other messages are not affected.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            hideOneMessage(msg.id);
+            if (selectionMode) {
+              setSelectedIds((prev) => {
+                const next = new Set(prev);
+                next.delete(msg.id);
+                if (next.size === 0) setSelectionMode(false);
+                return next;
+              });
+            }
+          },
+        },
+      ],
+    );
   }
 
   // Report a message (WhatsApp/Telegram style): confirm → pick a reason → submit.
@@ -2065,8 +2207,30 @@ function ChatScreenInner() {
 
   // Bulk delete for multi-select.
   async function deleteMany(ids: string[]) {
-    const mineIds = messagesRef.current
-      .filter((m) => ids.includes(m.id) && m.sender_id === uid && !m.is_deleted)
+    const selected = messagesRef.current.filter((m) => ids.includes(m.id));
+    const onlyCallHistory = selected.length > 0 && selected.every((m) => isCallHistoryMessage(m));
+    // Call history is always "delete for me" (local hide) — never unsend for everyone.
+    if (onlyCallHistory) {
+      Alert.alert(
+        ids.length === 1 ? 'Delete call history?' : 'Delete call history?',
+        `Remove ${ids.length} call entr${ids.length === 1 ? 'y' : 'ies'} from your chat only. Other messages are not affected.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Delete',
+            style: 'destructive',
+            onPress: () => {
+              exitSelection();
+              ids.forEach((id) => hideOneMessage(id));
+            },
+          },
+        ],
+      );
+      return;
+    }
+
+    const mineIds = selected
+      .filter((m) => m.sender_id === uid && !m.is_deleted && m.type !== 'system')
       .map((m) => m.id);
     const onlyMine = mineIds.length === ids.length && ids.length > 0;
     Alert.alert(
@@ -2296,46 +2460,110 @@ function ChatScreenInner() {
       );
     }
     const msg = item.message;
-    // System messages (0027): centered WhatsApp-style info notice. Not selectable,
-    // replyable, editable or deletable — just an informational pill.
+    // System messages (0027): centered WhatsApp-style info notice.
+    // Call-history lines are first-class (select / delete / info / swipe).
+    // Other system notices stay non-interactive pills.
     if (msg.type === 'system') {
-      // Call system lines: "Voice call · 1:23 [call:uuid]" — strip tag, show call icon.
-      // Tap → call back (WhatsApp+).
-      const raw = msg.content ?? '';
-      const callMatch = raw.match(/\[call:([0-9a-f-]{36})\]\s*$/i);
-      const text = callMatch ? raw.replace(/\s*\[call:[0-9a-f-]{36}\]\s*$/i, '').trim() : raw;
-      const isCallLine = !!callMatch || /^(missed|declined|cancelled|voice|video)\b/i.test(text);
-      const isMissed = /^missed\b/i.test(text);
-      const isVideoCall = /\bvideo\b/i.test(text);
-      const onCallBack = isCallLine && !isGroup && peers[0]
-        ? () => placeCall(isVideoCall ? 'video' : 'audio')
-        : undefined;
-      return (
-        <View style={styles.systemNotice}>
-          <Pressable
-            style={styles.systemPill}
-            onPress={onCallBack}
-            disabled={!onCallBack}
-            accessibilityRole={onCallBack ? 'button' : undefined}
-            accessibilityLabel={onCallBack ? `Call back: ${text}` : undefined}
-          >
-            <Ionicons
-              name={isCallLine ? (isMissed ? 'call' : 'call-outline') : 'timer-outline'}
-              size={12}
-              color={isMissed ? colors.danger : colors.textMuted}
-              style={{ marginRight: 5, transform: isMissed ? [{ rotate: '135deg' }] : undefined }}
-            />
-            <Text style={[styles.systemNoticeText, isMissed && { color: colors.danger }]}>{text}</Text>
-            {!!onCallBack && (
+      const call = parseCallHistory(msg);
+      if (!call.isCall) {
+        return (
+          <View style={styles.systemNotice}>
+            <View style={styles.systemPill}>
               <Ionicons
-                name={isVideoCall ? 'videocam' : 'call'}
-                size={14}
-                color={colors.primary}
-                style={{ marginLeft: 8 }}
+                name="timer-outline"
+                size={12}
+                color={colors.textMuted}
+                style={{ marginRight: 5 }}
               />
-            )}
-          </Pressable>
-        </View>
+              <Text style={styles.systemNoticeText}>{call.label}</Text>
+            </View>
+          </View>
+        );
+      }
+
+      const onCallBack =
+        !selectionMode && !isGroup && peers[0]
+          ? () => placeCall(call.isVideo ? 'video' : 'audio')
+          : undefined;
+      const selected = selectionMode && selectedIds.has(msg.id);
+
+      return (
+        <SwipeToReply
+          enabled={!selectionMode}
+          // Call history: swipe left to delete (no swipe-to-reply).
+          onSwipeDelete={() => confirmDeleteCallHistory(msg)}
+          deleteTint={colors.danger}
+          onLongPress={() => {
+            if (selectionMode) {
+              Haptics.selectionAsync().catch(() => {});
+              toggleSelect(msg);
+            } else {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+              enterSelection(msg);
+            }
+          }}
+        >
+          <View style={styles.systemNotice}>
+            <Pressable
+              style={[
+                styles.systemPill,
+                styles.callHistoryPill,
+                selected && styles.callHistoryPillSelected,
+              ]}
+              onPress={() => {
+                if (selectionMode) {
+                  Haptics.selectionAsync().catch(() => {});
+                  toggleSelect(msg);
+                  return;
+                }
+                onCallBack?.();
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={
+                selectionMode
+                  ? `${selected ? 'Deselect' : 'Select'} ${call.label}`
+                  : onCallBack
+                    ? `Call back: ${call.label}`
+                    : call.label
+              }
+              accessibilityState={{ selected }}
+            >
+              {selectionMode && (
+                <Ionicons
+                  name={selected ? 'checkmark-circle' : 'ellipse-outline'}
+                  size={16}
+                  color={selected ? colors.primary : colors.textFaint}
+                  style={{ marginRight: 6 }}
+                />
+              )}
+              <Ionicons
+                name={call.isMissed ? 'call' : 'call-outline'}
+                size={12}
+                color={call.isMissed ? colors.danger : colors.textMuted}
+                style={{
+                  marginRight: 5,
+                  transform: call.isMissed ? [{ rotate: '135deg' }] : undefined,
+                }}
+              />
+              <Text
+                style={[
+                  styles.systemNoticeText,
+                  call.isMissed && { color: colors.danger },
+                ]}
+              >
+                {call.label}
+              </Text>
+              {!selectionMode && !!onCallBack && (
+                <Ionicons
+                  name={call.isVideo ? 'videocam' : 'call'}
+                  size={14}
+                  color={colors.primary}
+                  style={{ marginLeft: 8 }}
+                />
+              )}
+            </Pressable>
+          </View>
+        </SwipeToReply>
       );
     }
     const mine = msg.sender_id === uid;
@@ -3196,6 +3424,16 @@ const makeStyles = (colors: Palette) =>
       flexDirection: 'row', alignItems: 'center', maxWidth: '90%',
       backgroundColor: colors.surface, paddingHorizontal: 11, paddingVertical: 5,
       borderRadius: radius.md, overflow: 'hidden',
+    },
+    callHistoryPill: {
+      minHeight: 32,
+      paddingVertical: 7,
+      paddingHorizontal: 12,
+    },
+    callHistoryPillSelected: {
+      borderWidth: 1.5,
+      borderColor: colors.primary,
+      backgroundColor: colors.primary + '18',
     },
     systemNoticeText: { color: colors.textMuted, fontSize: font.tiny, textAlign: 'center', flexShrink: 1 },
     lockGateText: { color: colors.text, fontSize: font.heading, fontWeight: '600', marginTop: 14 },
