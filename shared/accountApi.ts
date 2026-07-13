@@ -3,6 +3,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { UUID } from './types.js';
 import { getCurrentUser } from './api.js';
+import { friendlyAuthError, isValidEmail, validatePassword } from './authErrors.js';
+import { setMyPhone, logout, getMyAccount } from './authApi.js';
+import type { DefaultCountry } from './phone.js';
+
+export { getMyAccount, setMyPhone };
 
 // ── Archived conversations ────────────────────────────────────────────────────
 export async function getArchivedIds(client: SupabaseClient): Promise<UUID[]> {
@@ -42,13 +47,52 @@ export async function updateSocialLinks(client: SupabaseClient, links: SocialLin
 }
 
 // ── Email change (Supabase Auth) ──────────────────────────────────────────────
+
 export async function changeEmail(client: SupabaseClient, newEmail: string) {
-  const { error } = await client.auth.updateUser({ email: newEmail });
-  return { error };
+  const mail = newEmail.trim().toLowerCase();
+  if (!isValidEmail(mail)) {
+    return { error: new Error('Enter a valid email address.') };
+  }
+  const { error } = await client.auth.updateUser({ email: mail });
+  if (error) return { error: new Error(friendlyAuthError(error, 'Could not update email.')) };
+  const user = await getCurrentUser(client);
+  if (user) {
+    void client
+      .from('security_events')
+      .insert({ user_id: user.id, kind: 'email_change' })
+      .then(() => {}, () => {});
+  }
+  return { error: null };
 }
 export async function changePassword(client: SupabaseClient, newPassword: string) {
+  const check = validatePassword(newPassword);
+  if (!check.ok) return { error: new Error(check.message) };
   const { error } = await client.auth.updateUser({ password: newPassword });
-  return { error };
+  if (error) return { error: new Error(friendlyAuthError(error, 'Could not update password.')) };
+  const user = await getCurrentUser(client);
+  if (user) {
+    void client
+      .from('security_events')
+      .insert({ user_id: user.id, kind: 'password_change' })
+      .then(() => {}, () => {});
+  }
+  // Password change → revoke other sessions
+  void client.rpc('logout_all_devices').then(() => {}, () => {});
+  return { error: null };
+}
+
+/** Update optional phone (E.164). Null clears it. */
+export async function updateMyPhone(
+  client: SupabaseClient,
+  phone: string | null,
+  defaultCountry: DefaultCountry = 'IN',
+) {
+  return setMyPhone(client, phone, defaultCountry);
+}
+
+/** Sign out of every device (global token revoke + force_logout stamp). */
+export async function logoutAllDevices(client: SupabaseClient) {
+  return logout(client, { allDevices: true });
 }
 
 // ── Account deletion (with recovery window) ──────────────────────────────────

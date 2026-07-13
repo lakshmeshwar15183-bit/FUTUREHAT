@@ -3,6 +3,8 @@
 
 import { useEffect, useState, type FormEvent } from 'react';
 import { signInWithEmail, signUpWithEmail } from '@shared/api';
+import { requestPasswordReset } from '@shared/authApi';
+import { friendlyAuthError } from '@shared/authErrors';
 import { supabase } from './supabase';
 import { LumixoCat } from './mascot/LumixoCat';
 import { CAT_MOTION, catGazeFromEmail, catMoodFromAuth, type CatMood } from '@shared/lumixoCat';
@@ -29,6 +31,7 @@ export function AuthScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
+  const [phone, setPhone] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [loading, setLoading] = useState(false);
@@ -63,20 +66,29 @@ export function AuthScreen() {
     setLoading(true);
     try {
       if (mode === 'signup') {
-        const { error: err } = await signUpWithEmail(supabase, email, password, displayName);
+        if (password.length < 8) throw new Error('Password must be at least 8 characters.');
+        const { error: err, needsEmailVerification } = await signUpWithEmail(
+          supabase,
+          email,
+          password,
+          displayName,
+          { phone: phone.trim() || null },
+        );
         if (err) throw err;
         setSuccess(true);
         setTimeout(() => {
-          alert('Account created! Sign in to continue.');
+          setNotice(
+            needsEmailVerification
+              ? 'Account created. Check your email to verify, then sign in.'
+              : 'Account created! Sign in to continue.',
+          );
           setMode('signin');
           setSuccess(false);
         }, 900);
       } else if (mode === 'forgot') {
-        const { error: err } = await supabase.auth.resetPasswordForEmail(email, {
-          redirectTo: resetRedirectUrl(),
-        });
+        const { error: err } = await requestPasswordReset(supabase, email, resetRedirectUrl());
         if (err) throw err;
-        setNotice('Password reset link sent. Check your email and click the link to continue.');
+        setNotice('If an account exists for that email, you will receive a reset link shortly.');
         setMode('signin');
       } else {
         const { error: err } = await signInWithEmail(supabase, email, password);
@@ -85,7 +97,7 @@ export function AuthScreen() {
         // Session listener navigates; keep celebrate until unmount.
       }
     } catch (err: any) {
-      setError(err.message || 'Authentication failed');
+      setError(friendlyAuthError(err, 'Authentication failed'));
       setSuccess(false);
     } finally {
       setLoading(false);
@@ -131,7 +143,7 @@ export function AuthScreen() {
           {mode !== 'forgot' && (
             <input
               type="password"
-              placeholder="Password"
+              placeholder={mode === 'signup' ? 'Password (min 8 characters)' : 'Password'}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               onFocus={() => {
@@ -140,9 +152,19 @@ export function AuthScreen() {
               }}
               onBlur={() => setPasswordFocused(false)}
               required
-              minLength={6}
+              minLength={mode === 'signup' ? 8 : 1}
               disabled={loading || success}
               autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+            />
+          )}
+          {mode === 'signup' && (
+            <input
+              type="tel"
+              placeholder="Phone (optional, +91…)"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              disabled={loading || success}
+              autoComplete="tel"
             />
           )}
           {error && (

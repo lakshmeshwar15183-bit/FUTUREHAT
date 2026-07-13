@@ -74,14 +74,25 @@ export default function SettingsScreen() {
   );
 
   async function doSignOut() {
-    Alert.alert('Sign out', 'Are you sure you want to sign out?', [
+    Alert.alert('Sign out', 'Sign out of this device only, or every device?', [
       { text: 'Cancel', style: 'cancel' },
       {
-        text: 'Sign out',
+        text: 'This device',
         style: 'destructive',
         // Drop this device's push token first so the next user on this phone doesn't
         // inherit the previous user's notifications, then sign out.
-        onPress: async () => { await unregisterForPush().catch(() => {}); await signOut(supabase); },
+        onPress: async () => {
+          await unregisterForPush().catch(() => {});
+          await signOut(supabase);
+        },
+      },
+      {
+        text: 'All devices',
+        style: 'destructive',
+        onPress: async () => {
+          await unregisterForPush().catch(() => {});
+          await signOut(supabase, { allDevices: true });
+        },
       },
     ]);
   }

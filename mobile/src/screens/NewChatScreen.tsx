@@ -26,9 +26,13 @@ import {
   startDirectConversation,
   getCurrentUser,
   listRecentContacts,
+  discoverContactsFromEntries,
+  resolveDisplayName,
   type Profile,
   type RecentContact,
+  type DiscoveredContact,
 } from '../lib/shared';
+import { readLocalContactEntries } from '../lib/deviceContacts';
 import { LumixoCat } from '../components/LumixoCat';
 import {
   getCachedRecentContacts,
@@ -54,6 +58,8 @@ export default function NewChatScreen() {
   const [opening, setOpening] = useState(false);
   const [uid, setUid] = useState<string | null>(null);
   const [recent, setRecent] = useState<RecentContact[]>([]);
+  const [phoneMatches, setPhoneMatches] = useState<DiscoveredContact[]>([]);
+  const [discovering, setDiscovering] = useState(false);
 
   // ── Offline-first load of recent contacts ──────────────────────────────────
   // 1) render the local cache immediately (no network wait), then
@@ -170,8 +176,43 @@ export default function NewChatScreen() {
     queueAction('removeRecentContact', { contactId });
   }
 
+  async function findFromPhoneContacts() {
+    if (discovering) return;
+    setDiscovering(true);
+    try {
+      const { entries, error: readErr } = await readLocalContactEntries();
+      if (readErr) {
+        Alert.alert('Contacts', readErr.message);
+        return;
+      }
+      if (!entries.length) {
+        Alert.alert('Contacts', 'No phone numbers found in your contacts.');
+        return;
+      }
+      const { matches, error } = await discoverContactsFromEntries(supabase, entries);
+      if (error) {
+        Alert.alert('Contacts', error.message);
+        return;
+      }
+      setPhoneMatches(matches.filter((m) => m.userId !== uid));
+      if (!matches.length) {
+        Alert.alert(
+          'No matches',
+          'None of your contacts are on Lumixo yet. Invite friends to join with their email.',
+        );
+      }
+    } finally {
+      setDiscovering(false);
+    }
+  }
+
   const isSearching = query.trim().length >= 2;
   const recentProfiles = recent.map((r) => r.contact).filter((p) => p && p.id !== uid);
+  const phoneProfiles = phoneMatches.map((m) => ({
+    ...m.profile,
+    // Prefer local address-book name for the subtitle only; open() uses profile.
+    _localName: m.localName,
+  }));
 
   return (
     <View style={styles.container}>
@@ -196,31 +237,60 @@ export default function NewChatScreen() {
         <Text style={styles.actionLabel}>New group</Text>
       </Pressable>
 
+      <Pressable style={styles.actionRow} onPress={findFromPhoneContacts} disabled={discovering}>
+        <View style={[styles.actionIcon, { backgroundColor: colors.primary }]}>
+          {discovering ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Ionicons name="person-add" size={22} color="#fff" />
+          )}
+        </View>
+        <View style={{ flex: 1, marginLeft: spacing(3) }}>
+          <Text style={[styles.actionLabel, { marginLeft: 0 }]}>Find from contacts</Text>
+          <Text style={styles.actionSub}>
+            Numbers stay on your phone — only private hashes are checked
+          </Text>
+        </View>
+      </Pressable>
+
       <FlatList
-        data={isSearching ? results : recentProfiles}
+        data={isSearching ? results : [...phoneProfiles.map((p) => p as Profile), ...recentProfiles.filter((r) => !phoneMatches.some((m) => m.userId === r.id))]}
         keyExtractor={(p) => p.id}
         keyboardShouldPersistTaps="handled"
         ListHeaderComponent={
-          !isSearching && recentProfiles.length > 0 ? (
-            <Text style={styles.sectionLabel}>RECENT CONTACTS</Text>
+          !isSearching ? (
+            <>
+              {phoneMatches.length > 0 ? (
+                <Text style={styles.sectionLabel}>ON LUMIXO FROM YOUR CONTACTS</Text>
+              ) : null}
+              {phoneMatches.length === 0 && recentProfiles.length > 0 ? (
+                <Text style={styles.sectionLabel}>RECENT CONTACTS</Text>
+              ) : null}
+            </>
           ) : null
         }
-        renderItem={({ item }) => (
-          <Pressable
-            style={styles.row}
-            onPress={() => open(item)}
-            onLongPress={!isSearching ? () => confirmRemove(item) : undefined}
-            delayLongPress={300}
-          >
-            <Avatar uri={item.avatar_url} name={item.display_name ?? item.username} size={48} />
-            <View style={styles.rowBody}>
-              <Text style={styles.name}>{item.display_name ?? 'Lumixo user'}</Text>
-              <Text style={styles.sub} numberOfLines={1}>
-                {item.about || (item.username ? `@${item.username}` : 'Available')}
-              </Text>
-            </View>
-          </Pressable>
-        )}
+        renderItem={({ item }) => {
+          const local = phoneMatches.find((m) => m.userId === item.id)?.localName;
+          const title = resolveDisplayName(item) || local || 'Lumixo user';
+          return (
+            <Pressable
+              style={styles.row}
+              onPress={() => open(item)}
+              onLongPress={!isSearching && !phoneMatches.some((m) => m.userId === item.id) ? () => confirmRemove(item) : undefined}
+              delayLongPress={300}
+            >
+              <Avatar uri={item.avatar_url} name={item.display_name ?? item.username} size={48} />
+              <View style={styles.rowBody}>
+                <Text style={styles.name}>{title}</Text>
+                <Text style={styles.sub} numberOfLines={1}>
+                  {local && item.display_name
+                    ? `${item.display_name}${item.username ? ` · @${item.username}` : ''}`
+                    : item.about || (item.username ? `@${item.username}` : 'Available')}
+                </Text>
+              </View>
+            </Pressable>
+          );
+        }}
         ListEmptyComponent={
           isSearching && !searching ? (
             <View style={styles.emptyWrap}>
@@ -231,7 +301,7 @@ export default function NewChatScreen() {
             <View style={styles.emptyWrap}>
               <LumixoCat mood="wave" size="sm" decorative />
               <Text style={styles.empty}>
-                No recent contacts yet. Search above to start your first chat.
+                No recent contacts yet. Search above or find friends from your phone contacts.
               </Text>
             </View>
           ) : null
@@ -256,6 +326,7 @@ const makeStyles = (colors: Palette) =>
     actionRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing(4), paddingVertical: spacing(3) },
     actionIcon: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
     actionLabel: { color: colors.text, fontSize: font.heading, marginLeft: spacing(3), fontWeight: '500' },
+    actionSub: { color: colors.textMuted, fontSize: font.small, marginTop: 2 },
     sectionLabel: {
       color: colors.textMuted,
       fontSize: font.small,

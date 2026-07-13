@@ -74,6 +74,7 @@ export {
   setNicknameInMap,
   getNicknameFromMap,
 } from './nicknames.js';
+import { registerWithEmail, loginWithEmail, logout } from './authApi.js';
 
 // ── Auth ────────────────────────────────────────────────────────────────────
 
@@ -82,15 +83,21 @@ export async function signUpWithEmail(
   email: string,
   password: string,
   displayName: string,
-): Promise<{ user: User | null; error: Error | null }> {
-  const { data, error } = await client.auth.signUp({
+  opts?: { phone?: string | null; emailRedirectTo?: string },
+): Promise<{ user: User | null; error: Error | null; needsEmailVerification?: boolean }> {
+  // Production path: validation, friendly errors, optional E.164 phone metadata.
+  const res = await registerWithEmail(client, {
     email,
     password,
-    options: {
-      data: { display_name: displayName },
-    },
+    displayName,
+    phone: opts?.phone,
+    emailRedirectTo: opts?.emailRedirectTo,
   });
-  return { user: data.user, error };
+  return {
+    user: res.user,
+    error: res.error,
+    needsEmailVerification: res.needsEmailVerification,
+  };
 }
 
 export async function signInWithEmail(
@@ -98,13 +105,19 @@ export async function signInWithEmail(
   email: string,
   password: string,
 ): Promise<{ user: User | null; error: Error | null }> {
-  const { data, error } = await client.auth.signInWithPassword({ email, password });
-  return { user: data.user, error };
+  const res = await loginWithEmail(client, email, password);
+  return { user: res.user, error: res.error };
 }
 
-export async function signOut(client: SupabaseClient): Promise<{ error: Error | null }> {
-  const { error } = await client.auth.signOut();
-  return { error };
+/**
+ * Sign out. Pass `{ allDevices: true }` to revoke refresh tokens globally and
+ * stamp force_logout_at so other Lumixo clients drop sessions.
+ */
+export async function signOut(
+  client: SupabaseClient,
+  opts?: { allDevices?: boolean },
+): Promise<{ error: Error | null }> {
+  return logout(client, opts);
 }
 
 export function onAuthChange(

@@ -18,6 +18,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
 import { supabase } from '../lib/supabase';
+import { completePasswordReset, friendlyAuthError, logout } from '../lib/shared';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import { APP_NAME } from '../branding';
 import type { RootStackParamList } from '../navigation/types';
@@ -59,30 +60,26 @@ export default function ResetPasswordScreen({ route, navigation }: Props) {
 
   async function submit() {
     setError(null);
-    if (password.length < 6) { setError('Password must be at least 6 characters.'); return; }
+    if (password.length < 8) { setError('Password must be at least 8 characters.'); return; }
     if (password !== confirm) { setError('Passwords do not match.'); return; }
     setBusy(true);
     try {
-      const { error: err } = await supabase.auth.updateUser({ password });
+      const { error: err } = await completePasswordReset(supabase, password);
       if (err) throw err;
       setDone(true);
-      // Force a fresh sign-in with the new password. This invalidates any old
-      // refresh tokens (recommended by Supabase for post-reset flows) and gets
-      // the user out of the temporary recovery session.
-      await supabase.auth.signOut();
+      // Force a fresh sign-in with the new password (global revoke when available).
+      await logout(supabase, { allDevices: true });
       Alert.alert(
         'Password updated',
         'Sign in with your new password to continue.',
         [{ text: 'OK', onPress: () => navigation.reset({ index: 0, routes: [{ name: 'Auth' }] }) }],
       );
     } catch (e: any) {
-      // The most common failure here is a stale recovery session (link expired
-      // or already used). Give the user a clear next step.
       const msg = (e?.message ?? '').toLowerCase();
       if (msg.includes('expired') || msg.includes('invalid') || msg.includes('token')) {
         setError('This reset link has expired or already been used. Request a new one from the sign-in screen.');
       } else {
-        setError(e?.message ?? 'Could not update password. Try again.');
+        setError(friendlyAuthError(e, 'Could not update password. Try again.'));
       }
     } finally {
       setBusy(false);

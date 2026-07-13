@@ -12,7 +12,9 @@ import { supabase } from '../lib/supabase';
 import type { RootStackParamList } from '../navigation/types';
 import {
   changeEmail, changePassword, requestAccountDeletion, cancelAccountDeletion,
-  getDeletionRequest, getSecurityEvents, type DeletionRequest, type SecurityEvent,
+  getDeletionRequest, getSecurityEvents, getMyAccount, updateMyPhone, logoutAllDevices,
+  maskPhoneE164, friendlyAuthError,
+  type DeletionRequest, type SecurityEvent,
 } from '../lib/shared';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import { Alert } from '../ui/dialog';
@@ -22,8 +24,10 @@ export default function AccountSecurityScreen() {
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const [email, setEmail] = useState('');
+  const [currentEmail, setCurrentEmail] = useState('');
   const [password, setPassword] = useState('');
   const [phone, setPhone] = useState('');
+  const [savedPhoneMasked, setSavedPhoneMasked] = useState('');
   const [events, setEvents] = useState<SecurityEvent[]>([]);
   const [deletion, setDeletion] = useState<DeletionRequest | null>(null);
   const [twofaOn, setTwofaOn] = useState(false);
@@ -37,6 +41,14 @@ export default function AccountSecurityScreen() {
   useEffect(() => {
     getSecurityEvents(supabase).then(setEvents).catch(() => {});
     getDeletionRequest(supabase).then(setDeletion).catch(() => {});
+    getMyAccount(supabase).then(({ account }) => {
+      if (!account) return;
+      setCurrentEmail(account.email ?? '');
+      if (account.phone_e164) {
+        setPhone(account.phone_e164);
+        setSavedPhoneMasked(maskPhoneE164(account.phone_e164));
+      }
+    }).catch(() => {});
     (async () => {
       try {
         const { data } = await (supabase.auth as any).mfa.listFactors();
@@ -106,20 +118,49 @@ export default function AccountSecurityScreen() {
   async function saveEmail() {
     if (!email.trim()) return;
     const { error } = await changeEmail(supabase, email.trim());
-    Alert.alert(error ? 'Error' : 'Check your inbox', error ? error.message : 'Confirmation sent to your new email.');
+    Alert.alert(
+      error ? 'Error' : 'Check your inbox',
+      error ? friendlyAuthError(error) : 'Confirmation sent to your new email.',
+    );
     if (!error) setEmail('');
   }
   async function savePassword() {
     if (password.length < 8) return Alert.alert('Weak password', 'Use at least 8 characters.');
     const { error } = await changePassword(supabase, password);
-    Alert.alert(error ? 'Error' : 'Done', error ? error.message : 'Password updated.');
+    Alert.alert(
+      error ? 'Error' : 'Done',
+      error ? friendlyAuthError(error) : 'Password updated. Other devices will be signed out.',
+    );
     if (!error) setPassword('');
   }
   async function savePhone() {
-    const { data: u } = await supabase.auth.getUser();
-    if (!u?.user) return;
-    const { error } = await supabase.from('profiles').update({ phone: phone.trim() || null }).eq('id', u.user.id);
-    Alert.alert(error ? 'Error' : 'Done', error ? 'Could not update phone.' : 'Phone updated.');
+    const { phoneE164, error } = await updateMyPhone(supabase, phone.trim() || null);
+    if (error) return Alert.alert('Phone', friendlyAuthError(error, 'Could not update phone.'));
+    setSavedPhoneMasked(phoneE164 ? maskPhoneE164(phoneE164) : '');
+    if (phoneE164) setPhone(phoneE164);
+    Alert.alert(
+      'Done',
+      phoneE164
+        ? 'Phone saved for contact discovery. It is never shown publicly.'
+        : 'Phone number removed from your account.',
+    );
+  }
+  function confirmLogoutAll() {
+    Alert.alert(
+      'Sign out everywhere',
+      'This signs you out on all devices. You will need your email and password again.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Sign out everywhere',
+          style: 'destructive',
+          onPress: async () => {
+            const { error } = await logoutAllDevices(supabase);
+            if (error) Alert.alert('Error', friendlyAuthError(error));
+          },
+        },
+      ],
+    );
   }
 
   function confirmDelete() {
@@ -142,6 +183,11 @@ export default function AccountSecurityScreen() {
   return (
     <ScrollView style={styles.container}>
       <Text style={styles.sectionLabel}>EMAIL</Text>
+      {!!currentEmail && (
+        <View style={styles.group}>
+          <Text style={styles.note}>Signed in as {currentEmail}</Text>
+        </View>
+      )}
       <View style={styles.group}>
         <TextInput style={styles.input} placeholder="New email" placeholderTextColor={colors.textFaint} autoCapitalize="none" keyboardType="email-address" value={email} onChangeText={setEmail} />
       </View>
@@ -153,11 +199,20 @@ export default function AccountSecurityScreen() {
       </View>
       <Pressable style={styles.btnPrimary} onPress={savePassword}><Text style={styles.btnPrimaryText}>Change password</Text></Pressable>
 
-      <Text style={styles.sectionLabel}>PHONE</Text>
+      <Text style={styles.sectionLabel}>PHONE (OPTIONAL)</Text>
       <View style={styles.group}>
-        <TextInput style={styles.input} placeholder="+countrycode number" placeholderTextColor={colors.textFaint} keyboardType="phone-pad" value={phone} onChangeText={setPhone} />
+        <Text style={styles.note}>
+          Used only to find friends on Lumixo. Stored as E.164 and never shown on your public profile.
+          {savedPhoneMasked ? ` Current: ${savedPhoneMasked}` : ''}
+        </Text>
+        <TextInput style={styles.input} placeholder="+919876543210" placeholderTextColor={colors.textFaint} keyboardType="phone-pad" value={phone} onChangeText={setPhone} />
       </View>
       <Pressable style={styles.btn} onPress={savePhone}><Text style={styles.btnText}>Save phone</Text></Pressable>
+
+      <Text style={styles.sectionLabel}>SESSIONS</Text>
+      <Pressable style={styles.btnDanger} onPress={confirmLogoutAll}>
+        <Text style={styles.btnDangerText}>Sign out of all devices</Text>
+      </Pressable>
 
       <Text style={styles.sectionLabel}>TWO-STEP VERIFICATION</Text>
       {twofaOn ? (

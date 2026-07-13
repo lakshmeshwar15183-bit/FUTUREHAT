@@ -64,6 +64,10 @@ Deno.serve(async (req) => {
             about: null,
             avatar_url: null,
             links: [],
+            phone: null,
+            phone_e164: null,
+            phone_hash: null,
+            email_normalized: null,
           })
           .eq('id', uid);
 

@@ -19,6 +19,8 @@ import { supabase } from '../lib/supabase';
 import {
   signInWithEmail,
   signUpWithEmail,
+  requestPasswordReset,
+  friendlyAuthError,
   catMoodFromAuth,
   catGazeFromEmail,
   CAT_MOTION,
@@ -40,6 +42,7 @@ export default function AuthScreen() {
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [phone, setPhone] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -87,8 +90,12 @@ export default function AuthScreen() {
       setError('Password is required.');
       return;
     }
-    if (!isForgot && password.length < 6) {
-      setError('Password must be at least 6 characters.');
+    if (!isForgot && isSignup && password.length < 8) {
+      setError('Password must be at least 8 characters.');
+      return;
+    }
+    if (!isForgot && !isSignup && password.length < 1) {
+      setError('Password is required.');
       return;
     }
     if (isSignup && !displayName.trim()) {
@@ -104,25 +111,29 @@ export default function AuthScreen() {
           setError('Please wait a moment before requesting another reset email.');
           return;
         }
-        const { error: err } = await supabase.auth.resetPasswordForEmail(mail, {
-          redirectTo: resetPasswordRedirectUrl(),
-        });
+        const { error: err } = await requestPasswordReset(
+          supabase,
+          mail,
+          resetPasswordRedirectUrl(),
+        );
         if (err) throw err;
         setLastResetAt(now);
-        setNotice('Password reset link sent. Check your email.');
+        // Always the same copy — no account enumeration.
+        setNotice('If an account exists for that email, you will receive a reset link shortly.');
         setMode('signin');
       } else if (isSignup) {
-        const { user, error: err } = await signUpWithEmail(
+        const { user, error: err, needsEmailVerification } = await signUpWithEmail(
           supabase,
           mail,
           password,
           displayName.trim(),
+          { phone: phone.trim() || null },
         );
         if (err) throw err;
         setSuccess(true);
-        if (!user?.confirmed_at && !(user as any)?.email_confirmed_at) {
+        if (needsEmailVerification || (!user?.email_confirmed_at && !(user as any)?.confirmed_at)) {
           setTimeout(() => {
-            setNotice('Account created. Check your email to confirm, then sign in.');
+            setNotice('Account created. Check your email to verify, then sign in.');
             setMode('signin');
             setSuccess(false);
           }, 900);
@@ -133,7 +144,7 @@ export default function AuthScreen() {
         setSuccess(true);
       }
     } catch (e: any) {
-      setError(e?.message ?? 'Something went wrong.');
+      setError(friendlyAuthError(e, 'Something went wrong. Please try again.'));
       setSuccess(false);
     } finally {
       setBusy(false);
@@ -177,6 +188,7 @@ export default function AuthScreen() {
                 onChangeText={setDisplayName}
                 autoCapitalize="words"
                 editable={!busy && !success}
+                textContentType="name"
               />
             )}
             <TextInput
@@ -188,6 +200,8 @@ export default function AuthScreen() {
               autoCapitalize="none"
               keyboardType="email-address"
               autoCorrect={false}
+              autoComplete="email"
+              textContentType="emailAddress"
               onFocus={() => {
                 setEmailFocused(true);
                 setPasswordFocused(false);
@@ -198,16 +212,31 @@ export default function AuthScreen() {
             {!isForgot && (
               <TextInput
                 style={styles.input}
-                placeholder="Password"
+                placeholder={isSignup ? 'Password (min 8 characters)' : 'Password'}
                 placeholderTextColor={colors.textFaint}
                 value={password}
                 onChangeText={setPassword}
                 secureTextEntry
+                autoComplete={isSignup ? 'new-password' : 'password'}
+                textContentType={isSignup ? 'newPassword' : 'password'}
                 onFocus={() => {
                   setPasswordFocused(true);
                   setEmailFocused(false);
                 }}
                 onBlur={() => setPasswordFocused(false)}
+                editable={!busy && !success}
+              />
+            )}
+            {isSignup && (
+              <TextInput
+                style={styles.input}
+                placeholder="Phone (optional, +91…)"
+                placeholderTextColor={colors.textFaint}
+                value={phone}
+                onChangeText={setPhone}
+                keyboardType="phone-pad"
+                autoComplete="tel"
+                textContentType="telephoneNumber"
                 editable={!busy && !success}
               />
             )}

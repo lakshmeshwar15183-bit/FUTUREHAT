@@ -23,6 +23,7 @@
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSPhotoLibraryAddUsageDescription": "Lumixo saves photos and media you download to your photo library.",
+        "NSContactsUsageDescription": "Lumixo uses your contacts only to find friends already on Lumixo. Phone numbers are hashed on your device — we never upload your full contact list.",
         "UIBackgroundModes": [
           "audio",
           "remote-notification",
@@ -75,7 +76,8 @@
         "FOREGROUND_SERVICE_CAMERA",
         "FOREGROUND_SERVICE_PHONE_CALL",
         "BLUETOOTH_CONNECT",
-        "WAKE_LOCK"
+        "WAKE_LOCK",
+        "READ_CONTACTS"
       ]
     },
     "web": {
@@ -86,6 +88,12 @@
     },
     "plugins": [
       "expo-secure-store",
+      [
+        "expo-contacts",
+        {
+          "contactsPermission": "Lumixo uses your contacts only to find friends already on Lumixo. Numbers are hashed on your device — we never upload your full contact list."
+        }
+      ],
       [
         "expo-image-picker",
         {
