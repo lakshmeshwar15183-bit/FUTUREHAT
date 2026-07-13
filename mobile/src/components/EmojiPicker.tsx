@@ -1,31 +1,31 @@
 // Lumixo — WhatsApp-class emoji picker.
 //
-// Instant open: recents/category preloaded via emojiCache (no AsyncStorage wait).
-// One category at a time (FlatList) — never mounts the full catalog ScrollView.
+// Instant open: recents/category preloaded via emojiCache.
+// One category at a time (FlatList). Dense grid + category strip at bottom.
 // Modes:
 //   • modal (reaction) — bottom sheet Modal
-//   • tray (composer)  — inline panel under the composer (replaces keyboard)
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+//   • tray (composer)  — fills parent under composer (keyboard replacement)
+//
+// No search bar in the UI — search APIs remain for tests / future use; unfinished
+// search chrome is not shown (WhatsApp polish: only ship working chrome).
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FlatList,
   Modal,
   Pressable,
   StyleSheet,
   Text,
-  TextInput,
   View,
   useWindowDimensions,
   type ListRenderItemInfo,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { sheetBottomPad } from '../lib/safeLayout';
 
-import {
-  EMOJI_CATEGORIES,
-  searchEmojis,
-  type EmojiCategory,
-} from '../lib/emojiData';
+import { EMOJI_CATEGORIES, type EmojiCategory } from '../lib/emojiData';
 import {
   getLastEmojiCategoryId,
   getRecentEmojis,
@@ -47,15 +47,19 @@ export interface EmojiPickerProps {
   mode?: 'composer' | 'reaction';
   /**
    * `modal` — full-screen dim + bottom sheet (reactions).
-   * `tray` — fixed-height panel (composer, WhatsApp keyboard replacement).
+   * `tray` — fills parent height (composer, WhatsApp keyboard replacement).
    */
   presentation?: 'modal' | 'tray';
   title?: string;
-  /** Fixed tray height (defaults to ~46% of window, WhatsApp-ish). */
+  /** Fixed tray height when presentation is tray (parent usually owns height). */
   trayHeight?: number;
+  /** Hide the top chrome (title / keyboard) — parent tray already has tabs. */
+  compact?: boolean;
 }
 
 const COLS = 8;
+/** Persist last scroll offset per category (session). */
+const scrollOffsets = new Map<string, number>();
 
 export default function EmojiPicker({
   visible,
@@ -65,34 +69,40 @@ export default function EmojiPicker({
   presentation = 'modal',
   title,
   trayHeight,
+  compact = false,
 }: EmojiPickerProps) {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { width, height: winH } = useWindowDimensions();
-  const styles = useMemo(() => makeStyles(colors, width), [colors, width]);
+  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const listRef = useRef<FlatList<string>>(null);
 
-  const [query, setQuery] = useState('');
   const [recent, setRecent] = useState<string[]>(() => getRecentEmojis());
   const [activeCatId, setActiveCatId] = useState(() => getLastEmojiCategoryId());
-  const [ready, setReady] = useState(() => getRecentEmojis().length >= 0);
 
-  // Warm cache on mount; stay subscribed so recents appear without re-open.
   useEffect(() => {
     void preloadEmojiCache();
     const unsub = subscribeEmojiCache(() => {
       setRecent(getRecentEmojis());
       setActiveCatId(getLastEmojiCategoryId());
-      setReady(true);
     });
     setRecent(getRecentEmojis());
     setActiveCatId(getLastEmojiCategoryId());
     return unsub;
   }, []);
 
-  // Clear search when hidden; keep category (WhatsApp remembers last tab).
+  // Restore scroll for the active category when shown / tab changes.
   useEffect(() => {
-    if (!visible) setQuery('');
-  }, [visible]);
+    if (!visible) return;
+    const y = scrollOffsets.get(activeCatId) ?? 0;
+    requestAnimationFrame(() => {
+      try {
+        listRef.current?.scrollToOffset({ offset: y, animated: false });
+      } catch {
+        /* ignore */
+      }
+    });
+  }, [visible, activeCatId]);
 
   const handlePick = useCallback(
     (emoji: string) => {
@@ -103,17 +113,8 @@ export default function EmojiPicker({
     [mode, onClose, onSelect],
   );
 
-  const q = query.trim().toLowerCase();
-  const searching = q.length > 0;
-
-  const searchHits = useMemo(() => {
-    if (!searching) return [] as string[];
-    return searchEmojis(q, 120);
-  }, [q, searching]);
-
   const tabs = useMemo(() => {
-    const list: { id: string; icon: string }[] = [];
-    list.push({ id: 'recent', icon: '🕒' });
+    const list: { id: string; icon: string }[] = [{ id: 'recent', icon: '🕒' }];
     for (const c of EMOJI_CATEGORIES) {
       list.push({ id: c.id, icon: c.icon });
     }
@@ -121,29 +122,30 @@ export default function EmojiPicker({
   }, []);
 
   const activeEmojis = useMemo(() => {
-    if (searching) return searchHits;
     if (activeCatId === 'recent') {
-      return recent.length ? recent : EMOJI_CATEGORIES[0]?.emojis.slice(0, 32) ?? [];
+      return recent.length ? recent : EMOJI_CATEGORIES[0]?.emojis.slice(0, 40) ?? [];
     }
     const cat = EMOJI_CATEGORIES.find((c) => c.id === activeCatId);
     return cat?.emojis ?? EMOJI_CATEGORIES[0]?.emojis ?? [];
-  }, [searching, searchHits, activeCatId, recent]);
-
-  const sectionLabel = useMemo(() => {
-    if (searching) return 'Results';
-    if (activeCatId === 'recent') return recent.length ? 'Recently used' : 'Smileys & People';
-    return EMOJI_CATEGORIES.find((c) => c.id === activeCatId)?.label ?? 'Emoji';
-  }, [searching, activeCatId, recent.length]);
+  }, [activeCatId, recent]);
 
   const selectCategory = useCallback((id: string) => {
     setActiveCatId(id);
     if (id !== 'recent') setLastEmojiCategoryId(id);
   }, []);
 
-  const cell = Math.floor((width - 24) / COLS);
+  const padH = 4;
+  const cell = Math.floor((width - padH * 2) / COLS);
+
+  const onScroll = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      scrollOffsets.set(activeCatId, e.nativeEvent.contentOffset.y);
+    },
+    [activeCatId],
+  );
 
   const renderItem = useCallback(
-    ({ item, index }: ListRenderItemInfo<string>) => (
+    ({ item }: ListRenderItemInfo<string>) => (
       <Pressable
         style={({ pressed }) => [
           styles.cell,
@@ -164,70 +166,68 @@ export default function EmojiPicker({
 
   const keyExtractor = useCallback((item: string, index: number) => `${item}-${index}`, []);
 
+  const showChrome = presentation === 'modal' || !compact;
+
   const body = (
     <View
       style={[
         presentation === 'tray' ? styles.tray : styles.sheet,
-        presentation === 'tray' && {
-          height: trayHeight ?? Math.min(320, Math.round(winH * 0.42)),
+        presentation === 'tray' && trayHeight != null ? { height: trayHeight } : null,
+        presentation === 'tray' && trayHeight == null ? { flex: 1 } : null,
+        presentation === 'modal' && {
+          paddingBottom: sheetBottomPad(insets, 0),
+          maxHeight: Math.round(winH * 0.72),
+          minHeight: Math.round(winH * 0.48),
         },
-        presentation === 'modal' && { paddingBottom: sheetBottomPad(insets, 0) },
       ]}
     >
       {presentation === 'modal' && <View style={styles.handle} />}
-      <View style={styles.headerRow}>
-        <Text style={styles.title}>{title ?? (mode === 'reaction' ? 'React' : 'Emoji')}</Text>
-        {presentation === 'modal' ? (
-          <Pressable onPress={onClose} hitSlop={10} style={styles.closeBtn} accessibilityLabel="Close">
-            <Ionicons name="close" size={22} color={colors.textMuted} />
-          </Pressable>
-        ) : (
-          <Pressable onPress={onClose} hitSlop={10} style={styles.closeBtn} accessibilityLabel="Show keyboard">
-            <Ionicons name="keypad-outline" size={22} color={colors.textMuted} />
-          </Pressable>
-        )}
-      </View>
+      {showChrome && (
+        <View style={styles.headerRow}>
+          {presentation === 'modal' ? (
+            <>
+              <Text style={styles.title}>{title ?? (mode === 'reaction' ? 'React' : 'Emoji')}</Text>
+              <Pressable onPress={onClose} hitSlop={10} style={styles.closeBtn} accessibilityLabel="Close">
+                <Ionicons name="close" size={22} color={colors.textMuted} />
+              </Pressable>
+            </>
+          ) : (
+            <>
+              <View style={{ flex: 1 }} />
+              <Pressable
+                onPress={onClose}
+                hitSlop={10}
+                style={styles.closeBtn}
+                accessibilityLabel="Show keyboard"
+              >
+                <Ionicons name="keypad-outline" size={22} color={colors.textMuted} />
+              </Pressable>
+            </>
+          )}
+        </View>
+      )}
 
-      <View style={styles.searchBar}>
-        <Ionicons name="search" size={16} color={colors.textFaint} />
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Search emoji"
-          placeholderTextColor={colors.textFaint}
-          value={query}
-          onChangeText={setQuery}
-          autoCorrect={false}
-          autoCapitalize="none"
-          returnKeyType="search"
-        />
-        {query.length > 0 && (
-          <Pressable onPress={() => setQuery('')} hitSlop={8}>
-            <Ionicons name="close-circle" size={16} color={colors.textFaint} />
-          </Pressable>
-        )}
-      </View>
-
-      <Text style={styles.sectionLabel}>{sectionLabel}</Text>
-
-      {/* Always show grid shell — never a blank panel while hydrating */}
       {activeEmojis.length === 0 ? (
         <View style={styles.emptyWrap}>
-          <Text style={styles.empty}>{searching ? 'No emoji found' : ready ? 'No recent emoji yet' : '…'}</Text>
+          <Text style={styles.empty}>No emoji yet</Text>
         </View>
       ) : (
         <FlatList
+          ref={listRef}
           data={activeEmojis}
           keyExtractor={keyExtractor}
           renderItem={renderItem}
           numColumns={COLS}
           style={styles.list}
-          contentContainerStyle={styles.listContent}
+          contentContainerStyle={[styles.listContent, { paddingHorizontal: padH }]}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
-          initialNumToRender={40}
-          maxToRenderPerBatch={48}
-          windowSize={5}
+          initialNumToRender={48}
+          maxToRenderPerBatch={56}
+          windowSize={6}
           removeClippedSubviews
+          onScroll={onScroll}
+          scrollEventThrottle={32}
           getItemLayout={(_, index) => ({
             length: cell,
             offset: cell * Math.floor(index / COLS),
@@ -236,37 +236,32 @@ export default function EmojiPicker({
         />
       )}
 
-      {!searching && (
-        <View style={styles.tabs}>
-          {tabs.map((t) => {
-            const on = t.id === activeCatId;
-            return (
-              <Pressable
-                key={t.id}
-                style={[styles.tab, on && styles.tabOn]}
-                onPress={() => selectCategory(t.id)}
-                accessibilityRole="tab"
-                accessibilityState={{ selected: on }}
-              >
-                <Text style={styles.tabIcon} allowFontScaling={false}>
-                  {t.icon}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
-      )}
+      <View style={[styles.tabs, presentation === 'modal' && { paddingBottom: 4 }]}>
+        {tabs.map((t) => {
+          const on = t.id === activeCatId;
+          return (
+            <Pressable
+              key={t.id}
+              style={[styles.tab, on && styles.tabOn]}
+              onPress={() => selectCategory(t.id)}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: on }}
+            >
+              <Text style={styles.tabIcon} allowFontScaling={false}>
+                {t.icon}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
     </View>
   );
 
-  // Tray: parent controls mount/visibility; no Modal (seamless keyboard swap).
   if (presentation === 'tray') {
     if (!visible) return null;
     return body;
   }
 
-  // Modal always mounted while parent is alive — only `visible` toggles.
-  // Never unmount via early return when hidden (that caused blank/slow reopens).
   return (
     <Modal
       visible={visible}
@@ -284,7 +279,7 @@ export default function EmojiPicker({
   );
 }
 
-const makeStyles = (colors: Palette, _width: number) =>
+const makeStyles = (colors: Palette) =>
   StyleSheet.create({
     root: { flex: 1, justifyContent: 'flex-end' },
     backdrop: {
@@ -295,8 +290,6 @@ const makeStyles = (colors: Palette, _width: number) =>
       backgroundColor: colors.surface,
       borderTopLeftRadius: 16,
       borderTopRightRadius: 16,
-      maxHeight: '72%',
-      minHeight: '48%',
       borderTopWidth: StyleSheet.hairlineWidth,
       borderColor: colors.isLight ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.08)',
       shadowColor: '#000',
@@ -307,9 +300,8 @@ const makeStyles = (colors: Palette, _width: number) =>
     },
     tray: {
       backgroundColor: colors.surface,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: colors.border,
       width: '100%',
+      flex: 1,
     },
     handle: {
       alignSelf: 'center',
@@ -319,14 +311,15 @@ const makeStyles = (colors: Palette, _width: number) =>
       backgroundColor: colors.textFaint,
       opacity: 0.4,
       marginTop: 8,
-      marginBottom: 4,
+      marginBottom: 2,
     },
     headerRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      paddingHorizontal: 14,
-      paddingBottom: 6,
-      paddingTop: 4,
+      paddingHorizontal: 10,
+      paddingBottom: 2,
+      paddingTop: 2,
+      minHeight: 36,
     },
     title: {
       flex: 1,
@@ -336,48 +329,20 @@ const makeStyles = (colors: Palette, _width: number) =>
       letterSpacing: -0.15,
     },
     closeBtn: {
-      width: 32,
-      height: 32,
+      width: 36,
+      height: 36,
       alignItems: 'center',
       justifyContent: 'center',
     },
-    searchBar: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
-      marginHorizontal: 12,
-      marginBottom: 4,
-      paddingHorizontal: 10,
-      height: 36,
-      borderRadius: 10,
-      backgroundColor: colors.surfaceAlt,
-    },
-    searchInput: {
-      flex: 1,
-      color: colors.text,
-      fontSize: 14.5,
-      paddingVertical: 0,
-    },
-    sectionLabel: {
-      color: colors.textMuted,
-      fontSize: 12,
-      fontWeight: '700',
-      letterSpacing: 0.2,
-      paddingHorizontal: 14,
-      paddingTop: 6,
-      paddingBottom: 2,
-      textTransform: 'uppercase',
-    },
     list: { flex: 1 },
     listContent: {
-      paddingHorizontal: 6,
-      paddingBottom: 8,
+      paddingBottom: 4,
     },
     emptyWrap: {
       flex: 1,
       alignItems: 'center',
       justifyContent: 'center',
-      minHeight: 120,
+      minHeight: 80,
     },
     empty: {
       color: colors.textFaint,
@@ -387,30 +352,30 @@ const makeStyles = (colors: Palette, _width: number) =>
     cell: {
       alignItems: 'center',
       justifyContent: 'center',
-      borderRadius: 8,
+      borderRadius: 6,
     },
     cellPressed: {
       backgroundColor: colors.surfaceAlt,
-      transform: [{ scale: 1.12 }],
+      transform: [{ scale: 1.1 }],
     },
     emoji: {
       fontSize: 26,
-      lineHeight: 32,
+      lineHeight: 30,
       textAlign: 'center',
     },
     tabs: {
       flexDirection: 'row',
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: colors.border,
-      paddingTop: 4,
-      paddingHorizontal: 2,
+      paddingTop: 2,
+      paddingHorizontal: 1,
       backgroundColor: colors.surface,
     },
     tab: {
       flex: 1,
       alignItems: 'center',
       justifyContent: 'center',
-      paddingVertical: 8,
+      paddingVertical: 7,
       borderRadius: 8,
     },
     tabOn: {
@@ -422,5 +387,4 @@ const makeStyles = (colors: Palette, _width: number) =>
     },
   });
 
-// Keep type export used by older imports (if any).
 export type { EmojiCategory };

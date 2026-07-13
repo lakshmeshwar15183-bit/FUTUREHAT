@@ -3831,57 +3831,88 @@ function ChatScreenInner() {
         }}
       />
 
-      {/* Composer emoji / sticker tray — same height band as last keyboard */}
-      {composerTray === 'emoji' && (
-        <View style={[styles.composerTray, { height: trayH }]} onLayout={() => pinToLatest(false)}>
+      {/* Composer emoji / sticker tray — WhatsApp: one shell, height = last IME.
+          Tabs switch content without remounting the outer band (no jump). */}
+      {composerTray !== 'none' && (
+        <View
+          style={[styles.composerTray, { height: trayH }]}
+          onLayout={() => pinToLatest(false)}
+        >
           <View style={styles.traySwitch}>
             <Pressable
-              style={[styles.traySwitchBtn, styles.traySwitchOn]}
+              style={[styles.traySwitchBtn, composerTray === 'emoji' && styles.traySwitchOn]}
               onPress={() => setComposerTray('emoji')}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: composerTray === 'emoji' }}
             >
-              <Text style={styles.traySwitchText}>Emoji</Text>
+              <Text
+                style={
+                  composerTray === 'emoji' ? styles.traySwitchText : styles.traySwitchTextMuted
+                }
+              >
+                Emoji
+              </Text>
             </Pressable>
             <Pressable
-              style={styles.traySwitchBtn}
+              style={[styles.traySwitchBtn, composerTray === 'stickers' && styles.traySwitchOn]}
               onPress={() => setComposerTray('stickers')}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: composerTray === 'stickers' }}
             >
-              <Text style={styles.traySwitchTextMuted}>Stickers</Text>
+              <Text
+                style={
+                  composerTray === 'stickers' ? styles.traySwitchText : styles.traySwitchTextMuted
+                }
+              >
+                Stickers
+              </Text>
+            </Pressable>
+            <View style={{ flex: 1 }} />
+            <Pressable
+              onPress={closeComposerTray}
+              hitSlop={10}
+              style={styles.trayKeypadBtn}
+              accessibilityLabel="Show keyboard"
+            >
+              <Ionicons name="keypad-outline" size={22} color={colors.textMuted} />
             </Pressable>
           </View>
-          <EmojiPicker
-            visible
-            mode="composer"
-            presentation="tray"
-            title="Emoji"
-            trayHeight={Math.max(160, trayH - 40)}
-            onClose={closeComposerTray}
-            onSelect={(e) => onChangeText(textRef.current + e)}
-          />
-        </View>
-      )}
-      {composerTray === 'stickers' && (
-        <View style={[styles.composerTray, { height: trayH }]} onLayout={() => pinToLatest(false)}>
-          <View style={styles.traySwitch}>
-            <Pressable
-              style={styles.traySwitchBtn}
-              onPress={() => setComposerTray('emoji')}
+          <View style={styles.trayBody}>
+            {/* Keep both mounted while tray is open so scroll/category state survives tab swap. */}
+            <View
+              style={[
+                styles.trayPane,
+                composerTray !== 'emoji' && styles.trayPaneHidden,
+              ]}
+              pointerEvents={composerTray === 'emoji' ? 'auto' : 'none'}
             >
-              <Text style={styles.traySwitchTextMuted}>Emoji</Text>
-            </Pressable>
-            <Pressable
-              style={[styles.traySwitchBtn, styles.traySwitchOn]}
-              onPress={() => setComposerTray('stickers')}
+              <EmojiPicker
+                visible
+                mode="composer"
+                presentation="tray"
+                compact
+                onClose={closeComposerTray}
+                onSelect={(e) => onChangeText(textRef.current + e)}
+              />
+            </View>
+            <View
+              style={[
+                styles.trayPane,
+                composerTray !== 'stickers' && styles.trayPaneHidden,
+              ]}
+              pointerEvents={composerTray === 'stickers' ? 'auto' : 'none'}
             >
-              <Text style={styles.traySwitchText}>Stickers</Text>
-            </Pressable>
+              <StickerPicker
+                visible
+                presentation="tray"
+                compact
+                onClose={closeComposerTray}
+                onSelect={(s) => {
+                  void sendSticker(s);
+                }}
+              />
+            </View>
           </View>
-          <StickerPicker
-            visible
-            presentation="tray"
-            trayHeight={Math.max(160, trayH - 40)}
-            onClose={closeComposerTray}
-            onSelect={(s) => { void sendSticker(s); }}
-          />
         </View>
       )}
 
@@ -4455,12 +4486,13 @@ const makeStyles = (colors: Palette) =>
     },
     traySwitch: {
       flexDirection: 'row',
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: colors.border,
+      alignItems: 'center',
       backgroundColor: colors.surface,
-      paddingHorizontal: 12,
-      paddingTop: 6,
-      gap: 8,
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      gap: 4,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.isLight ? 'rgba(0,0,0,0.06)' : colors.border,
     },
     traySwitchBtn: {
       paddingHorizontal: 12,
@@ -4479,6 +4511,22 @@ const makeStyles = (colors: Palette) =>
       color: colors.textMuted,
       fontSize: 13,
       fontWeight: '600',
+    },
+    trayKeypadBtn: {
+      width: 40,
+      height: 36,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    trayBody: {
+      flex: 1,
+      position: 'relative',
+    },
+    trayPane: {
+      ...StyleSheet.absoluteFillObject,
+    },
+    trayPaneHidden: {
+      opacity: 0,
     },
     forwardSheet: { maxHeight: '60%' },
     pollSheet: { maxHeight: '80%' },
