@@ -49,7 +49,6 @@ import {
   leavePresence,
   subscribeToConversationRemovals,
   getPremiumUserIds,
-  getServerPremium,
   FREE_LIMITS,
   getMyStreaks,
   processMyStreaks,
@@ -73,6 +72,7 @@ import {
 import { onConnectivity, queueAction } from '../lib/sync';
 import { formatListTimestamp } from '../lib/time';
 import { useColors, spacing, radius, font, listPerf, animateLayoutSoft, type Palette } from '../theme';
+import { usePremium } from '../premium';
 import Avatar from '../components/Avatar';
 import StatusStrip from '../components/status/StatusStrip';
 import { useChatLock } from '../security/ChatLock';
@@ -348,7 +348,7 @@ export default function ConversationsScreen() {
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
   const [onlineIds, setOnlineIds] = useState<Set<string>>(new Set());
   const [premiumIds, setPremiumIds] = useState<Set<string>>(new Set());
-  const [isPremium, setIsPremium] = useState(false);
+  const { isPremium } = usePremium();
   // Streak emoji per conversation (server-authoritative score → tier). Hydrated
   // from local cache first (instant/offline), then refreshed in the background.
   const [streaks, setStreaks] = useState<Record<string, StreakSummary>>({});
@@ -575,7 +575,7 @@ export default function ConversationsScreen() {
         })
         .catch(() => {});
       getPremiumUserIds(supabase).then((ids) => setPremiumIds(new Set(ids))).catch(() => {});
-      getServerPremium(supabase).then(setIsPremium).catch(() => {});
+      // isPremium comes from PremiumContext (instant unlock after purchase).
       // Streaks: finalise any of the caller's pending days (idempotent server-side
       // catch-up — never computes points on-device), then refresh the authoritative
       // summaries and rewrite the local cache so the emoji is instant next launch.

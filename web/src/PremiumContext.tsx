@@ -26,7 +26,13 @@ interface PremiumContextValue {
   preferences: UserPreferences;
   premiumUserIds: Set<string>;
   loading: boolean;
+  /** True while verifying payment after Checkout (non-blocking). */
+  isActivating: boolean;
   refresh: () => Promise<void>;
+  /** Instant UI unlock after Razorpay success; pair with refresh() after verify. */
+  beginActivation: () => void;
+  completeActivation: () => Promise<void>;
+  failActivation: () => void;
   setPreference: (updates: Partial<UserPreferences>) => Promise<void>;
 }
 
@@ -42,7 +48,11 @@ const PremiumContext = createContext<PremiumContextValue>({
   preferences: defaultPrefs(),
   premiumUserIds: new Set(),
   loading: true,
+  isActivating: false,
   refresh: async () => {},
+  beginActivation: () => {},
+  completeActivation: async () => {},
+  failActivation: () => {},
   setPreference: async () => {},
 });
 
@@ -50,6 +60,8 @@ export function PremiumProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [serverPremium, setServerPremium] = useState(false);
+  const [optimisticPremium, setOptimisticPremium] = useState(false);
+  const [isActivating, setIsActivating] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [isOwner, setIsOwner] = useState(false);
   const [preferences, setPreferences] = useState<UserPreferences>(() => {
@@ -61,7 +73,7 @@ export function PremiumProvider({ children }: { children: ReactNode }) {
   const [premiumUserIds, setPremiumUserIds] = useState<Set<string>>(() => new Set());
   const [loading, setLoading] = useState(false); // never block shell
 
-  const isPremium = isSubscriptionActive(subscription) || serverPremium;
+  const isPremium = optimisticPremium || isSubscriptionActive(subscription) || serverPremium;
 
   const refresh = useCallback(async () => {
     if (!user) {
@@ -129,6 +141,27 @@ export function PremiumProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const beginActivation = useCallback(() => {
+    setOptimisticPremium(true);
+    setIsActivating(true);
+  }, []);
+
+  const completeActivation = useCallback(async () => {
+    setIsActivating(true);
+    try {
+      await refresh();
+      setOptimisticPremium(false);
+    } finally {
+      setIsActivating(false);
+    }
+  }, [refresh]);
+
+  const failActivation = useCallback(() => {
+    setOptimisticPremium(false);
+    setIsActivating(false);
+    void refresh();
+  }, [refresh]);
+
   const value = useMemo(
     () => ({
       isPremium,
@@ -138,10 +171,28 @@ export function PremiumProvider({ children }: { children: ReactNode }) {
       preferences,
       premiumUserIds,
       loading,
+      isActivating,
       refresh,
+      beginActivation,
+      completeActivation,
+      failActivation,
       setPreference,
     }),
-    [isPremium, isAdmin, isOwner, subscription, preferences, premiumUserIds, loading, refresh, setPreference],
+    [
+      isPremium,
+      isAdmin,
+      isOwner,
+      subscription,
+      preferences,
+      premiumUserIds,
+      loading,
+      isActivating,
+      refresh,
+      beginActivation,
+      completeActivation,
+      failActivation,
+      setPreference,
+    ],
   );
 
   return <PremiumContext.Provider value={value}>{children}</PremiumContext.Provider>;

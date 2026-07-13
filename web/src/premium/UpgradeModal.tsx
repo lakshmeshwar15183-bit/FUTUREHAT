@@ -24,7 +24,14 @@ const CATEGORY_ORDER: FeatureCategory[] = [
 
 export function UpgradeModal({ onClose }: { onClose: () => void }) {
   const { user, profile } = useAuth();
-  const { isPremium, subscription, refresh } = usePremium();
+  const {
+    isPremium,
+    subscription,
+    isActivating,
+    beginActivation,
+    completeActivation,
+    failActivation,
+  } = usePremium();
   const [plan, setPlan] = useState<PlanId>('yearly');
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
@@ -76,12 +83,20 @@ export function UpgradeModal({ onClose }: { onClose: () => void }) {
         setError('Secure payments are not available. Manual activation is disabled.');
         return;
       }
-      // Activation is performed server-side inside payments-razorpay (HMAC verify
-      // + admin_activate_subscription). Client must not write subscriptions.
-      await refresh();
+      // Instant unlock + silent server reconcile — no full app reload / logout.
+      beginActivation();
       setDone(true);
+      setBusy(false);
+      try {
+        await completeActivation();
+      } catch {
+        failActivation();
+        setError('Payment succeeded but confirmation is still processing. Refresh if features stay locked.');
+        setDone(false);
+      }
     } catch (e: any) {
       setError(e.message || 'Could not activate subscription');
+      setBusy(false);
     } finally {
       setBusy(false);
     }
@@ -92,7 +107,7 @@ export function UpgradeModal({ onClose }: { onClose: () => void }) {
     setError('');
     const { error: cancelErr } = await cancelSubscription(supabase);
     if (cancelErr) setError(cancelErr.message || 'Could not cancel subscription');
-    else await refresh();
+    else await completeActivation();
     setBusy(false);
   }
 
@@ -110,12 +125,18 @@ export function UpgradeModal({ onClose }: { onClose: () => void }) {
         </div>
 
         <AnimatePresence mode="wait">
-          {done ? (
+          {done || (isPremium && isActivating) ? (
             <motion.div key="done" className="upgrade-success" initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }}>
-              <div className="success-check">🎉</div>
-              <h2>Welcome to Lumixo+</h2>
-              <p>Your premium features are now unlocked.</p>
-              <button className="upgrade-cta" onClick={onClose}>Start exploring</button>
+              <div className="success-check">{isActivating ? '✨' : '🎉'}</div>
+              <h2>{isActivating ? 'Activating Premium…' : 'Welcome to Lumixo+'}</h2>
+              <p>
+                {isActivating
+                  ? 'Features are unlocking now. You can keep chatting — no restart needed.'
+                  : 'Your premium features are now unlocked.'}
+              </p>
+              <button className="upgrade-cta" onClick={onClose} disabled={false}>
+                {isActivating ? 'Continue' : 'Start exploring'}
+              </button>
             </motion.div>
           ) : isPremium ? (
             <motion.div key="member" className="upgrade-member" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>

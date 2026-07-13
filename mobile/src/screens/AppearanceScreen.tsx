@@ -10,11 +10,7 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { supabase } from '../lib/supabase';
-import {
-  getPreferences,
-  getSubscription,
-  isSubscriptionActive,
-} from '../lib/shared';
+import { getPreferences } from '../lib/shared';
 import { getCache, setCache } from '../lib/localCache';
 import { queueAction } from '../lib/sync';
 import {
@@ -34,6 +30,7 @@ import {
   type Palette,
   type ThemePreference,
 } from '../theme';
+import { usePremium } from '../premium';
 import type { RootStackParamList } from '../navigation/types';
 import { Alert } from '../ui/dialog';
 
@@ -70,7 +67,7 @@ export default function AppearanceScreen() {
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const navigation = useNavigation<Nav>();
 
-  const [premium, setPremium] = useState(false);
+  const { isPremium: premium } = usePremium();
   const [loaded, setLoaded] = useState(false);
   const [fontPref, setFontPref] = useState('system');
   const [bubblePref, setBubblePref] = useState('rounded');
@@ -99,12 +96,8 @@ export default function AppearanceScreen() {
       });
       getActiveAppIcon().then((id) => { if (active) setIconPref(id); });
       (async () => {
-        const [prefs, sub] = await Promise.all([
-          getPreferences(supabase),
-          getSubscription(supabase),
-        ]);
+        const prefs = await getPreferences(supabase);
         if (!active) return;
-        setPremium(isSubscriptionActive(sub));
         if (prefs) {
           const next: AppearancePrefs = {
             font: prefs.font || 'system',

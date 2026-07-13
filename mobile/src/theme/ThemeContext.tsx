@@ -6,6 +6,9 @@
 //  2. COLOR THEME (Classic + 5 premium named palettes) + WALLPAPER — server prefs
 //     shared with web (`user_preferences.theme` / `.wallpaper`), premium-gated.
 // When a premium color theme is active it overrides the mode palette (web parity).
+//
+// Premium flag comes from PremiumProvider so purchase unlocks themes instantly
+// without remounting ThemeProvider or the navigation tree.
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { useColorScheme } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -13,7 +16,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { palettes, type Palette, type ThemeMode } from './palettes';
 import { resolveThemePalette, resolveWallpaperColor } from './appearance';
 import { supabase } from '../lib/supabase';
-import { getPreferences, updatePreferences, getServerPremium } from '../lib/shared';
+import { getPreferences, updatePreferences } from '../lib/shared';
+import { usePremiumOptional } from '../premium';
 
 const STORAGE_KEY = 'futurehat.theme.mode';
 const THEME_KEY = 'futurehat.theme.color'; // local mirror of user_preferences.theme
@@ -42,10 +46,12 @@ const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const system = useColorScheme();
+  const premiumCtx = usePremiumOptional();
+  const isPremium = premiumCtx?.isPremium ?? false;
+
   const [preference, setPreferenceState] = useState<ThemePreference>('dark');
   const [colorTheme, setColorThemeState] = useState('default');
   const [wallpaper, setWallpaperState] = useState('default');
-  const [isPremium, setIsPremium] = useState(false);
 
   // Instant local hydrate (no network wait), then reconcile with the server prefs.
   useEffect(() => {
@@ -58,22 +64,25 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
-  // Server reconcile: color theme + wallpaper live in shared user_preferences so
-  // they follow the account across devices/web. Premium status gates whether the
-  // named palette/wallpaper is actually applied.
+  // Server reconcile: color theme + wallpaper only (premium lives in PremiumProvider).
   useEffect(() => {
     let alive = true;
-    Promise.all([getPreferences(supabase).catch(() => null), getServerPremium(supabase).catch(() => false)])
-      .then(([prefs, premium]) => {
-        if (!alive) return;
-        setIsPremium(!!premium);
-        if (prefs) {
-          if (prefs.theme) { setColorThemeState(prefs.theme); AsyncStorage.setItem(THEME_KEY, prefs.theme).catch(() => {}); }
-          if (prefs.wallpaper) { setWallpaperState(prefs.wallpaper); AsyncStorage.setItem(WALLPAPER_KEY, prefs.wallpaper).catch(() => {}); }
+    getPreferences(supabase)
+      .then((prefs) => {
+        if (!alive || !prefs) return;
+        if (prefs.theme) {
+          setColorThemeState(prefs.theme);
+          AsyncStorage.setItem(THEME_KEY, prefs.theme).catch(() => {});
+        }
+        if (prefs.wallpaper) {
+          setWallpaperState(prefs.wallpaper);
+          AsyncStorage.setItem(WALLPAPER_KEY, prefs.wallpaper).catch(() => {});
         }
       })
       .catch(() => {});
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, []);
 
   const setPreference = (p: ThemePreference) => {
@@ -100,8 +109,14 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     const base = palettes[mode];
     const colors = resolveThemePalette(colorTheme, base, isPremium);
     return {
-      colors, mode, preference, setPreference,
-      colorTheme, setColorTheme, wallpaper, setWallpaper,
+      colors,
+      mode,
+      preference,
+      setPreference,
+      colorTheme,
+      setColorTheme,
+      wallpaper,
+      setWallpaper,
       wallpaperColor: resolveWallpaperColor(wallpaper, isPremium),
       isPremium,
     };

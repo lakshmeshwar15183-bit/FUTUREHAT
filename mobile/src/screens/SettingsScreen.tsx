@@ -7,10 +7,11 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { supabase } from '../lib/supabase';
-import { getCurrentUser, getMyProfile, signOut, getSubscription, isSubscriptionActive, getServerAdmin, getServerModerator, getServerOwner, getMailboxUnseenCount } from '../lib/shared';
+import { getCurrentUser, getMyProfile, signOut, getServerAdmin, getServerModerator, getServerOwner, getMailboxUnseenCount } from '../lib/shared';
 import type { Profile } from '../lib/shared';
 import { getCachedProfile, cacheProfile, getCache, setCache } from '../lib/localCache';
 import { unregisterForPush } from '../lib/notifications';
+import { usePremium } from '../premium';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import { APP_NAME, APP_VERSION, CREDIT } from '../branding';
 import { LumixoCat } from '../components/LumixoCat';
@@ -24,10 +25,11 @@ export default function SettingsScreen() {
   const navigation = useNavigation<Nav>();
   const colors = useColors();
   const styles = useMemo(() => makeStyles(colors), [colors]);
+  // Live premium from global context — updates instantly after purchase (no focus wait).
+  const { isPremium: premium } = usePremium();
 
   const [profile, setProfile] = useState<Profile | null>(null);
   const [uid, setUid] = useState<string | null>(null);
-  const [premium, setPremium] = useState(false);
   const [admin, setAdmin] = useState(false);
   const [owner, setOwner] = useState(false);
   const [moderator, setModerator] = useState(false);
@@ -43,21 +45,17 @@ export default function SettingsScreen() {
         const id = user?.id ?? null;
         if (!alive) return;
         setUid(id);
-        // Instant: cached profile + premium/admin flags so the header + gated
-        // rows render immediately, offline included.
+        // Instant: cached profile + admin flags so the header + gated
+        // rows render immediately, offline included. Premium is global (usePremium).
         if (id) { const cached = await getCachedProfile(id); if (alive && cached) setProfile(cached); }
-        const [cp, ca, co] = await Promise.all([
-          getCache<boolean>('me:premium', false),
+        const [ca, co] = await Promise.all([
           getCache<boolean>('me:admin', false),
           getCache<boolean>('me:owner', false),
         ]);
-        if (alive) { setPremium(cp); setAdmin(ca); setOwner(co); }
+        if (alive) { setAdmin(ca); setOwner(co); }
         // Background refresh + cache rewrite (kept even if offline throws).
         const p = await getMyProfile(supabase).catch(() => null);
         if (alive && p) { setProfile(p); cacheProfile(p); }
-        const sub = await getSubscription(supabase).catch(() => null);
-        const prem = isSubscriptionActive(sub);
-        if (alive) { setPremium(prem); setCache('me:premium', prem); }
         const adm = await getServerAdmin(supabase).catch(() => false);
         if (alive) { setAdmin(adm); setCache('me:admin', adm); }
         // Admin Dashboard is OWNER-only (the single permanent owner). is_owner is

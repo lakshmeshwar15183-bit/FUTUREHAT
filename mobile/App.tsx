@@ -22,6 +22,7 @@ import { runProdHealthChecks } from './src/lib/prodHealth';
 import { ThemeProvider, useTheme, enableLayoutAnimations } from './src/theme';
 // Soft LayoutAnimation for selection/chip transitions (Android opt-in).
 enableLayoutAnimations();
+import { PremiumProvider, ActivatingPremiumBanner } from './src/premium';
 import { AppLockProvider, useAppLock } from './src/security/AppLock';
 import { ChatLockProvider } from './src/security/ChatLock';
 import { CallProvider } from './src/calls/CallContext';
@@ -447,6 +448,8 @@ function RootNavigator() {
           <LockScreen />
         </View>
       )}
+      {/* Non-blocking premium activation toast — never remounts nav / splash. */}
+      {signedIn && <ActivatingPremiumBanner />}
       {/* Global premium dialogs / sheets — always mounted (overlay, not Modal)
           so action sheets open in the same frame as long-press without native
           window cold-start latency. Parent flex:1 gives absoluteFill a real box. */}
@@ -471,15 +474,18 @@ export default function App() {
     <ErrorBoundary label="App">
       <GestureHandlerRootView style={{ flex: 1 }}>
         <SafeAreaProvider>
-          <ThemeProvider>
-            <AppLockProvider>
-              <ChatLockProvider>
-                <CallProvider>
-                  <RootNavigator />
-                </CallProvider>
-              </ChatLockProvider>
-            </AppLockProvider>
-          </ThemeProvider>
+          {/* Premium outside Theme so theme gates update instantly on purchase. */}
+          <PremiumProvider>
+            <ThemeProvider>
+              <AppLockProvider>
+                <ChatLockProvider>
+                  <CallProvider>
+                    <RootNavigator />
+                  </CallProvider>
+                </ChatLockProvider>
+              </AppLockProvider>
+            </ThemeProvider>
+          </PremiumProvider>
         </SafeAreaProvider>
       </GestureHandlerRootView>
     </ErrorBoundary>

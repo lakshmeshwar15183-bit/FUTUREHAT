@@ -80,7 +80,6 @@ import {
   REPORT_REASONS,
   getChatSettings,
   getPreferences,
-  getServerPremium,
   scheduleMessage,
   dispatchDueMessages,
   messageExpired,
@@ -132,6 +131,7 @@ import { guessMime } from '../lib/media';
 import { registerMediaHandler, type MediaSubmission } from '../media/mediaSendBridge';
 import { formatLastSeen, formatDaySeparator, formatTime } from '../lib/time';
 import { useColors, useTheme, spacing, radius, font, listPerf, motion, type Palette } from '../theme';
+import { usePremium } from '../premium';
 import MessageBubble, { type TickStatus, replySummary } from '../components/MessageBubble';
 import SwipeToReply from '../components/SwipeToReply';
 import MediaViewer, { type ViewerItem } from '../components/MediaViewer';
@@ -196,7 +196,8 @@ function ChatScreenInner() {
   );
 
   const colors = useColors();
-  const { wallpaperColor, isPremium } = useTheme();
+  const { wallpaperColor } = useTheme();
+  const { isPremium } = usePremium();
   const insets = useSafeAreaInsets();
   const { startCall } = useCalls();
   const chatLock = useChatLock();
@@ -888,12 +889,17 @@ function ChatScreenInner() {
     getChatSettings(supabase).then((s) => setEnterToSend(s.enterToSend)).catch(() => {});
   }, []);
 
-  // Load ghost mode = premium AND ghost_mode pref (mirrors web `isPremium && prefs.ghost_mode`).
+  // Ghost mode = premium AND ghost_mode pref. Reacts instantly when premium unlocks.
   useEffect(() => {
-    Promise.all([getServerPremium(supabase).catch(() => false), getPreferences(supabase).catch(() => null)])
-      .then(([premium, prefs]) => { const g = !!premium && !!prefs?.ghost_mode; ghostRef.current = g; setGhost(g); })
+    getPreferences(supabase)
+      .catch(() => null)
+      .then((prefs) => {
+        const g = !!isPremium && !!prefs?.ghost_mode;
+        ghostRef.current = g;
+        setGhost(g);
+      })
       .catch(() => {});
-  }, []);
+  }, [isPremium]);
 
   // First name used in group typing broadcasts ("Asha is typing…").
   const selfNameRef = useRef<string>('User');

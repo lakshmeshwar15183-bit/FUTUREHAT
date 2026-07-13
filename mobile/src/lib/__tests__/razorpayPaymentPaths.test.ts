@@ -326,15 +326,15 @@ describe('P0 · source contracts (edge + clients)', () => {
 });
 
 describe('P1 · failed / cancelled / loading UX contracts', () => {
-  it('PremiumScreen surfaces failed, cancelled, network, verifying states', () => {
+  it('PremiumScreen surfaces failed, cancelled, network, seamless activation', () => {
     const p = path.join(__dirname, '../../screens/PremiumScreen.tsx');
     const src = fs.readFileSync(p, 'utf8');
     expect(src).toMatch(/Payment cancelled/);
     expect(src).toMatch(/Payment failed/);
     expect(src).toMatch(/No internet connection/);
-    expect(src).toMatch(/Verifying payment/);
-    expect(src).toMatch(/Starting secure checkout/);
-    expect(src).toMatch(/Welcome to/);
+    expect(src).toMatch(/Activating Premium/);
+    expect(src).toMatch(/beginActivation/);
+    expect(src).toMatch(/verifyInBackground/);
     expect(src).toMatch(/Check payment status/);
   });
 

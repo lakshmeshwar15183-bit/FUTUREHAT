@@ -26,7 +26,20 @@ describe('premium free-grant lock (source contract)', () => {
     expect(src).not.toMatch(/activateSubscription\s*\(/);
     expect(src).toMatch(/verifyRazorpayPayment/);
     expect(src).toMatch(/createRazorpayOrder/);
+    expect(src).toMatch(/beginActivation/);
+    expect(src).toMatch(/completeActivation/);
     expect(src).not.toMatch(/\.from\(['"]subscriptions['"]\)\s*\.upsert/);
+    // Must not remount auth / splash on success
+    expect(src).not.toMatch(/signOut\s*\(/);
+    expect(src).not.toMatch(/reset\s*\(\s*\{/);
+  });
+
+  it('PremiumContext supports optimistic unlock without auth remount', () => {
+    const p = path.join(__dirname, '../../premium/PremiumContext.tsx');
+    const src = fs.readFileSync(p, 'utf8');
+    expect(src).toMatch(/beginActivation/);
+    expect(src).toMatch(/optimistic/);
+    expect(src).not.toMatch(/signOut/);
   });
 
   it('edge payments function never returns KEY_SECRET to clients', () => {
