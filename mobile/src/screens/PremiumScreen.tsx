@@ -134,7 +134,13 @@ export default function PremiumScreen() {
     setCheckoutPhase('creating_order');
     const { order, error: orderErr } = await createRazorpayOrder(supabase, plan);
     if (orderErr || !order) {
-      setLocalError(orderErr?.message || 'Could not start checkout. Please try again.');
+      // Never surface raw Edge Function platform strings.
+      const raw = orderErr?.message || '';
+      const friendly =
+        !raw || /edge function|non-2xx|functions\.invoke/i.test(raw)
+          ? 'Could not start secure checkout. Please sign in again or try later.'
+          : raw;
+      setLocalError(friendly);
       setCheckoutPhase('idle');
       return;
     }

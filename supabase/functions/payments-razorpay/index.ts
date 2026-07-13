@@ -59,6 +59,54 @@ function json(req: Request, body: unknown, status = 200) {
   });
 }
 
+/** User-facing error — never leak secrets, stack traces, or raw provider dumps. */
+function clientError(
+  req: Request,
+  opts: { status: number; code: string; message: string; log?: string },
+) {
+  if (opts.log) {
+    console.error(`[payments] ${opts.code} status=${opts.status}`, opts.log.slice(0, 500));
+  } else {
+    console.error(`[payments] ${opts.code} status=${opts.status}`);
+  }
+  return json(
+    req,
+    {
+      ok: false,
+      error: opts.message,
+      code: opts.code,
+      status: opts.status,
+    },
+    opts.status,
+  );
+}
+
+function friendlyProviderOrderError(status: number, body: string): { code: string; message: string } {
+  const lower = body.toLowerCase();
+  if (status === 401 || status === 403 || /authentication|invalid key|auth/i.test(lower)) {
+    return {
+      code: 'gateway_auth',
+      message: 'Payment gateway is not configured correctly. Please try again later.',
+    };
+  }
+  if (status === 429 || /rate/i.test(lower)) {
+    return {
+      code: 'gateway_rate',
+      message: 'Too many payment attempts. Please wait a moment and try again.',
+    };
+  }
+  if (status >= 500) {
+    return {
+      code: 'gateway_down',
+      message: 'Payment service is temporarily unavailable. Please try again shortly.',
+    };
+  }
+  return {
+    code: 'order_failed',
+    message: 'Could not start checkout. Please try again.',
+  };
+}
+
 function timingSafeEqualHex(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
   let out = 0;
@@ -613,19 +661,52 @@ Deno.serve(async (req) => {
 
   try {
     const authHeader = req.headers.get('Authorization') ?? '';
-    if (!authHeader) return json(req, { error: 'Missing authorization' }, 401);
+    if (!authHeader) {
+      return clientError(req, {
+        status: 401,
+        code: 'missing_auth',
+        message: 'Please sign in to continue checkout.',
+      });
+    }
 
-    const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
-    const ANON = Deno.env.get('SUPABASE_ANON_KEY')!;
+    const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
+    const ANON = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
     const KEY_SECRET = Deno.env.get('RAZORPAY_KEY_SECRET') ?? '';
     const KEY_ID = Deno.env.get('RAZORPAY_KEY_ID') ?? '';
 
+    if (!SUPABASE_URL || !ANON) {
+      return clientError(req, {
+        status: 503,
+        code: 'server_misconfigured',
+        message: 'Payments are temporarily unavailable. Please try again later.',
+        log: 'missing SUPABASE_URL or SUPABASE_ANON_KEY',
+      });
+    }
+
+    const jwt = authHeader.replace(/^Bearer\s+/i, '').trim();
+    if (!jwt) {
+      return clientError(req, {
+        status: 401,
+        code: 'missing_auth',
+        message: 'Please sign in to continue checkout.',
+      });
+    }
+
     const asUser = createClient(SUPABASE_URL, ANON, {
-      global: { headers: { Authorization: authHeader } },
+      global: { headers: { Authorization: `Bearer ${jwt}` } },
+      auth: { persistSession: false, autoRefreshToken: false },
     });
-    const { data: userData } = await asUser.auth.getUser();
-    const user = userData.user;
-    if (!user) return json(req, { error: 'Unauthorized' }, 401);
+    // Pass JWT explicitly — more reliable on Edge than session-based getUser().
+    const { data: userData, error: authErr } = await asUser.auth.getUser(jwt);
+    const user = userData?.user ?? null;
+    if (authErr || !user?.id) {
+      return clientError(req, {
+        status: 401,
+        code: 'unauthorized',
+        message: 'Your session expired. Please sign in again and retry payment.',
+        log: authErr?.message ?? 'no user on getUser(jwt)',
+      });
+    }
 
     let body: {
       action?: 'verify' | 'create_order' | 'config' | 'status' | 'mark_cancelled';
@@ -637,13 +718,19 @@ Deno.serve(async (req) => {
     try {
       body = rawBody ? JSON.parse(rawBody) : {};
     } catch {
-      return json(req, { error: 'Invalid JSON' }, 400);
+      return clientError(req, {
+        status: 400,
+        code: 'invalid_json',
+        message: 'Invalid request. Please try again.',
+      });
     }
 
     // ── Config (no secrets beyond public key id) ───────────────────────────
     if (body.action === 'config') {
       const configured = !!(KEY_ID && KEY_SECRET);
+      console.log('[payments] config user=', user.id.slice(0, 8), 'configured=', configured);
       return json(req, {
+        ok: true,
         configured,
         // Public key id only — safe for checkout; secret never returned.
         keyId: configured ? KEY_ID : null,
@@ -655,31 +742,76 @@ Deno.serve(async (req) => {
     }
 
     if (!KEY_SECRET || !KEY_ID) {
-      return json(req, { error: 'Payments not configured' }, 503);
+      return clientError(req, {
+        status: 503,
+        code: 'payments_not_configured',
+        message: 'Secure payments are not available yet. Please try again later.',
+        log: `KEY_ID set=${!!KEY_ID} KEY_SECRET set=${!!KEY_SECRET}`,
+      });
     }
 
     const admin = serviceClient();
 
     // ── Create order ───────────────────────────────────────────────────────
     if (body.action === 'create_order') {
-      const plan = body.plan === 'yearly' ? 'yearly' : 'monthly';
+      const plan = body.plan === 'yearly' ? 'yearly' : body.plan === 'monthly' ? 'monthly' : null;
+      if (!plan) {
+        return clientError(req, {
+          status: 400,
+          code: 'invalid_plan',
+          message: 'Please choose a valid plan.',
+        });
+      }
       const amountPaise = PLAN_AMOUNT_PAISE[plan];
 
-      const orderResp = await rzpFetch('/orders', KEY_ID, KEY_SECRET, {
-        method: 'POST',
-        body: JSON.stringify({
-          amount: amountPaise,
-          currency: 'INR',
-          receipt: `lumixo_${plan}_${user.id.slice(0, 8)}_${Date.now()}`.slice(0, 40),
-          notes: { user_id: user.id, plan, app: 'lumixo' },
-        }),
-      });
+      console.log(
+        '[payments] create_order user=',
+        user.id.slice(0, 8),
+        'plan=',
+        plan,
+        'amountPaise=',
+        amountPaise,
+      );
+
+      let orderResp: Response;
+      try {
+        orderResp = await rzpFetch('/orders', KEY_ID, KEY_SECRET, {
+          method: 'POST',
+          body: JSON.stringify({
+            amount: amountPaise,
+            currency: 'INR',
+            receipt: `lumixo_${plan}_${user.id.slice(0, 8)}_${Date.now()}`.slice(0, 40),
+            notes: { user_id: user.id, plan, app: 'lumixo' },
+          }),
+        });
+      } catch (e) {
+        return clientError(req, {
+          status: 502,
+          code: 'gateway_network',
+          message: 'Could not reach the payment service. Check your connection and try again.',
+          log: e instanceof Error ? e.message : 'rzp fetch threw',
+        });
+      }
+
       if (!orderResp.ok) {
         const t = await orderResp.text();
-        console.error('[payments] order create', t.slice(0, 300));
-        return json(req, { error: `Order create failed: ${t.slice(0, 200)}` }, 502);
+        const friendly = friendlyProviderOrderError(orderResp.status, t);
+        return clientError(req, {
+          status: 502,
+          code: friendly.code,
+          message: friendly.message,
+          log: `razorpay HTTP ${orderResp.status}: ${t.slice(0, 300)}`,
+        });
       }
       const order = await orderResp.json();
+      if (!order?.id) {
+        return clientError(req, {
+          status: 502,
+          code: 'order_invalid',
+          message: 'Could not start checkout. Please try again.',
+          log: 'order response missing id',
+        });
+      }
 
       const { error: upsertErr } = await admin.rpc('admin_upsert_razorpay_order', {
         p_user_id: user.id,
@@ -694,10 +826,12 @@ Deno.serve(async (req) => {
         console.error('[payments] ledger order', upsertErr.message);
       }
 
+      console.log('[payments] order ok', order.id, 'user=', user.id.slice(0, 8));
       return json(req, {
+        ok: true,
         orderId: order.id,
-        amount: order.amount,
-        currency: order.currency,
+        amount: order.amount ?? amountPaise,
+        currency: order.currency || 'INR',
         keyId: KEY_ID,
         plan,
       });
@@ -873,7 +1007,12 @@ Deno.serve(async (req) => {
         errorCode: payment.error_code ?? null,
         errorDescription: payment.error_description ?? 'payment failed',
       });
-      return json(req, { error: 'Payment failed', code: payment.error_code }, 400);
+      return clientError(req, {
+        status: 400,
+        code: 'payment_failed',
+        message: 'Payment failed. Please try again with another method.',
+        log: `rzp failed code=${payment.error_code ?? ''} desc=${String(payment.error_description ?? '').slice(0, 120)}`,
+      });
     }
 
     if (payment.status !== 'captured' && payment.status !== 'authorized') {
@@ -890,12 +1029,21 @@ Deno.serve(async (req) => {
         signatureVerified: true,
         errorDescription: `status ${payment.status}`,
       });
-      return json(req, { error: `Payment not successful (${payment.status})` }, 400);
+      return clientError(req, {
+        status: 400,
+        code: 'payment_incomplete',
+        message: 'Payment was not completed. Please try again.',
+        log: `payment status=${payment.status}`,
+      });
     }
 
     if (String(payment.order_id || '') !== orderId) {
-      console.warn('[payments] payment/order mismatch', paymentId, orderId, 'user', user.id);
-      return json(req, { error: 'Payment does not match order' }, 400);
+      return clientError(req, {
+        status: 400,
+        code: 'order_mismatch',
+        message: 'Payment does not match this order. Please restart checkout.',
+        log: `payment/order mismatch pay=${paymentId} order=${orderId} user=${user.id.slice(0, 8)}`,
+      });
     }
 
     // Capture if only authorized.
@@ -919,11 +1067,22 @@ Deno.serve(async (req) => {
       orderId,
       amountPaise,
     );
-    if (!resolved.ok) return json(req, { error: resolved.error }, resolved.status);
+    if (!resolved.ok) {
+      return clientError(req, {
+        status: resolved.status,
+        code: 'order_resolve_failed',
+        message: 'Could not verify this payment. Please contact support if you were charged.',
+        log: resolved.error,
+      });
+    }
 
     if (resolved.userId !== user.id) {
-      console.warn('[payments] order user mismatch', resolved.userId, 'auth', user.id);
-      return json(req, { error: 'Order does not belong to this account' }, 403);
+      return clientError(req, {
+        status: 403,
+        code: 'order_user_mismatch',
+        message: 'This order does not belong to your account.',
+        log: `order user mismatch resolved=${resolved.userId.slice(0, 8)} auth=${user.id.slice(0, 8)}`,
+      });
     }
 
     const result = await fulfillCapturedPayment(admin, {
@@ -939,13 +1098,24 @@ Deno.serve(async (req) => {
     });
 
     if (!result.ok) {
-      console.error('[payments] activate failed', result.error);
-      return json(req, { error: result.error }, result.status);
+      return clientError(req, {
+        status: result.status >= 500 ? 500 : result.status,
+        code: result.status === 409 ? 'activation_conflict' : 'activation_failed',
+        message:
+          result.status === 409
+            ? 'This payment is already linked to another subscription. Contact support if needed.'
+            : 'Payment received but activation failed. Please reopen Lumixo+ or contact support.',
+        log: result.error,
+      });
     }
 
     return json(req, { ok: true, plan: result.plan, paymentId: result.paymentId });
   } catch (e) {
-    console.error('[payments]', e);
-    return json(req, { error: String(e) }, 500);
+    return clientError(req, {
+      status: 500,
+      code: 'internal',
+      message: 'Something went wrong with payments. Please try again.',
+      log: e instanceof Error ? e.message : String(e),
+    });
   }
 });
