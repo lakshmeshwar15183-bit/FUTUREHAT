@@ -13,8 +13,10 @@ supabase db push
 ```
 
 Files: `supabase/migrations/20240102000000_add_message_reactions.sql`, then
-`supabase/migrations/0003_premium.sql`. Both are idempotent. Full premium setup
-(AI edge function, payments, scheduled-message cron) is in **`FUTUREHAT_PLUS.md`**.
+`supabase/migrations/0003_premium.sql`, and for live Razorpay billing
+`supabase/migrations/0054_razorpay_payments.sql`. Full premium + Razorpay setup
+(AI edge function, payments, Test→Live switch, scheduled-message cron) is in
+**`FUTUREHAT_PLUS.md`** and **`RAZORPAY.md`**.
 
 > The app runs fine as the free tier even before migrations are applied — it degrades
 > gracefully, so you can deploy first and apply migrations any time.

@@ -1,4 +1,4 @@
-// FUTUREHAT — privacy visibility + chat/general settings. These are stored in
+// Lumixo — privacy visibility + chat/general settings. These are stored in
 // the existing `user_preferences.extra` jsonb bag (namespaced), so no new table
 // is required. Visibility values are persisted for every client; server-side
 // enforcement of cross-user visibility (e.g. hiding last-seen from others) is a
@@ -40,7 +40,9 @@ export const DEFAULT_PRIVACY: PrivacySettings = {
 
 export const DEFAULT_CHAT: ChatSettings = {
   enterToSend: true, fontSize: 'medium', mediaVisibility: true,
-  mediaUploadQuality: 'auto', autoDownload: true, voiceTranscripts: false,
+  // Default OFF — WhatsApp/Telegram-class: no mass auto-download after reinstall.
+  // Granular Wi‑Fi / cellular rules live in Storage & Data (mediaPolicy).
+  mediaUploadQuality: 'auto', autoDownload: false, voiceTranscripts: false,
 };
 
 function extraOf(prefs: any): Record<string, any> {

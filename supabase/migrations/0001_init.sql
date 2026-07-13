@@ -1,4 +1,4 @@
--- FUTUREHAT — core chat schema
+-- Lumixo — core chat schema
 -- Real-time WhatsApp-style messaging on Supabase (Postgres + Auth + Realtime)
 -- Run this in the Supabase SQL Editor (or via `supabase db push`).
 
@@ -15,7 +15,7 @@ create table if not exists public.profiles (
   phone        text unique,
   username     text unique,
   display_name text,
-  about        text default 'Hey there! I am using FUTUREHAT.',
+  about        text default 'Hey there! I am using Lumixo.',
   avatar_url   text,
   last_seen    timestamptz default now(),
   created_at   timestamptz default now()
@@ -103,7 +103,7 @@ set search_path = public
 as $$
 begin
   insert into public.profiles (id, phone, display_name)
-  values (new.id, new.phone, coalesce(new.raw_user_meta_data->>'display_name', 'FUTUREHAT user'))
+  values (new.id, new.phone, coalesce(new.raw_user_meta_data->>'display_name', 'Lumixo user'))
   on conflict (id) do nothing;
   return new;
 end;

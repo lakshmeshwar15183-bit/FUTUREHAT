@@ -1,4 +1,4 @@
-// FUTUREHAT — push notification transport. Registers this device's FCM token so
+// Lumixo — push notification transport. Registers this device's FCM token so
 // the `push` Edge Function can deliver notifications when the app is killed, and
 // exposes sendPush() which the sender calls after a message/call so a killed
 // recipient still gets notified. All best-effort: if FCM (google-services.json)
@@ -22,24 +22,88 @@ export async function removePushToken(client: SupabaseClient, token: string): Pr
 
 export interface SendPushArgs {
   conversationId: UUID;
-  kind: PushKind;                 // 'message' | 'group' | 'call' | 'missed_call' | 'status' | 'system'
+  kind: PushKind;                 // 'message' | 'group' | 'call' | 'missed_call' | 'status' | 'system' | 'mention'
   title: string;
   body: string;
-  data?: Record<string, string>;  // extra payload (e.g. callId, type)
+  data?: Record<string, string>;  // extra payload (e.g. callId, messageId, type)
 }
 
-// Fire-and-forget: invoke the `push` Edge Function to fan the notification out to
-// the conversation's other members' registered devices. Never throws.
+/**
+ * Fire-and-forget: invoke the `push` Edge Function to fan the notification out
+ * to other members' registered devices (FCM). Also drains the push_outbox so
+ * DB-triggered jobs flush even if this process dies next.
+ *
+ * Never throws. Killed-app delivery depends on:
+ *   1) recipient FCM token in device_push_tokens
+ *   2) Edge Function secret FCM_SERVICE_ACCOUNT
+ *   3) this call and/or the 1-minute outbox drain cron
+ *
+ * Pass data.messageId / data.callId for dedupe. Empty title is OK — the Edge
+ * Function rebuilds titles from profiles (avoids tray showing "New message").
+ */
 export async function sendPush(client: SupabaseClient, args: SendPushArgs): Promise<void> {
   try {
     await client.functions.invoke('push', {
       body: {
         conversationId: args.conversationId,
         kind: args.kind,
-        title: args.title,
-        body: args.body,
+        title: args.title ?? '',
+        body: args.body ?? '',
         data: args.data ?? {},
+        // Clients only fan out their own event. Global outbox drain is reserved
+        // for service-role cron (drainPushOutbox) to prevent authenticated abuse.
+        drainOutbox: false,
+        limit: 1,
       },
     });
   } catch { /* Edge Function not deployed / FCM not configured — ignore */ }
+}
+
+/**
+ * Kick the server push outbox. Requires CRON_SECRET / PUSH_DRAIN_SECRET on the
+ * Edge Function — plain user JWTs are ignored (0051 push seal). Clients should
+ * not call this; use scheduled ops with the secret header.
+ */
+export async function drainPushOutbox(
+  client: SupabaseClient,
+  limit = 40,
+  drainSecret?: string,
+): Promise<void> {
+  try {
+    await client.functions.invoke('push', {
+      body: { drainOutbox: true, limit },
+      headers: drainSecret
+        ? { 'x-cron-secret': drainSecret, 'x-push-drain-secret': drainSecret }
+        : undefined,
+    });
+  } catch { /* ignore */ }
+}
+
+/**
+ * WhatsApp multi-device: after reading a chat, silently clear the tray notification
+ * on the user's *other* devices (and this one if a remote FCM is still pending).
+ */
+export async function clearRemoteChatNotification(
+  client: SupabaseClient,
+  conversationId: UUID,
+): Promise<void> {
+  if (!conversationId) return;
+  try {
+    await client.functions.invoke('push', {
+      body: {
+        conversationId,
+        kind: 'system',
+        title: '',
+        body: '',
+        data: {
+          type: 'clear_chat',
+          silent: '1',
+          conversationId,
+        },
+        // Self-device fan-out only (handled specially in the Edge Function).
+        clearSelfDevices: true,
+        drainOutbox: false,
+      },
+    });
+  } catch { /* ignore */ }
 }

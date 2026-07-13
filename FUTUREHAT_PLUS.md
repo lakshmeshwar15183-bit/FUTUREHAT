@@ -50,39 +50,42 @@ Full host-by-host steps are in `DEPLOY.md`.
 
 ---
 
-## 3. AI features (optional but recommended)
+## 3. Optional writing tools (server-side)
 
-AI rewrite / translate / summarize / smart-reply run through a Supabase Edge
-Function that calls the Anthropic API. Premium status is enforced **server-side**.
+Optional rewrite / translate / summarize / suggested-reply features run through a
+Supabase Edge Function. Premium status is enforced **server-side**. Provider
+credentials never ship in the mobile or web clients.
 
 ```bash
 supabase functions deploy ai
-supabase secrets set ANTHROPIC_API_KEY=sk-ant-xxxxx
-# Optional — use an Anthropic-compatible proxy instead of api.anthropic.com:
-supabase secrets set ANTHROPIC_BASE_URL=https://cc.freemodel.dev
-# Optional — override the model id:
-supabase secrets set ANTHROPIC_MODEL=claude-haiku-4-5-20251001
+supabase secrets set AI_API_KEY=your-provider-key
+supabase secrets set AI_BASE_URL=https://your-provider-gateway.example
+# Optional model id:
+supabase secrets set AI_MODEL=default
 ```
 
-The endpoint is configurable (`ANTHROPIC_BASE_URL`), so any Anthropic-compatible
-gateway works. Note: chat transcripts are sent to whichever endpoint you configure.
-Without this set up, the rest of FUTUREHAT+ still works; AI actions show a friendly error.
+Without this set up, the rest of Lumixo+ still works; writing-tool actions return a
+configuration error if invoked.
 
 ---
 
-## 4. Payments
+## 4. Payments (Razorpay — production)
 
-The upgrade flow uses a provider abstraction (`shared/payments`).
+Full guide: **[`RAZORPAY.md`](./RAZORPAY.md)**.
 
-- **No keys set** → `ManualProvider`: the upgrade button **instantly activates** the
-  subscription in the database. Fully functional for testing / self-serve.
-- **`VITE_RAZORPAY_KEY_ID` set** → real Razorpay checkout opens for ₹25 / ₹249.
+- Premium is **never** activated from the client. `activateSubscription` is fail-closed.
+- Edge Function `payments-razorpay` creates Orders, verifies HMAC signatures, records
+  rows in `razorpay_payments`, and calls `admin_activate_subscription` (service role).
+- Secrets (server only): `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, optional
+  `RAZORPAY_WEBHOOK_SECRET`.
+- Plans: **₹25/month** · **₹249/year** (`shared/premium/plans.ts`).
+- Web + mobile both use server `create_order` → Checkout → server `verify`.
 
-> For signed server-side verification, create a Razorpay *Order* in an edge function
-> and pass its id into `RazorpayWebProvider`. The seam for this is already in place.
-
-Add a gateway by implementing `PaymentProvider` and returning it from
-`web/src/payments/index.ts`. Nothing else changes.
+```bash
+supabase secrets set RAZORPAY_KEY_ID=rzp_test_xxx RAZORPAY_KEY_SECRET=xxx
+supabase functions deploy payments-razorpay
+# Apply migration 0054_razorpay_payments.sql
+```
 
 ---
 
@@ -113,13 +116,13 @@ select cron.schedule('fh-dispatch', '* * * * *', $$ select public.dispatch_due_m
 
 ### What's live today
 Themes · animated wallpapers · chat-bubble styles · fonts · app icons · premium
-emoji · AI rewrite/translate/summarize/smart-reply · schedule messages · reminders ·
-unlimited pins · ghost mode · hide chats · app lock (PIN + biometric) · higher upload
-limits · FUTUREHAT+ badge · profile decorations · early access.
+emoji · schedule messages · reminders · unlimited pins · ghost mode · hide chats ·
+app lock (PIN + biometric) · higher upload limits · Lumixo+ badge · profile
+decorations · early access.
 
 ### Registered & gated (expand next)
-Premium/animated/AI stickers · premium sticker packs · auto-replies · longer edit
-history · larger cloud backup · advanced media manager · advanced privacy.
+Animated stickers · extra sticker packs · auto-replies · longer edit history ·
+larger cloud backup · advanced media manager · advanced privacy.
 
 ---
 

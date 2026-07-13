@@ -1,4 +1,4 @@
-// FUTUREHAT — clean line icons (WhatsApp/Material style), original SVG paths.
+// Lumixo — clean line icons (WhatsApp/Material style), original SVG paths.
 // All use currentColor so they inherit button text colour. 24px grid.
 import type { SVGProps } from 'react';
 

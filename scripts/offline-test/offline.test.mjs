@@ -51,14 +51,17 @@ test('#2 messages: cached thread returned oldest→newest, exact key, no network
   assert.equal(SHARED.sendMessage.__calls.length, 0);
 });
 
-test('#2b message cache is bounded to 200 (MSG_CACHE_LIMIT)', async () => {
+test('#2b message cache is bounded to MSG_CACHE_LIMIT', async () => {
   reset();
-  const many = Array.from({ length: 250 }, (_, i) => ({ id: `m${i}`, conversation_id: CONV, sender_id: 's', type: 'text', content: '', media_url: null, reply_to: null, is_deleted: false, created_at: '', edited_at: null }));
+  const limit = LC.MSG_CACHE_LIMIT ?? 800;
+  const total = limit + 50;
+  const many = Array.from({ length: total }, (_, i) => ({ id: `m${i}`, conversation_id: CONV, sender_id: 's', type: 'text', content: '', media_url: null, reply_to: null, is_deleted: false, created_at: '', edited_at: null }));
   await LC.cacheMessages(CONV, many);
   const got = await LC.getCachedMessages(CONV);
-  console.log('  retained:', got.length, '| first kept:', got[0].id, '(most-recent 200)');
-  assert.equal(got.length, 200);
-  assert.equal(got[0].id, 'm50'); // oldest 50 trimmed
+  console.log('  retained:', got.length, '| first kept:', got[0].id, `(most-recent ${limit})`);
+  assert.equal(got.length, limit);
+  // Oldest `total - limit` trimmed; first kept is m{total-limit}.
+  assert.equal(got[0].id, `m${total - limit}`);
 });
 
 test('#5 drafts survive "restart" (persist to disk key, re-read from fresh store view)', async () => {
@@ -72,6 +75,19 @@ test('#5 drafts survive "restart" (persist to disk key, re-read from fresh store
   // empty clears it
   await LC.setDraft(CONV, '');
   assert.equal(await LC.getDraft(CONV), '');
+});
+
+test('#6b outbox lock: concurrent enqueue does not drop items', async () => {
+  reset();
+  await Promise.all([
+    LC.enqueueOutbox({ tempId: 'a', conversationId: CONV, senderId: UID, content: '1', type: 'text', createdAt: 't', attempts: 0 }),
+    LC.enqueueOutbox({ tempId: 'b', conversationId: CONV, senderId: UID, content: '2', type: 'text', createdAt: 't', attempts: 0 }),
+    LC.enqueueOutbox({ tempId: 'c', conversationId: CONV, senderId: UID, content: '3', type: 'text', createdAt: 't', attempts: 0 }),
+  ]);
+  const box = await LC.getOutbox();
+  console.log('  concurrent enqueued:', box.length, box.map((i) => i.tempId).join(','));
+  assert.equal(box.length, 3);
+  assert.deepEqual(box.map((i) => i.tempId).sort(), ['a', 'b', 'c']);
 });
 
 test('#6 outbox: enqueue persists to fh:outbox:v1 and surfaces as pending message', async () => {

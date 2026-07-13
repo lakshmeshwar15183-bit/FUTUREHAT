@@ -1,0 +1,75 @@
+/* Lumixo web — media composer (graceful subset). Uses the app's --fh-* theme
+   variables so dark/light both work. */
+.mc-modal {
+  position: relative;
+  width: min(520px, 94vw);
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--fh-panel);
+  border: 1px solid var(--fh-border);
+  border-radius: 16px;
+  box-shadow: var(--fh-shadow);
+  overflow: hidden;
+}
+.mc-stage {
+  position: relative;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 260px;
+  max-height: 55vh;
+}
+.mc-preview { max-width: 100%; max-height: 55vh; object-fit: contain; }
+.mc-vo-badge {
+  position: absolute; left: 12px; top: 12px;
+  background: rgba(0,0,0,0.6); color: #fff; font-size: 12px; font-weight: 600;
+  padding: 4px 10px; border-radius: 999px;
+}
+.mc-quality { display: flex; align-items: center; gap: 8px; padding: 10px 14px; }
+.mc-qchip {
+  border: none; cursor: pointer; border-radius: 999px; padding: 5px 12px;
+  background: var(--fh-bg); color: var(--fh-muted); font-size: 13px; font-weight: 600;
+}
+.mc-qchip.on { background: var(--fh-accent); color: #fff; }
+.mc-size { margin-left: auto; color: var(--fh-muted); font-size: 12px; }
+.mc-strip { display: flex; gap: 6px; padding: 6px 14px; overflow-x: auto; }
+.mc-thumb {
+  position: relative; flex: 0 0 auto; width: 48px; height: 48px; border-radius: 8px;
+  overflow: hidden; border: 2px solid transparent; cursor: pointer; padding: 0; background: var(--fh-bg);
+}
+.mc-thumb.on { border-color: var(--fh-accent); }
+.mc-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.mc-thumb-vid { width: 100%; height: 100%; display: grid; place-items: center; color: var(--fh-muted); }
+.mc-thumb-vo { position: absolute; right: 2px; top: 2px; font-size: 10px; }
+.mc-add {
+  flex: 0 0 auto; width: 48px; height: 48px; border-radius: 8px; cursor: pointer;
+  border: 1px dashed var(--fh-border); background: transparent; color: var(--fh-muted); font-size: 22px;
+}
+.mc-error { color: #ef4444; font-size: 13px; padding: 4px 14px; }
+.mc-bottom { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--fh-border); }
+.mc-caption {
+  flex: 1; background: var(--fh-bg); border: 1px solid var(--fh-border); border-radius: 999px;
+  padding: 10px 14px; color: var(--fh-text); font-size: 14px; outline: none;
+}
+.mc-vo {
+  width: 42px; height: 42px; border-radius: 50%; border: none; cursor: pointer;
+  background: var(--fh-bg); font-size: 18px;
+}
+.mc-vo.on { background: #F5C518; }
+.mc-send {
+  border: none; cursor: pointer; border-radius: 999px; padding: 10px 20px;
+  background: var(--fh-accent); color: #fff; font-size: 14px; font-weight: 700;
+}
+.mc-send:disabled { opacity: 0.6; cursor: default; }
+/* view-once onboarding */
+.mc-vo-overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.6); display: grid; place-items: center; padding: 20px; }
+.mc-vo-card { background: var(--fh-panel); border-radius: 14px; padding: 22px; max-width: 340px; }
+.mc-vo-emoji { font-size: 38px; text-align: center; }
+.mc-vo-card h3 { text-align: center; margin: 8px 0; color: var(--fh-text); }
+.mc-vo-card ul { color: var(--fh-muted); font-size: 14px; padding-left: 18px; margin: 10px 0; }
+.mc-vo-card li { margin-bottom: 6px; }
+.mc-vo-actions { display: flex; gap: 10px; margin-top: 14px; }
+.mc-vo-cancel { flex: 1; border: none; cursor: pointer; border-radius: 10px; padding: 10px; background: var(--fh-bg); color: var(--fh-text); font-weight: 600; }
+.mc-vo-ok { flex: 1.4; border: none; cursor: pointer; border-radius: 10px; padding: 10px; background: var(--fh-accent); color: #fff; font-weight: 700; }

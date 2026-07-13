@@ -1,28 +1,24 @@
-// FUTUREHAT — trust & safety data layer: reports, support tickets, blocks, mutes.
+// Lumixo — trust & safety data layer: reports, support tickets, blocks, mutes.
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { UUID, ReportReason } from './types.js';
 import { getCurrentUser } from './api.js';
 
 export type ReportTargetType = 'user' | 'message' | 'conversation' | 'channel' | 'community';
 export type TicketKind = 'support' | 'bug' | 'feedback' | 'appeal' | 'grievance';
+export type TicketStatus = 'open' | 'in_progress' | 'resolved';
 
-// Fixed reason list surfaced by the mobile "Report message" picker. Kept next to
-// the report call so the UI and the server CHECK constraint can't drift apart.
+// Fixed reason list surfaced by the mobile "Report message" picker.
 export const REPORT_REASONS: ReadonlyArray<{ value: ReportReason; label: string }> = [
-  { value: 'spam',             label: 'Spam' },
-  { value: 'harassment',       label: 'Harassment' },
-  { value: 'abuse',            label: 'Abuse' },
+  { value: 'spam', label: 'Spam' },
+  { value: 'harassment', label: 'Harassment' },
+  { value: 'abuse', label: 'Abuse' },
   { value: 'fake_information', label: 'Fake Information' },
-  { value: 'illegal_content',  label: 'Illegal Content' },
-  { value: 'violence',         label: 'Violence' },
-  { value: 'child_safety',     label: 'Child Safety' },
-  { value: 'other',            label: 'Other' },
+  { value: 'illegal_content', label: 'Illegal Content' },
+  { value: 'violence', label: 'Violence' },
+  { value: 'child_safety', label: 'Child Safety' },
+  { value: 'other', label: 'Other' },
 ];
 
-// Report a single message. Uses the report_message() SECURITY DEFINER RPC (0017)
-// which snapshots the message content, derives the reported user + conversation,
-// and verifies the reporter is a participant — so the admin dashboard gets a
-// complete, tamper-proof record even if the message is later deleted.
 export async function reportMessage(
   client: SupabaseClient,
   messageId: UUID,
@@ -45,8 +41,25 @@ export interface SupportTicket {
   body: string;
   attachment_url: string | null;
   device_info: string | null;
-  status: 'open' | 'in_progress' | 'resolved';
+  status: TicketStatus;
   created_at: string;
+  /** Human-readable id e.g. LMX-A1B2C3D4 (migration 0056). */
+  public_id?: string | null;
+}
+
+export interface SupportTicketReply {
+  id: UUID;
+  ticket_id: UUID;
+  author_id: UUID | null;
+  is_staff: boolean;
+  body: string;
+  created_at: string;
+}
+
+/** Display ticket id for UI / mailto. */
+export function formatTicketId(t: Pick<SupportTicket, 'id' | 'public_id'>): string {
+  if (t.public_id && t.public_id.trim()) return t.public_id.trim();
+  return 'LMX-' + t.id.replace(/-/g, '').slice(0, 8).toUpperCase();
 }
 
 export async function submitReport(
@@ -98,6 +111,40 @@ export async function getMyTickets(client: SupabaseClient): Promise<SupportTicke
     .select('*')
     .order('created_at', { ascending: false });
   return data ?? [];
+}
+
+export async function getTicketReplies(
+  client: SupabaseClient,
+  ticketId: UUID,
+): Promise<SupportTicketReply[]> {
+  const { data } = await client
+    .from('support_ticket_replies')
+    .select('*')
+    .eq('ticket_id', ticketId)
+    .order('created_at', { ascending: true });
+  return data ?? [];
+}
+
+export async function replyToTicket(
+  client: SupabaseClient,
+  ticketId: UUID,
+  body: string,
+): Promise<{ reply: SupportTicketReply | null; error: Error | null }> {
+  const user = await getCurrentUser(client);
+  if (!user) return { reply: null, error: new Error('not authenticated') };
+  const text = body.trim();
+  if (!text) return { reply: null, error: new Error('Message is empty') };
+  const { data, error } = await client
+    .from('support_ticket_replies')
+    .insert({
+      ticket_id: ticketId,
+      author_id: user.id,
+      is_staff: false,
+      body: text,
+    })
+    .select()
+    .single();
+  return { reply: data, error };
 }
 
 // ── Blocks ───────────────────────────────────────────────────────────────────

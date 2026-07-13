@@ -1,21 +1,32 @@
-// FUTUREHAT — Help & Support: FAQ, ticket submission (support/bug/feedback/
-// appeal/grievance), my tickets, and trust & safety / legal info. Mirrors the
-// Android HelpSupport screen so web reaches parity with mobile.
-
+// Lumixo — production Help & Support center (web parity with mobile).
 import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { supabase } from '../supabase';
-import { submitTicket, getMyTickets } from '@shared/supportApi';
-import type { SupportTicket, TicketKind } from '@shared/supportApi';
+import {
+  submitTicket,
+  getMyTickets,
+  getTicketReplies,
+  replyToTicket,
+  formatTicketId,
+} from '@shared/supportApi';
+import type { SupportTicket, SupportTicketReply, TicketKind } from '@shared/supportApi';
 import { modalBackdrop, modalPanel } from '../motion';
-import { OWNER } from '../branding';
+import {
+  APP_NAME,
+  APP_VERSION,
+  CREDIT,
+  SUPPORT_EMAIL,
+  GRIEVANCE_TEAM,
+  supportMailto,
+} from '../branding';
+import { LumixoCat } from '../mascot/LumixoCat';
 import './HelpSupportModal.css';
 
 const FAQ: { q: string; a: string }[] = [
   { q: 'How do I start a new chat?', a: 'Tap ➕ in the sidebar, search a person by name or @username, and open the conversation.' },
-  { q: 'What is FUTUREHAT+?', a: 'A premium membership unlocking themes, wallpapers, AI tools, message scheduling, app lock, ghost mode and more.' },
+  { q: 'What is Lumixo+?', a: 'A premium membership unlocking themes, wallpapers, message scheduling, app lock, ghost mode and more.' },
   { q: 'How do reactions and replies work?', a: 'Hover a message to react with an emoji, reply with a quote, forward, edit or delete your own messages.' },
-  { q: 'Are my chats private?', a: 'Conversations are protected by row-level security — only participants can read them. See the privacy info below.' },
+  { q: 'Are my chats private?', a: 'Conversations are protected by row-level security — only participants can read them.' },
   { q: 'How do I block or report someone?', a: 'Open a direct chat header menu (•••) to block the user or report abuse. Reports go to our safety team.' },
   { q: 'How do I cancel my subscription?', a: 'Open Settings → Manage. Premium stays active until the end of your current billing period.' },
 ];
@@ -25,8 +36,14 @@ const KINDS: { id: TicketKind; label: string; hint: string }[] = [
   { id: 'bug', label: '🐞 Bug report', hint: 'Something is broken — device info is attached automatically' },
   { id: 'feedback', label: '💡 Feedback', hint: 'Ideas and feature requests' },
   { id: 'appeal', label: '⚖️ Ban appeal', hint: 'Appeal an account restriction' },
-  { id: 'grievance', label: '📜 Grievance', hint: 'Formal complaint — 48h acknowledgement, 15-day resolution' },
+  { id: 'grievance', label: '📜 Grievance', hint: 'Formal complaint under applicable IT Rules' },
 ];
+
+const STATUS_LABEL: Record<SupportTicket['status'], string> = {
+  open: 'Open',
+  in_progress: 'In progress',
+  resolved: 'Resolved',
+};
 
 export function HelpSupportModal({ onClose }: { onClose: () => void }) {
   const [tab, setTab] = useState<'help' | 'tickets'>('help');
@@ -37,64 +54,204 @@ export function HelpSupportModal({ onClose }: { onClose: () => void }) {
   const [body, setBody] = useState('');
   const [sending, setSending] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [successId, setSuccessId] = useState<string | null>(null);
 
   const [tickets, setTickets] = useState<SupportTicket[]>([]);
   const [loadingTickets, setLoadingTickets] = useState(false);
+  const [selected, setSelected] = useState<SupportTicket | null>(null);
+  const [replies, setReplies] = useState<SupportTicketReply[]>([]);
+  const [loadingReplies, setLoadingReplies] = useState(false);
+  const [replyText, setReplyText] = useState('');
+  const [replyBusy, setReplyBusy] = useState(false);
 
   const activeKind = useMemo(() => KINDS.find((k) => k.id === kind)!, [kind]);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (selected) setSelected(null);
+        else onClose();
+      }
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, selected]);
 
   useEffect(() => {
     if (tab !== 'tickets') return;
     setLoadingTickets(true);
-    getMyTickets(supabase).then((t) => { setTickets(t); setLoadingTickets(false); });
+    getMyTickets(supabase).then((t) => {
+      setTickets(t);
+      setLoadingTickets(false);
+    });
   }, [tab]);
 
   function flash(msg: string) {
     setToast(msg);
-    setTimeout(() => setToast(null), 2600);
+    setTimeout(() => setToast(null), 2800);
+  }
+
+  async function openTicket(t: SupportTicket) {
+    setSelected(t);
+    setLoadingReplies(true);
+    setReplyText('');
+    try {
+      setReplies(await getTicketReplies(supabase, t.id));
+    } catch {
+      setReplies([]);
+    } finally {
+      setLoadingReplies(false);
+    }
+  }
+
+  async function sendReply() {
+    if (!selected || !replyText.trim()) return;
+    setReplyBusy(true);
+    const { reply, error } = await replyToTicket(supabase, selected.id, replyText.trim());
+    setReplyBusy(false);
+    if (error) return flash(error.message || 'Could not send reply');
+    if (reply) setReplies((p) => [...p, reply]);
+    setReplyText('');
   }
 
   async function handleSubmit() {
     if (!subject.trim() || !body.trim()) return flash('Add a subject and a message.');
     setSending(true);
-    const deviceInfo = kind === 'bug'
-      ? `${navigator.userAgent} · ${window.screen.width}×${window.screen.height}`
-      : undefined;
-    const { error } = await submitTicket(supabase, kind, subject.trim(), body.trim(), { deviceInfo });
+    const deviceInfo =
+      kind === 'bug'
+        ? `${navigator.userAgent} · ${window.screen.width}×${window.screen.height}`
+        : undefined;
+    const { ticket, error } = await submitTicket(supabase, kind, subject.trim(), body.trim(), {
+      deviceInfo,
+    });
     setSending(false);
-    if (error) return flash(error.message || 'Could not submit. Try again.');
+    if (error || !ticket) return flash(error?.message || 'Could not submit. Try again.');
+    const id = formatTicketId(ticket);
     setSubject('');
     setBody('');
-    flash('Submitted — we will get back to you.');
+    setSuccessId(id);
     setTab('tickets');
+    getMyTickets(supabase).then(setTickets);
   }
 
   return (
-    <motion.div className="modal-backdrop" variants={modalBackdrop} initial="initial" animate="animate" exit="exit" onClick={onClose}>
-      <motion.div className="help-modal glass" variants={modalPanel} onClick={(e) => e.stopPropagation()}>
-        <button className="modal-close" onClick={onClose} aria-label="Close">✕</button>
-        <h2 className="help-title">🛟 Help &amp; Support</h2>
+    <motion.div
+      className="modal-backdrop"
+      variants={modalBackdrop}
+      initial="initial"
+      animate="animate"
+      exit="exit"
+      onClick={onClose}
+    >
+      <motion.div
+        className="help-modal glass"
+        variants={modalPanel}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button className="modal-close" onClick={onClose} aria-label="Close">
+          ✕
+        </button>
+        <h2 className="help-title">Help &amp; Support</h2>
+        <p className="help-lead">FAQs, tickets, and contact — no personal names, team-only support.</p>
 
-        <div className="help-tabs">
-          <button className={tab === 'help' ? 'active' : ''} onClick={() => setTab('help')}>Get help</button>
-          <button className={tab === 'tickets' ? 'active' : ''} onClick={() => setTab('tickets')}>My tickets</button>
-        </div>
+        {!selected && (
+          <div className="help-tabs">
+            <button className={tab === 'help' ? 'active' : ''} onClick={() => setTab('help')}>
+              Get help
+            </button>
+            <button className={tab === 'tickets' ? 'active' : ''} onClick={() => setTab('tickets')}>
+              My tickets
+            </button>
+          </div>
+        )}
 
-        {tab === 'help' ? (
+        {selected ? (
+          <div className="help-body">
+            <button type="button" className="help-back" onClick={() => setSelected(null)}>
+              ← My tickets
+            </button>
+            <div className="ticket-card detail">
+              <div className="ticket-head">
+                <span className="ticket-id">{formatTicketId(selected)}</span>
+                <span className={`ticket-status ${selected.status}`}>
+                  {STATUS_LABEL[selected.status]}
+                </span>
+              </div>
+              <div className="ticket-kind">
+                {KINDS.find((k) => k.id === selected.kind)?.label || selected.kind}
+              </div>
+              <div className="ticket-subject">{selected.subject}</div>
+              <div className="ticket-body">{selected.body}</div>
+              <div className="ticket-date">{new Date(selected.created_at).toLocaleString()}</div>
+            </div>
+
+            <h3 className="help-subh">Conversation</h3>
+            {loadingReplies ? (
+              <div className="help-empty">Loading…</div>
+            ) : (
+              <div className="ticket-thread">
+                <div className="t-bubble user">
+                  <div className="t-meta">You · original</div>
+                  <div>{selected.body}</div>
+                </div>
+                {replies.map((r) => (
+                  <div key={r.id} className={`t-bubble ${r.is_staff ? 'staff' : 'user'}`}>
+                    <div className="t-meta">
+                      {r.is_staff ? 'Lumixo Support' : 'You'} ·{' '}
+                      {new Date(r.created_at).toLocaleString()}
+                    </div>
+                    <div>{r.body}</div>
+                  </div>
+                ))}
+                {!replies.length && (
+                  <p className="thread-hint">No replies yet. Add an update below.</p>
+                )}
+              </div>
+            )}
+
+            {selected.status !== 'resolved' && (
+              <>
+                <textarea
+                  className="help-input help-textarea"
+                  placeholder="Write a reply…"
+                  value={replyText}
+                  onChange={(e) => setReplyText(e.target.value)}
+                  rows={3}
+                />
+                <button
+                  className="help-submit"
+                  onClick={sendReply}
+                  disabled={replyBusy || !replyText.trim()}
+                >
+                  {replyBusy ? 'Sending…' : 'Send reply'}
+                </button>
+              </>
+            )}
+
+            <a
+              className="help-email-card"
+              href={supportMailto(
+                `Lumixo Support Request — ${formatTicketId(selected)}`,
+                `Ticket ID: ${formatTicketId(selected)}\n\n`,
+              )}
+            >
+              <span className="help-email-label">Email support</span>
+              <span className="help-email-addr">{SUPPORT_EMAIL}</span>
+            </a>
+          </div>
+        ) : tab === 'help' ? (
           <div className="help-body">
             <section className="help-section">
               <h3>Frequently asked</h3>
               <div className="faq-list">
                 {FAQ.map((f, i) => (
                   <div key={i} className={`faq-item ${openFaq === i ? 'open' : ''}`}>
-                    <button className="faq-q" onClick={() => setOpenFaq(openFaq === i ? null : i)}>
-                      <span>{f.q}</span><span className="faq-caret">{openFaq === i ? '−' : '+'}</span>
+                    <button
+                      className="faq-q"
+                      onClick={() => setOpenFaq(openFaq === i ? null : i)}
+                    >
+                      <span>{f.q}</span>
+                      <span className="faq-caret">{openFaq === i ? '−' : '+'}</span>
                     </button>
                     {openFaq === i && <div className="faq-a">{f.a}</div>}
                   </div>
@@ -104,9 +261,22 @@ export function HelpSupportModal({ onClose }: { onClose: () => void }) {
 
             <section className="help-section">
               <h3>Contact us</h3>
+              <a className="help-email-card" href={supportMailto('Lumixo Support Request')}>
+                <span className="help-email-label">Email support</span>
+                <span className="help-email-addr">{SUPPORT_EMAIL}</span>
+                <span className="help-email-hint">Opens your mail app · subject pre-filled</span>
+              </a>
+            </section>
+
+            <section className="help-section">
+              <h3>Submit a ticket</h3>
               <div className="kind-row">
                 {KINDS.map((k) => (
-                  <button key={k.id} className={`kind-pill ${kind === k.id ? 'active' : ''}`} onClick={() => setKind(k.id)}>
+                  <button
+                    key={k.id}
+                    className={`kind-pill ${kind === k.id ? 'active' : ''}`}
+                    onClick={() => setKind(k.id)}
+                  >
                     {k.label}
                   </button>
                 ))}
@@ -131,35 +301,58 @@ export function HelpSupportModal({ onClose }: { onClose: () => void }) {
               </button>
             </section>
 
-            <section className="help-section legal">
-              <h3>Trust, safety &amp; privacy</h3>
-              <ul className="legal-list">
-                <li>🔐 Conversations are gated by row-level security — only participants can read them.</li>
-                <li>🚫 Block &amp; report abusive users from any direct chat (•••).</li>
-                <li>📜 Grievance officer: complaints acknowledged within 48 hours, resolved within 15 days.</li>
-                <li>📄 Terms of Service · Privacy Policy · Community Guidelines apply to all members.</li>
-              </ul>
-              <div className="help-credit">FUTUREHAT — developed by {OWNER}</div>
+            <section className="help-section grievance">
+              <h3>Grievance notice</h3>
+              <p className="grievance-team">{GRIEVANCE_TEAM}</p>
+              <p className="grievance-text">
+                For complaints under applicable IT Rules, submit a “Grievance” ticket above or email{' '}
+                <a href={supportMailto('Lumixo Support Request')}>{SUPPORT_EMAIL}</a>.
+              </p>
+              <p className="grievance-text">
+                Our Grievance Team acknowledges complaints within 48 hours and aims to resolve them
+                within 15 days, subject to applicable law.
+              </p>
             </section>
+
+            <div className="help-credit">
+              {APP_NAME} v{APP_VERSION}
+              <br />
+              {CREDIT}
+            </div>
           </div>
         ) : (
           <div className="help-body">
             {loadingTickets ? (
               <div className="help-empty">Loading your tickets…</div>
             ) : tickets.length === 0 ? (
-              <div className="help-empty">No tickets yet. Submit one from “Get help”.</div>
+              <div className="help-empty">
+                <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 8 }} aria-hidden>
+                  <LumixoCat mood="sleeping" size="sm" decorative />
+                </div>
+                No tickets yet. Submit one from “Get help”.
+              </div>
             ) : (
               <div className="ticket-list">
                 {tickets.map((t) => (
-                  <div key={t.id} className="ticket-card">
+                  <button
+                    key={t.id}
+                    type="button"
+                    className="ticket-card clickable"
+                    onClick={() => openTicket(t)}
+                  >
                     <div className="ticket-head">
-                      <span className="ticket-kind">{KINDS.find((k) => k.id === t.kind)?.label || t.kind}</span>
-                      <span className={`ticket-status ${t.status}`}>{t.status.replace('_', ' ')}</span>
+                      <span className="ticket-id">{formatTicketId(t)}</span>
+                      <span className={`ticket-status ${t.status}`}>
+                        {STATUS_LABEL[t.status]}
+                      </span>
+                    </div>
+                    <div className="ticket-kind">
+                      {KINDS.find((k) => k.id === t.kind)?.label || t.kind}
                     </div>
                     <div className="ticket-subject">{t.subject}</div>
                     <div className="ticket-body">{t.body}</div>
                     <div className="ticket-date">{new Date(t.created_at).toLocaleString()}</div>
-                  </div>
+                  </button>
                 ))}
               </div>
             )}
@@ -167,6 +360,34 @@ export function HelpSupportModal({ onClose }: { onClose: () => void }) {
         )}
 
         {toast && <div className="help-toast">{toast}</div>}
+
+        {successId && (
+          <div className="help-success-overlay" onClick={() => setSuccessId(null)}>
+            <div className="help-success-card" onClick={(e) => e.stopPropagation()}>
+              <div className="help-success-icon">✓</div>
+              <h3>Ticket submitted</h3>
+              <p className="help-success-id">{successId}</p>
+              <p>
+                We’ve received your request. Status: <strong>Open</strong>. Track updates under My
+                tickets or email {SUPPORT_EMAIL}.
+              </p>
+              <div className="help-success-actions">
+                <a
+                  className="help-submit secondary"
+                  href={supportMailto(
+                    `Lumixo Support Request — ${successId}`,
+                    `Ticket ID: ${successId}\n\n`,
+                  )}
+                >
+                  Email support
+                </a>
+                <button type="button" className="help-submit" onClick={() => setSuccessId(null)}>
+                  Done
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </motion.div>
     </motion.div>
   );

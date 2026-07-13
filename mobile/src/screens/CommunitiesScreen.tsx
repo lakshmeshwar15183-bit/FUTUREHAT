@@ -1,6 +1,6 @@
-// FUTUREHAT mobile — Communities tab: list the communities you're in, create new.
+// Lumixo mobile — Communities tab: list the communities you're in, create new.
 import React, { useCallback, useMemo, useState } from 'react';
-import { Alert, FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -11,7 +11,9 @@ import type { Community } from '../lib/shared';
 import { getCache, setCache } from '../lib/localCache';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import Avatar from '../components/Avatar';
+import { LumixoCat } from '../components/LumixoCat';
 import type { RootStackParamList } from '../navigation/types';
+import { Alert } from '../ui/dialog';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -111,7 +113,7 @@ export default function CommunitiesScreen() {
         ListEmptyComponent={
           !loading ? (
             <View style={styles.empty}>
-              <Ionicons name="people-outline" size={56} color={colors.textFaint} />
+              <LumixoCat mood="wave" size="md" decorative />
               <Text style={styles.emptyText}>No communities yet</Text>
               <Text style={styles.emptySub}>Create one to bring people together in channels.</Text>
             </View>

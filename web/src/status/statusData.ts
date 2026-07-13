@@ -1,4 +1,4 @@
-// FUTUREHAT web — shared status helpers used by the strip, viewer and composer.
+// Lumixo web — shared status helpers used by the strip, viewer and composer.
 // Groups active statuses by author (WhatsApp-style), marks each group seen/unseen
 // for the current user, and classifies media type. Mirrors the mobile helper so
 // both platforms behave identically.
@@ -81,7 +81,7 @@ export function buildStatusGroups(
     const p = chron[0].profile;
     return {
       userId,
-      name: userId === myId ? 'My status' : p?.display_name || 'FUTUREHAT user',
+      name: userId === myId ? 'My status' : p?.display_name || 'Lumixo user',
       avatar: p?.avatar_url ?? null,
       statuses: chron,
       allSeen: userId === myId ? true : chron.every((s) => viewed.has(s.id)),

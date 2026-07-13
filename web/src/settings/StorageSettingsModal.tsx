@@ -1,4 +1,4 @@
-// FUTUREHAT — Storage & data: storage usage estimate, data-saver for calls,
+// Lumixo — Storage & data: storage usage estimate, data-saver for calls,
 // upload quality reminder, and clear-cached-media. Self-contained; the data-saver
 // flag lives in user_preferences.extra.storage (read by the call layer to lower
 // video constraints). Some native items (per-network download rules, OS-level

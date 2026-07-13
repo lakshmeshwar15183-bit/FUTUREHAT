@@ -1,11 +1,10 @@
-// FUTUREHAT mobile — full-screen Status viewer (WhatsApp-grade).
+// Lumixo mobile — full-screen Status viewer (WhatsApp-grade).
 // Auto-advancing progress bars, tap-to-nav, hold-to-pause, swipe-down to dismiss.
 // Supports image / text / video / audio, captions, mute toggle, next-media preload,
 // reply-as-DM, delete (own), and a live "seen by" list driven by realtime views.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Animated,
   Image,
   PanResponder,
@@ -18,6 +17,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { ResizeMode, Video, Audio, type AVPlaybackStatus } from 'expo-av';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { supabase } from '../../lib/supabase';
 import {
@@ -34,6 +34,7 @@ import { formatLastSeen } from '../../lib/time';
 import { useColors, spacing, radius, font, type Palette } from '../../theme';
 import Avatar from '../Avatar';
 import { type StatusGroup, isVideoStatus, isAudioStatus } from './statusData';
+import { Alert } from '../../ui/dialog';
 
 const IMAGE_DURATION = 5000;
 const AUDIO_FALLBACK = 15000; // used only until real audio duration is known
@@ -50,6 +51,7 @@ export default function StatusViewer({
   onChanged: () => void;
 }) {
   const colors = useColors();
+  const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
   const [statuses, setStatuses] = useState<Status[]>(group.statuses);
@@ -245,8 +247,8 @@ export default function StatusViewer({
 
   return (
     <Animated.View style={[styles.viewer, { transform: [{ translateY: dismissY }] }]} {...pan.panHandlers}>
-      {/* progress bars */}
-      <View style={styles.progressRow}>
+      {/* progress bars — top inset for status bar / cutout */}
+      <View style={[styles.progressRow, { paddingTop: Math.max(insets.top, 8) + 8 }]}>
         {statuses.map((s, i) => (
           <View key={s.id} style={styles.progressTrack}>
             <Animated.View
@@ -270,7 +272,7 @@ export default function StatusViewer({
       <View style={styles.viewerHeader}>
         <Avatar uri={group.profile?.avatar_url} name={isMine ? 'Me' : group.profile?.display_name} size={36} />
         <View style={styles.viewerHeaderText}>
-          <Text style={styles.viewerName}>{isMine ? 'My status' : group.profile?.display_name ?? 'FUTUREHAT user'}</Text>
+          <Text style={styles.viewerName}>{isMine ? 'My status' : group.profile?.display_name ?? 'Lumixo user'}</Text>
           <Text style={styles.viewerTime}>{formatLastSeen(current.created_at)}</Text>
         </View>
         {hasSound && (
@@ -347,9 +349,9 @@ export default function StatusViewer({
         />
       </View>
 
-      {/* footer */}
+      {/* footer — bottom inset for system nav / gesture bar */}
       {isMine ? (
-        <View style={styles.footerMine}>
+        <View style={[styles.footerMine, { paddingBottom: Math.max(insets.bottom, 8) + 8 }]}>
           <Pressable style={styles.seenBtn} onPress={loadViewers}>
             <Ionicons name="eye-outline" size={18} color="#fff" />
             <Text style={styles.seenText}>{viewCount > 0 ? `Seen by ${viewCount}` : 'Seen by'}</Text>
@@ -360,7 +362,7 @@ export default function StatusViewer({
               {viewers.map((v) => (
                 <View key={v.viewer_id} style={styles.viewerItem}>
                   <Avatar uri={v.profile?.avatar_url} name={v.profile?.display_name} size={32} />
-                  <Text style={styles.viewerItemName}>{v.profile?.display_name ?? 'FUTUREHAT user'}</Text>
+                  <Text style={styles.viewerItemName}>{v.profile?.display_name ?? 'Lumixo user'}</Text>
                   <Text style={styles.viewerItemTime}>{formatLastSeen(v.viewed_at)}</Text>
                 </View>
               ))}
@@ -368,7 +370,7 @@ export default function StatusViewer({
           )}
         </View>
       ) : (
-        <View style={styles.footerReply}>
+        <View style={[styles.footerReply, { paddingBottom: Math.max(insets.bottom, 8) + 8 }]}>
           <TextInput
             style={styles.replyInput}
             placeholder={`Reply to ${group.profile?.display_name ?? 'status'}…`}
@@ -390,7 +392,7 @@ export default function StatusViewer({
 const makeStyles = (colors: Palette) =>
   StyleSheet.create({
     viewer: { flex: 1, backgroundColor: '#000' },
-    progressRow: { flexDirection: 'row', gap: 4, paddingTop: spacing(12), paddingHorizontal: spacing(3) },
+    progressRow: { flexDirection: 'row', gap: 4, paddingHorizontal: spacing(3) },
     progressTrack: { flex: 1, height: 3, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.3)', overflow: 'hidden' },
     progressFill: { height: '100%', backgroundColor: '#fff', borderRadius: 2 },
     viewerHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing(3), paddingVertical: spacing(2.5), gap: spacing(2.5) },
@@ -415,14 +417,14 @@ const makeStyles = (colors: Palette) =>
     },
     tapLeft: { position: 'absolute', left: 0, top: 0, bottom: 0, width: '32%' },
     tapRight: { position: 'absolute', right: 0, top: 0, bottom: 0, width: '68%' },
-    footerReply: { flexDirection: 'row', alignItems: 'center', gap: spacing(2.5), padding: spacing(3), paddingBottom: spacing(6) },
+    footerReply: { flexDirection: 'row', alignItems: 'center', gap: spacing(2.5), paddingHorizontal: spacing(3), paddingTop: spacing(3) },
     replyInput: {
       flex: 1, backgroundColor: 'rgba(255,255,255,0.12)', borderColor: 'rgba(255,255,255,0.25)',
       borderWidth: 1, borderRadius: 24, paddingHorizontal: spacing(4), paddingVertical: spacing(2.5),
       color: '#fff', fontSize: font.body,
     },
     replySend: { width: 46, height: 46, borderRadius: 23, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
-    footerMine: { paddingHorizontal: spacing(3), paddingBottom: spacing(6), paddingTop: spacing(2) },
+    footerMine: { paddingHorizontal: spacing(3), paddingTop: spacing(2) },
     seenBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing(2), paddingVertical: spacing(2.5) },
     seenText: { color: '#fff', fontSize: font.body, fontWeight: '500' },
     viewersList: { maxHeight: 240, backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: radius.md, padding: spacing(2) },

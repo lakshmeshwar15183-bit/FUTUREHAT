@@ -1,4 +1,4 @@
-// FUTUREHAT+ — pricing plans. Prices in INR.
+// Lumixo+ — pricing plans. Prices in INR.
 
 import type { PlanId } from '../types.js';
 

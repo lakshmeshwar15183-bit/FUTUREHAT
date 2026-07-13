@@ -1,11 +1,11 @@
-// FUTUREHAT+ — upgrade page. Plans, full feature grid, and a real checkout that
+// Lumixo+ — upgrade page. Plans, full feature grid, and a real checkout that
 // activates the subscription in the database on success.
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../AuthContext';
 import { usePremium } from '../PremiumContext';
-import { activateSubscription, cancelSubscription } from '@shared/premiumApi';
+import { cancelSubscription } from '@shared/premiumApi';
 import { supabase } from '../supabase';
 import { PLAN_LIST, PLANS, formatInr } from '@shared/premium/plans';
 import {
@@ -14,33 +14,60 @@ import {
   type FeatureCategory,
 } from '@shared/premium/features';
 import type { PlanId } from '@shared/types';
-import { getPaymentProvider, activeProviderId } from '../payments';
+import { getPaymentProvider, refreshPaymentsReady, paymentsLikelyReady } from '../payments';
 import { modalBackdrop, modalPanel, spring } from '../motion';
 import './UpgradeModal.css';
 
 const CATEGORY_ORDER: FeatureCategory[] = [
-  'customization', 'stickers', 'ai', 'messaging', 'privacy', 'storage', 'identity',
+  'customization', 'stickers', 'messaging', 'privacy', 'storage', 'identity',
 ];
 
 export function UpgradeModal({ onClose }: { onClose: () => void }) {
   const { user, profile } = useAuth();
-  const { isPremium, subscription, refresh } = usePremium();
+  const {
+    isPremium,
+    subscription,
+    isActivating,
+    beginActivation,
+    completeActivation,
+    failActivation,
+  } = usePremium();
   const [plan, setPlan] = useState<PlanId>('yearly');
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState('');
   const [showSoon, setShowSoon] = useState(false);
-  // Purchases are gated until a real gateway is configured. The moment Razorpay
-  // keys are set (VITE_RAZORPAY_KEY_ID → activeProviderId() === 'razorpay'), the
-  // real checkout button automatically replaces the "Available soon" CTA — no
-  // code change needed. To force-enable for another gateway, adjust this line.
-  const paymentsReady = activeProviderId() === 'razorpay';
+  const [paymentsReady, setPaymentsReady] = useState(paymentsLikelyReady());
+  const [configLoading, setConfigLoading] = useState(true);
+
+  // Server is source of truth for whether Razorpay secrets are configured.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setConfigLoading(true);
+      const ready = await refreshPaymentsReady();
+      if (alive) {
+        setPaymentsReady(ready);
+        setConfigLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
 
   async function handleUpgrade() {
     if (!user) return;
+    // P0: never run free/manual activation. Only real Razorpay (or future gateways).
+    if (!paymentsReady) {
+      setShowSoon(true);
+      return;
+    }
     setBusy(true);
     setError('');
     try {
+      if (!navigator.onLine) {
+        setError('No internet connection. Connect and try again.');
+        return;
+      }
       const provider = getPaymentProvider();
       const result = await provider.checkout({
         plan,
@@ -52,12 +79,24 @@ export function UpgradeModal({ onClose }: { onClose: () => void }) {
         setError(result.error || 'Payment was not completed');
         return;
       }
-      const { error: actErr } = await activateSubscription(supabase, plan, result);
-      if (actErr) throw actErr;
-      await refresh();
+      if (result.provider === 'manual') {
+        setError('Secure payments are not available. Manual activation is disabled.');
+        return;
+      }
+      // Instant unlock + silent server reconcile — no full app reload / logout.
+      beginActivation();
       setDone(true);
+      setBusy(false);
+      try {
+        await completeActivation();
+      } catch {
+        failActivation();
+        setError('Payment succeeded but confirmation is still processing. Refresh if features stay locked.');
+        setDone(false);
+      }
     } catch (e: any) {
       setError(e.message || 'Could not activate subscription');
+      setBusy(false);
     } finally {
       setBusy(false);
     }
@@ -68,7 +107,7 @@ export function UpgradeModal({ onClose }: { onClose: () => void }) {
     setError('');
     const { error: cancelErr } = await cancelSubscription(supabase);
     if (cancelErr) setError(cancelErr.message || 'Could not cancel subscription');
-    else await refresh();
+    else await completeActivation();
     setBusy(false);
   }
 
@@ -81,22 +120,28 @@ export function UpgradeModal({ onClose }: { onClose: () => void }) {
           <motion.div className="upgrade-crest" initial={{ scale: 0.6, rotate: -10 }} animate={{ scale: 1, rotate: 0 }} transition={spring}>
             ✦
           </motion.div>
-          <h1>FUTUREHAT<span className="plus">+</span></h1>
+          <h1>Lumixo<span className="plus">+</span></h1>
           <p>Premium enhancements. Every core feature stays free, forever.</p>
         </div>
 
         <AnimatePresence mode="wait">
-          {done ? (
+          {done || (isPremium && isActivating) ? (
             <motion.div key="done" className="upgrade-success" initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }}>
-              <div className="success-check">🎉</div>
-              <h2>Welcome to FUTUREHAT+</h2>
-              <p>Your premium features are now unlocked.</p>
-              <button className="upgrade-cta" onClick={onClose}>Start exploring</button>
+              <div className="success-check">{isActivating ? '✨' : '🎉'}</div>
+              <h2>{isActivating ? 'Activating Premium…' : 'Welcome to Lumixo+'}</h2>
+              <p>
+                {isActivating
+                  ? 'Features are unlocking now. You can keep chatting — no restart needed.'
+                  : 'Your premium features are now unlocked.'}
+              </p>
+              <button className="upgrade-cta" onClick={onClose} disabled={false}>
+                {isActivating ? 'Continue' : 'Start exploring'}
+              </button>
             </motion.div>
           ) : isPremium ? (
             <motion.div key="member" className="upgrade-member" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
               <div className="member-status">
-                <span className="fh-badge">✦ FUTUREHAT+</span>
+                <span className="fh-badge">✦ Lumixo+</span>
                 <p>
                   {subscription?.plan === 'yearly' ? 'Yearly' : 'Monthly'} plan ·
                   {subscription?.cancel_at_period_end ? ' ends ' : ' renews '}
@@ -129,18 +174,24 @@ export function UpgradeModal({ onClose }: { onClose: () => void }) {
 
               {error && <div className="upgrade-error">{error}</div>}
 
-              {paymentsReady ? (
+              {configLoading ? (
+                <button type="button" className="upgrade-cta" disabled>
+                  <span className="fh-spinner" style={{ width: 20, height: 20, borderWidth: 2 }} />
+                </button>
+              ) : paymentsReady ? (
                 <motion.button whileTap={{ scale: 0.97 }} className="upgrade-cta" disabled={busy} onClick={handleUpgrade}>
                   {busy ? <span className="fh-spinner" style={{ width: 20, height: 20, borderWidth: 2 }} /> :
                     `Upgrade — ${formatInr(PLANS[plan].priceInr)}/${PLANS[plan].period}`}
                 </motion.button>
               ) : (
                 <button type="button" className="upgrade-cta soon" onClick={() => setShowSoon(true)}>
-                  Get FUTUREHAT+ <span className="soon-tag">🟡 Available soon</span>
+                  Get Lumixo+ <span className="soon-tag">Payments not configured</span>
                 </button>
               )}
               <div className="pay-note">
-                {paymentsReady ? 'Secure payment via Razorpay' : 'Secure checkout is coming in a future update.'}
+                {paymentsReady
+                  ? 'Secure payment via Razorpay · premium unlocks only after server verification'
+                  : 'Configure Razorpay secrets on the server to enable checkout.'}
               </div>
             </motion.div>
           )}
@@ -171,7 +222,7 @@ export function UpgradeModal({ onClose }: { onClose: () => void }) {
           })}
         </div>
 
-        <div className="upgrade-footer">Developed by LAKSHMESHWAR PANDEY</div>
+        <div className="upgrade-footer">© Lumixo. All rights reserved.</div>
 
         <AnimatePresence>
           {showSoon && (
@@ -180,8 +231,8 @@ export function UpgradeModal({ onClose }: { onClose: () => void }) {
               <motion.div className="soon-card" initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
                 onClick={(e) => e.stopPropagation()}>
                 <div className="soon-emoji">🟡</div>
-                <h3>Available soon</h3>
-                <p>Premium subscriptions will be available in a future update once secure payment integration is completed.</p>
+                <h3>Payments unavailable</h3>
+                <p>Secure Razorpay billing is not configured on the server yet. Premium cannot be purchased until RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET are set on the payments Edge Function.</p>
                 <button className="upgrade-cta" onClick={() => setShowSoon(false)}>Got it</button>
               </motion.div>
             </motion.div>

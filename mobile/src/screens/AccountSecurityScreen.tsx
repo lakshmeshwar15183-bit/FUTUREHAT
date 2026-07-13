@@ -1,8 +1,8 @@
-// FUTUREHAT mobile — Account & Security: email/password/phone, two-step
+// Lumixo mobile — Account & Security: email/password/phone, two-step
 // verification (Supabase TOTP), login history, and account deletion with a
 // 30-day recovery window. Standalone; persists via accountApi + Supabase auth.
 import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { useNavigation } from '@react-navigation/native';
@@ -15,6 +15,7 @@ import {
   getDeletionRequest, getSecurityEvents, type DeletionRequest, type SecurityEvent,
 } from '../lib/shared';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
+import { Alert } from '../ui/dialog';
 
 export default function AccountSecurityScreen() {
   const colors = useColors();

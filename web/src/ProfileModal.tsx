@@ -1,10 +1,11 @@
-// FUTUREHAT — Profile settings modal
+// Lumixo — Profile settings modal
 
 import { useState, useEffect, useMemo, type FormEvent } from 'react';
 import { useAuth } from './AuthContext';
 import { supabase } from './supabase';
 import { updateMyProfile, uploadAvatar } from '@shared/api';
 import { useEscapeToClose } from './useEscapeToClose';
+import { safeMediaSrc } from './util/safeUrl';
 import './ProfileModal.css';
 
 interface Props {
@@ -79,8 +80,8 @@ export function ProfileModal({ onClose }: Props) {
             <div className="avatar-preview">
               {avatarPreview ? (
                 <img src={avatarPreview} alt="Preview" />
-              ) : profile?.avatar_url ? (
-                <img src={profile.avatar_url} alt="Avatar" />
+              ) : safeMediaSrc(profile?.avatar_url) ? (
+                <img src={safeMediaSrc(profile?.avatar_url)!} alt="Avatar" />
               ) : (
                 <div className="avatar-placeholder">{displayName?.[0] || '?'}</div>
               )}
@@ -121,7 +122,7 @@ export function ProfileModal({ onClose }: Props) {
             <textarea
               value={about}
               onChange={(e) => setAbout(e.target.value)}
-              placeholder="Hey there! I am using FUTUREHAT."
+              placeholder="Hey there! I am using Lumixo."
               rows={3}
             />
           </label>

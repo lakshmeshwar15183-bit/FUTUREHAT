@@ -1,4 +1,4 @@
-// FUTUREHAT — client enforcement of the owner/admin controls. Mounted high in the
+// Lumixo — client enforcement of the owner/admin controls. Mounted high in the
 // tree; it makes the admin surface REAL on the client side:
 //   • registers this browser as a device (so the Owner can see/revoke it),
 //   • signs out banned / disabled / locked accounts,
@@ -96,7 +96,7 @@ export function AdminGate() {
   }, [user]);
 
   if (blocked) return <Overlay title="Account unavailable" body={`Your account has been ${blocked}. Contact support if you believe this is a mistake.`} />;
-  if (maintenance) return <Overlay title="Under maintenance" body="FUTUREHAT is temporarily unavailable. Please check back soon." />;
+  if (maintenance) return <Overlay title="Under maintenance" body="Lumixo is temporarily unavailable. Please check back soon." />;
   if (announcement && !dismissed) {
     return (
       <div style={bannerStyle} role="status">

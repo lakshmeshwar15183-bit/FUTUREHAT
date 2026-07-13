@@ -1,35 +1,49 @@
-// FUTUREHAT mobile — a single chat bubble. Handles text/image/video/audio/file,
+// Lumixo mobile — a single chat bubble. Handles text/image/video/audio/file,
 // reply preview, reaction chips, edited marker, and delivery ticks.
 import React, { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-// expo-image (not RN <Image>) so photos are disk-cached — a downloaded image then
-// opens instantly and, crucially, still opens OFFLINE (P3), same as avatars.
-import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 
-import type { Message, MessageReaction } from '../lib/shared';
+import type { Message, MessageReaction, TickStatus } from '../lib/shared';
+import { isVideoMessage, tickIsDouble, tickIsRead } from '../lib/shared';
 import { formatTime } from '../lib/time';
+import { isStickerUrl, resolveSticker } from '../lib/stickers';
 import { useColors, radius, font, type Palette } from '../theme';
 import AudioMessage from './AudioMessage';
+import StickerView from './StickerView';
+import ChatMediaTile from './ChatMediaTile';
 
-export type TickStatus = 'sending' | 'sent' | 'delivered' | 'read';
+export type { TickStatus };
 
-// Single source of truth for the long-press activation delay, shared by the
-// outer bubble AND every nested interactive child (reply/image/video/audio).
-// This is what makes the ENTIRE bubble one continuous long-press target: any
-// child that captures the touch responder still fires the same menu.
-const LONG_PRESS_MS = 250;
+// Long-press is handled ONCE, natively, by the SwipeToReply wrapper's RNGH
+// Gesture.LongPress covering the whole bubble subtree — so no child here needs
+// its own onLongPress/delayLongPress. Taps (open image, jump to reply, toggle
+// select) stay on these Pressables; the native long-press arbiter sits above.
 
-// Videos are stored as type 'file'; detect them by extension.
+// Legacy videos may still be type 'file'; detect by extension. New sends use type='video'.
 const VIDEO_RE = /\.(mp4|webm|mov|m4v|ogv|ogg)(\?|#|$)/i;
 export const isVideoUrl = (url?: string | null) => !!url && VIDEO_RE.test(url);
 
 // One-line, type-aware summary of a quoted message (matches the composer preview).
-export function replySummary(m: { type: string; content: string | null; media_url: string | null }): string {
-  if (m.content && m.content.trim()) return m.content;
+export function replySummary(m: {
+  type: string;
+  content: string | null;
+  media_url: string | null;
+  media_meta?: Message['media_meta'];
+}): string {
+  const sticker = resolveSticker(m.media_meta as any, m.media_url);
+  if (sticker) return `${sticker.emoji} Sticker`;
+  if (m.media_meta && (m.media_meta as { sticker?: boolean }).sticker) {
+    const e = (m.media_meta as { emoji?: string }).emoji;
+    return e ? `${e} Sticker` : '🎀 Sticker';
+  }
+  if (isStickerUrl(m.media_url)) return '🎀 Sticker';
+  if (m.content && m.content.trim() && m.type === 'text') return m.content;
   if (m.type === 'image') return /\.gif(\?|#|$)/i.test(m.media_url ?? '') ? '🎞️ GIF' : '📷 Photo';
   if (m.type === 'audio') return '🎤 Voice message';
+  if (m.type === 'video') return '🎬 Video';
   if (m.type === 'file') return isVideoUrl(m.media_url) ? '🎬 Video' : '📄 Document';
+  if (m.content && m.content.trim()) return m.content;
   return 'Attachment';
 }
 
@@ -44,12 +58,13 @@ interface Props {
   onReplyPress?: () => void;
   reactions?: MessageReaction[];
   tick?: TickStatus;
-  onLongPress?: () => void;
   onPress?: () => void;
   selected?: boolean;
   /** Continuation of a run from the same sender — hides the tail + sender name. */
   grouped?: boolean;
   onOpenImage?: (url: string) => void;
+  /** Open a document attachment (download + share / OS open). */
+  onOpenDocument?: (message: Message) => void;
   /** Tapping an existing reaction pill toggles the current user's reaction for
    *  that emoji (WhatsApp/web parity). */
   onReactionPress?: (emoji: string) => void;
@@ -61,6 +76,9 @@ interface Props {
   selectionMode?: boolean;
   /** Show a small star in the meta row when this message is bookmarked. */
   starred?: boolean;
+  /** View-Once (0030): this View-Once message has already been consumed by the
+   *  current user — render an opened/locked state instead of the image. */
+  viewOnceSpent?: boolean;
 }
 
 /** Split text into <Text> runs, wrapping case-insensitive matches of `term`. */
@@ -102,16 +120,17 @@ function MessageBubble({
   onReplyPress,
   reactions = [],
   tick,
-  onLongPress,
   onPress,
   selected,
   grouped: groupedRun,
   onOpenImage,
+  onOpenDocument,
   onReactionPress,
   highlight = '',
   activeMatch = false,
   selectionMode = false,
   starred = false,
+  viewOnceSpent = false,
 }: Props) {
   const colors = useColors();
   const styles = useMemo(() => makeStyles(colors), [colors]);
@@ -138,16 +157,14 @@ function MessageBubble({
 
   return (
     <Pressable
-      onLongPress={onLongPress}
       onPress={onPress}
-      delayLongPress={LONG_PRESS_MS}
       // WhatsApp-style press-and-hold feedback: the bubble subtly scales/dims while
-      // held (before the ~250ms long-press fires the action sheet + haptic).
+      // held (the wrapper's native long-press then fires the action sheet + haptic).
       style={({ pressed }) => [
         styles.wrap, wrapTight,
         mine ? styles.wrapMine : styles.wrapTheirs,
         selected && styles.wrapSelected,
-        pressed && !!onLongPress && styles.wrapPressed,
+        pressed && styles.wrapPressed,
       ]}
     >
       <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs, bubbleShape, activeMatch && styles.bubbleActiveMatch]}>
@@ -163,8 +180,6 @@ function MessageBubble({
         {replyTo && (
           <Pressable
             onPress={selectionMode ? onPress : onReplyPress}
-            onLongPress={onLongPress}
-            delayLongPress={LONG_PRESS_MS}
             style={[styles.reply, { borderLeftColor: colors.primary }]}
           >
             <Text style={styles.replyName} numberOfLines={1}>
@@ -176,49 +191,106 @@ function MessageBubble({
           </Pressable>
         )}
 
-        {message.type === 'image' && message.media_url && (
-          <Pressable
-            onPress={() => onOpenImage?.(message.media_url!)}
-            onLongPress={onLongPress}
-            delayLongPress={LONG_PRESS_MS}
-          >
-            <Image
-              source={message.media_url}
-              style={styles.image}
-              cachePolicy="memory-disk"
-              contentFit="cover"
-              recyclingKey={message.media_url}
-            />
-          </Pressable>
-        )}
+        {message.type === 'image' && (() => {
+          const sticker = resolveSticker(message.media_meta as any, message.media_url);
+          if (sticker || (message.media_meta as { sticker?: boolean } | null)?.sticker) {
+            const emoji =
+              sticker?.emoji ??
+              (message.media_meta as { emoji?: string } | null)?.emoji ??
+              message.content?.trim() ??
+              '🎀';
+            const bg =
+              sticker?.bg ??
+              (message.media_meta as { bg?: string } | null)?.bg ??
+              '#2a3441';
+            const animated =
+              sticker?.animated ?? !!(message.media_meta as { animated?: boolean } | null)?.animated;
+            return (
+              <View style={styles.stickerWrap}>
+                <StickerView emoji={emoji} bg={bg} animated={animated} size={148} compact />
+              </View>
+            );
+          }
+          if (!message.media_url) return null;
+          const isVO = !!message.media_meta?.viewOnce;
+          const spent = isVO && !mine && viewOnceSpent;
+          // Recipient's unopened View-Once shows a locked tile (no thumbnail leak);
+          // a spent one shows an "opened" state and can't be reopened. Sender always
+          // sees their own thumbnail. Non-View-Once behaves exactly as before.
+          if (isVO && !mine) {
+            return (
+              <Pressable style={styles.voTile} onPress={() => !spent && onOpenImage?.(message.media_url!)}>
+                <Ionicons name={spent ? 'eye-off-outline' : 'eye-outline'} size={30} color={spent ? colors.textFaint : colors.primary} />
+                <Text style={[styles.voTileText, spent && { color: colors.textFaint }]}>
+                  {spent ? 'Opened' : 'View once — tap to view'}
+                </Text>
+              </Pressable>
+            );
+          }
+          const isGif = /\.gif(\?|#|$)/i.test(message.media_url ?? '');
+          return (
+            <>
+              <ChatMediaTile
+                message={message}
+                kind={isGif ? 'gif' : 'image'}
+                onOpen={(u) => onOpenImage?.(u)}
+                tint={colors.primary}
+              />
+              {isVO && (
+                <View style={styles.viewOnceTag}>
+                  <Ionicons name="eye" size={12} color="#fff" />
+                  <Text style={styles.viewOnceText}>View once</Text>
+                </View>
+              )}
+              {!!message.content?.trim() &&
+                renderHighlighted(message.content, highlight, [styles.text, { color: tint }], styles.highlightHit)}
+            </>
+          );
+        })()}
 
         {message.type === 'audio' && message.media_url && (
           <AudioMessage
             uri={message.media_url}
             tint={mine ? colors.bubbleOutText : colors.primary}
-            onLongPress={onLongPress}
           />
         )}
 
-        {message.type === 'file' && message.media_url && isVideoUrl(message.media_url) && (
-          <Pressable
-            onPress={() => onOpenImage?.(message.media_url!)}
-            onLongPress={onLongPress}
-            delayLongPress={LONG_PRESS_MS}
-            style={styles.videoTile}
-          >
-            <Ionicons name="play-circle" size={48} color="#fff" />
-            <Text style={styles.videoLabel} numberOfLines={1}>{message.content || 'Video'}</Text>
-          </Pressable>
+        {message.media_url && isVideoMessage(message) && (
+          <>
+            <ChatMediaTile
+              message={message}
+              kind="video"
+              onOpen={(u) => onOpenImage?.(u)}
+              tint={colors.primary}
+            />
+            {!!message.content?.trim() &&
+              renderHighlighted(message.content, highlight, [styles.text, { color: tint }], styles.highlightHit)}
+          </>
         )}
 
         {message.type === 'file' && message.media_url && !isVideoUrl(message.media_url) && (
-          <View style={styles.file}>
+          <Pressable
+            style={styles.file}
+            onPress={() =>
+              selectionMode
+                ? onPress?.()
+                : onOpenDocument?.(message) ?? onOpenImage?.(message.media_url!)
+            }
+          >
             <Ionicons name="document-outline" size={28} color={tint} />
-            <Text style={[styles.fileName, { color: tint }]} numberOfLines={1}>
-              {message.content || 'Attachment'}
-            </Text>
-          </View>
+            <View style={{ flex: 1, marginLeft: 8 }}>
+              <Text style={[styles.fileName, { color: tint, marginLeft: 0 }]} numberOfLines={1}>
+                {message.content || 'Attachment'}
+              </Text>
+              <Text style={{ color: mine ? colors.bubbleOutMuted : colors.textFaint, fontSize: 11, marginTop: 2 }}>
+                {(() => {
+                  const ext = (message.content || message.media_url || '').split('.').pop()?.toUpperCase();
+                  return ext && ext.length <= 5 ? `${ext} · Tap to download` : 'Tap to download';
+                })()}
+              </Text>
+            </View>
+            <Ionicons name="download-outline" size={18} color={tint} style={{ marginLeft: 6 }} />
+          </Pressable>
         )}
 
         {message.type === 'text' && !!message.content && (
@@ -235,9 +307,23 @@ function MessageBubble({
           </Text>
           {mine && tick && (
             <Ionicons
-              name={tick === 'sending' ? 'time-outline' : tick === 'sent' ? 'checkmark' : 'checkmark-done'}
+              name={
+                tick === 'failed'
+                  ? 'alert-circle'
+                  : tick === 'sending'
+                    ? 'time-outline'
+                    : tickIsDouble(tick)
+                      ? 'checkmark-done'
+                      : 'checkmark'
+              }
               size={15}
-              color={tick === 'read' ? '#53BDEB' : colors.bubbleOutMuted}
+              color={
+                tick === 'failed'
+                  ? '#EF4444'
+                  : tickIsRead(tick)
+                    ? '#53BDEB'
+                    : colors.bubbleOutMuted
+              }
               style={{ marginLeft: 3 }}
             />
           )}
@@ -284,7 +370,8 @@ function areEqual(a: Props, b: Props): boolean {
     a.activeMatch !== b.activeMatch ||
     a.highlight !== b.highlight ||
     a.senderName !== b.senderName ||
-    a.starred !== b.starred
+    a.starred !== b.starred ||
+    a.viewOnceSpent !== b.viewOnceSpent
   ) return false;
   const m = a.message, n = b.message;
   if (
@@ -304,59 +391,64 @@ export default React.memo(MessageBubble, areEqual);
 
 const makeStyles = (colors: Palette) =>
   StyleSheet.create({
-    wrap: { marginVertical: 3, paddingHorizontal: 10, maxWidth: '100%' },
+    wrap: { marginVertical: 2, paddingHorizontal: 10, maxWidth: '100%' },
     wrapMine: { alignItems: 'flex-end' },
     wrapTheirs: { alignItems: 'flex-start' },
-    wrapSelected: { backgroundColor: colors.primary + '22' },
-    wrapPressed: { transform: [{ scale: 0.98 }], opacity: 0.9 },
+    wrapSelected: { backgroundColor: colors.primary + '18' },
+    wrapPressed: { transform: [{ scale: 0.99 }], opacity: 0.92 },
     bubble: {
-      maxWidth: '82%',
-      borderRadius: radius.lg,
-      paddingHorizontal: 10,
-      paddingVertical: 7,
+      maxWidth: '80%',
+      borderRadius: 14,
+      paddingHorizontal: 9,
+      paddingVertical: 6,
     },
     bubbleMine: { backgroundColor: colors.bubbleOut, borderTopRightRadius: 4 },
     bubbleTheirs: { backgroundColor: colors.bubbleIn, borderTopLeftRadius: 4 },
-    bubbleActiveMatch: { borderWidth: 2, borderColor: colors.primary },
+    bubbleActiveMatch: { borderWidth: 1.5, borderColor: colors.primary },
     highlightHit: { backgroundColor: colors.primary, color: '#fff' },
-    sender: { color: colors.primary, fontSize: font.small, fontWeight: '700', marginBottom: 2 },
+    sender: { color: colors.primary, fontSize: 12.5, fontWeight: '700', marginBottom: 2, letterSpacing: -0.1 },
     forwarded: { flexDirection: 'row', alignItems: 'center', gap: 3, marginBottom: 2 },
     forwardedText: { fontSize: font.tiny, fontStyle: 'italic' },
-    text: { fontSize: font.body, lineHeight: 20 },
+    text: { fontSize: font.body, lineHeight: 19.5, letterSpacing: -0.1 },
     deleted: { fontSize: font.body, fontStyle: 'italic' },
-    image: { width: 220, height: 220, borderRadius: radius.md, marginBottom: 2 },
-    file: { flexDirection: 'row', alignItems: 'center', paddingVertical: 4, minWidth: 180 },
+    image: { width: 210, height: 210, borderRadius: 10, marginBottom: 2 },
+    stickerWrap: { marginBottom: 2, marginTop: 2 },
+    viewOnceTag: { position: 'absolute', left: 8, top: 8, flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 999, paddingHorizontal: 7, paddingVertical: 2 },
+    viewOnceText: { color: '#fff', fontSize: 10.5, fontWeight: '600' },
+    voTile: { width: 210, height: 110, borderRadius: 10, marginBottom: 2, alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: colors.surfaceAlt, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border },
+    voTileText: { color: colors.text, fontSize: font.small, fontWeight: '600' },
+    file: { flexDirection: 'row', alignItems: 'center', paddingVertical: 3, minWidth: 168 },
     fileName: { fontSize: font.body, marginLeft: 8, flex: 1 },
     videoTile: {
-      width: 220, height: 140, borderRadius: radius.md, marginBottom: 2,
-      backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center',
+      width: 210, height: 128, borderRadius: 10, marginBottom: 2,
+      backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center',
     },
-    videoLabel: { color: '#fff', fontSize: font.small, marginTop: 4, maxWidth: 200 },
+    videoLabel: { color: '#fff', fontSize: font.small, marginTop: 4, maxWidth: 190 },
     reply: {
-      borderLeftWidth: 3,
-      paddingLeft: 8,
+      borderLeftWidth: 2.5,
+      paddingLeft: 7,
       paddingVertical: 3,
       marginBottom: 4,
       borderRadius: 4,
-      backgroundColor: 'rgba(0,0,0,0.15)',
+      backgroundColor: 'rgba(0,0,0,0.12)',
     },
     replyName: { color: colors.primary, fontSize: font.tiny, fontWeight: '700' },
-    replyText: { fontSize: font.small },
+    replyText: { fontSize: 12.5, lineHeight: 16 },
     meta: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-end', marginTop: 2 },
     edited: { fontSize: 10, marginRight: 4 },
-    time: { fontSize: 10 },
+    time: { fontSize: 10.5, opacity: 0.9 },
     reactions: {
       flexDirection: 'row',
-      backgroundColor: colors.surfaceAlt,
+      backgroundColor: colors.surface,
       borderRadius: radius.pill,
-      paddingHorizontal: 6,
-      paddingVertical: 2,
-      marginTop: -6,
-      borderWidth: 1,
+      paddingHorizontal: 5,
+      paddingVertical: 1,
+      marginTop: -5,
+      borderWidth: StyleSheet.hairlineWidth,
       borderColor: colors.border,
     },
     reactionsMine: { marginRight: 6 },
     reactionsTheirs: { marginLeft: 6 },
-    reactionChip: { fontSize: 13, marginHorizontal: 1, color: colors.text },
+    reactionChip: { fontSize: 12.5, marginHorizontal: 1, color: colors.text },
     reactionChipMine: { color: colors.primary, fontWeight: '700' },
   });

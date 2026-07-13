@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — "Starred messages" browser. Read-only list of every message
+// Lumixo mobile — "Starred messages" browser. Read-only list of every message
 // the user has starred, across all chats (WhatsApp-style), backed by the additive
 // get_starred_messages() RPC (0014). Mirrors web StarredMessagesModal. Tapping a
 // row opens that conversation. Degrades to an empty state if the RPC isn't applied.
@@ -14,6 +14,7 @@ import type { StarredMessage } from '../lib/shared';
 import { getCache, setCache } from '../lib/localCache';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import Avatar from '../components/Avatar';
+import { LumixoCat } from '../components/LumixoCat';
 import type { RootStackParamList } from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -67,7 +68,7 @@ export default function StarredScreen() {
   if (items.length === 0) {
     return (
       <View style={styles.center}>
-        <Ionicons name="star-outline" size={54} color={colors.textFaint} />
+        <LumixoCat mood="sleeping" size="md" decorative />
         <Text style={styles.emptyTitle}>No starred messages yet</Text>
         <Text style={styles.emptySub}>Tap ⭐ on any message to save it here for quick access.</Text>
       </View>
@@ -96,7 +97,9 @@ export default function StarredScreen() {
               <Text style={styles.chat} numberOfLines={1}>{item.conversation_title ?? item.sender_name ?? 'Conversation'}</Text>
               <Text style={styles.when}>{whenLabel(item.starred_at)}</Text>
             </View>
-            <Text style={styles.sender} numberOfLines={1}>{item.sender_name ?? 'Unknown'}</Text>
+            <Text style={styles.sender} numberOfLines={1}>
+              {item.sender_name && item.sender_name !== 'Unknown' ? item.sender_name : 'Contact'}
+            </Text>
             <Text style={styles.preview} numberOfLines={2}>{preview(item)}</Text>
           </View>
           <Ionicons name="star" size={15} color={colors.accentPlus} style={{ marginLeft: spacing(2) }} />

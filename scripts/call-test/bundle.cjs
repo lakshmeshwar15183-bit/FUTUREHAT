@@ -34,12 +34,17 @@ __export(entry_exports, {
 module.exports = __toCommonJS(entry_exports);
 
 // ../../mobile/src/calls/webrtc.ts
-var import_react_native_webrtc = require("/Users/lakshmeshwarpandey/FUTUREHAT/scripts/call-test/mocks/react-native-webrtc.js");
-var import_react_native_incall_manager = __toESM(require("/Users/lakshmeshwarpandey/FUTUREHAT/scripts/call-test/mocks/react-native-incall-manager.js"));
-var import_supabase = require("/Users/lakshmeshwarpandey/FUTUREHAT/scripts/call-test/mocks/supabase.js");
-var import_shared = require("/Users/lakshmeshwarpandey/FUTUREHAT/scripts/call-test/mocks/shared.js");
-var clog = (...args) => console.log("[call]", ...args);
-var CONNECT_TIMEOUT_MS = 45e3;
+var import_react_native_webrtc = require("/Users/lakshmeshwarpandey/Lumixo/scripts/call-test/mocks/react-native-webrtc.js");
+var import_react_native_incall_manager = __toESM(require("/Users/lakshmeshwarpandey/Lumixo/scripts/call-test/mocks/react-native-incall-manager.js"));
+var import_supabase = require("/Users/lakshmeshwarpandey/Lumixo/scripts/call-test/mocks/supabase.js");
+var import_shared = require("/Users/lakshmeshwarpandey/Lumixo/scripts/call-test/mocks/shared.js");
+var clog = (...args) => {
+  if (typeof __DEV__ !== "undefined" && __DEV__) console.log("[call]", ...args);
+};
+var CONNECT_TIMEOUT_MS = 5e4;
+var ICE_RESTART_GRACE_MS = 3500;
+var DISCONNECT_TEARDOWN_MS = 2e4;
+var MAX_ICE_RESTARTS = 5;
 var ICE_SERVERS = (0, import_shared.buildIceServers)(
   process.env.EXPO_PUBLIC_TURN_URL ? {
     urls: process.env.EXPO_PUBLIC_TURN_URL,
@@ -47,6 +52,7 @@ var ICE_SERVERS = (0, import_shared.buildIceServers)(
     credential: process.env.EXPO_PUBLIC_TURN_CREDENTIAL
   } : null
 );
+var HAS_TURN = (0, import_shared.hasTurn)(ICE_SERVERS);
 var CallSession = class {
   constructor(callId, selfId, isCaller, type, cb) {
     this.callId = callId;
@@ -60,65 +66,132 @@ var CallSession = class {
   pc = null;
   signaling = null;
   localStream = null;
+  /** Aggregated remote stream — tracks are added as ontrack fires (audio then video). */
+  remoteStream = null;
   pendingCandidates = [];
   remoteDescSet = false;
   ended = false;
-  // Handshake state. The caller caches its offer and re-sends it on every `ready`
-  // heartbeat until it receives an answer; the callee caches its answer and
-  // re-sends it if a duplicate offer arrives (covers a lost answer). The callee
-  // pings `ready` until it sees the offer. This makes the SDP exchange resilient
-  // to the broadcast channel dropping messages sent before a peer subscribed.
   cachedOffer = null;
   cachedAnswer = null;
   answered = false;
   offerHandled = false;
   readyTimer = null;
   readyTicks = 0;
-  // Reconnect grace: a transient 'disconnected' (network blip, handoff) usually
-  // recovers to 'connected' on its own — don't tear the call down instantly.
   reconnectTimer = null;
-  // Connect watchdog: a hard upper bound on the *initial* connect. If we never
-  // reach 'connected' (a wedged handshake where the offer/answer is lost, or an
-  // ICE that stalls in 'checking' without ever transitioning to 'failed' — a
-  // known RN-WebRTC Android quirk), NOTHING else would ever fire, leaving the UI
-  // pinned on "Connecting…" forever. This timer guarantees the call instead ENDS
-  // (view unmounts) so the stuck state is impossible. Cleared on first connect.
+  iceRestartTimer = null;
   connectTimer = null;
-  // Guard so we only log the first successful connect (onConnected itself is
-  // idempotent on the UI side).
   connectedOnce = false;
+  iceRestartAttempts = 0;
+  facing = "user";
+  offerRetryTimer = null;
+  /** Serialize makeOffer so concurrent ready signals cannot glare-create offers. */
+  offerInFlight = null;
+  /** Serialize ICE restart so failed+disconnected dual edges cannot double-offer. */
+  iceRestartInFlight = false;
   muted = false;
   videoEnabled;
   speakerOn;
+  /** Lower capture + send resolution for weak networks / data saver. */
+  lowDataMode = false;
+  adaptiveTimer = null;
+  lastPath = "unknown";
   async start() {
     clog(this.isCaller ? "CALLER" : "CALLEE", "start()", this.type, "call", this.callId);
-    this.localStream = await import_react_native_webrtc.mediaDevices.getUserMedia({
-      // echo-cancellation / noise-suppression aren't in the RN-WebRTC TS types
-      // but are honoured by the native layer.
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true
-      },
-      video: this.type === "video" ? { facingMode: "user", frameRate: 30, width: 1280, height: 720 } : false
+    if (this.ended) return;
+    let gumStream;
+    try {
+      gumStream = await import_react_native_webrtc.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 1,
+          // Android WebRTC extras (ignored if unsupported).
+          googEchoCancellation: true,
+          googNoiseSuppression: true,
+          googAutoGainControl: true,
+          googHighpassFilter: true,
+          googTypingNoiseDetection: true
+        },
+        video: this.type === "video" ? {
+          facingMode: "user",
+          width: { min: 320, ideal: 1280, max: 1920 },
+          height: { min: 240, ideal: 720, max: 1080 },
+          frameRate: { min: 15, ideal: 30, max: 30 }
+        } : false
+      });
+    } catch (e) {
+      clog("getUserMedia failed", e);
+      this.end(false);
+      throw e;
+    }
+    if (this.ended) {
+      try {
+        gumStream.getTracks().forEach((t) => t.stop());
+      } catch {
+      }
+      return;
+    }
+    this.localStream = gumStream;
+    this.localStream.getAudioTracks().forEach((t) => {
+      t.enabled = true;
+    });
+    this.localStream.getVideoTracks().forEach((t) => {
+      t.enabled = this.videoEnabled;
     });
     this.cb.onLocalStream(this.localStream);
-    import_react_native_incall_manager.default.start({ media: this.type === "video" ? "video" : "audio" });
-    import_react_native_incall_manager.default.setForceSpeakerphoneOn(this.speakerOn);
-    this.pc = new import_react_native_webrtc.RTCPeerConnection({ iceServers: ICE_SERVERS });
-    this.localStream.getTracks().forEach((t) => this.pc.addTrack(t, this.localStream));
-    this.pc.ontrack = (e) => {
-      clog("ontrack", e.track?.kind, "streams:", e.streams?.length ?? 0);
-      if (e.streams && e.streams[0]) this.cb.onRemoteStream(e.streams[0]);
-    };
+    this.cb.onFacingChange?.(this.facing);
+    this.stopAllTones();
+    import_react_native_incall_manager.default.start({
+      media: this.type === "video" ? "video" : "audio",
+      auto: true,
+      ringback: ""
+      // always empty — we control tones ourselves
+    });
+    if (this.isCaller) {
+      try {
+        import_react_native_incall_manager.default.startRingback("_DTMF_");
+      } catch {
+      }
+    }
+    this.applyAudioRoute();
+    try {
+      import_react_native_incall_manager.default.setKeepScreenOn?.(this.type === "video" || this.speakerOn);
+    } catch {
+    }
+    try {
+      import_react_native_incall_manager.default.startProximitySensor?.();
+    } catch {
+    }
+    if (!HAS_TURN) {
+      clog(
+        "\u26A0\uFE0F NO TURN relay (EXPO_PUBLIC_TURN_* unset) \u2014 STUN only.",
+        "Cross-network calls will often fail. Configure TURN for production."
+      );
+    }
+    this.pc = new import_react_native_webrtc.RTCPeerConnection({
+      iceServers: ICE_SERVERS,
+      iceCandidatePoolSize: 16,
+      bundlePolicy: "max-bundle",
+      rtcpMuxPolicy: "require",
+      iceTransportPolicy: "all"
+    });
+    this.localStream.getTracks().forEach((t) => {
+      this.pc.addTrack(t, this.localStream);
+    });
+    try {
+      await this.preferCodecs();
+    } catch {
+    }
+    this.pc.ontrack = (e) => this.handleRemoteTrack(e);
     this.pc.onicecandidate = (e) => {
       if (e.candidate) {
         const c = e.candidate.candidate || "";
         const typ = /typ (\w+)/.exec(c)?.[1] ?? "?";
-        clog("local ICE candidate", typ);
+        clog("local ICE", typ);
         this.signaling?.send({ kind: "candidate", from: this.selfId, data: e.candidate });
       } else {
-        clog("local ICE gathering complete");
+        clog("ICE gathering complete");
       }
     };
     this.pc.onicegatheringstatechange = () => {
@@ -129,39 +202,40 @@ var CallSession = class {
         clearTimeout(this.reconnectTimer);
         this.reconnectTimer = null;
       }
+      if (this.iceRestartTimer) {
+        clearTimeout(this.iceRestartTimer);
+        this.iceRestartTimer = null;
+      }
       if (this.connectTimer) {
         clearTimeout(this.connectTimer);
         this.connectTimer = null;
       }
+      this.iceRestartAttempts = 0;
+      this.stopAllTones();
+      this.cb.onReconnecting?.(false);
       if (!this.connectedOnce) {
         this.connectedOnce = true;
         clog("\u2705 CONNECTED");
       }
       this.cb.onConnected();
+      void this.probeAndAdapt();
     };
     this.pc.onconnectionstatechange = () => {
       const st = this.pc?.connectionState;
       clog("connectionState:", st);
-      if (st === "connected") {
-        markConnected();
-      } else if (st === "disconnected") {
-        this.scheduleReconnectTeardown();
-      } else if (st === "failed" || st === "closed") {
-        clog("connectionState terminal:", st, "\u2192 ending");
-        this.end(false);
+      if (st === "connected") markConnected();
+      else if (st === "disconnected") this.onTransportBlip();
+      else if (st === "failed" || st === "closed") {
+        if (st === "failed") this.tryIceRestart("connectionState=failed");
+        else this.end(false);
       }
     };
     this.pc.oniceconnectionstatechange = () => {
       const st = this.pc?.iceConnectionState;
       clog("iceConnectionState:", st);
-      if (st === "connected" || st === "completed") {
-        markConnected();
-      } else if (st === "disconnected") {
-        this.scheduleReconnectTeardown();
-      } else if (st === "failed") {
-        clog("\u274C iceConnectionState failed \u2014 no reachable candidate pair (check TURN)");
-        this.end(false);
-      }
+      if (st === "connected" || st === "completed") markConnected();
+      else if (st === "disconnected") this.onTransportBlip();
+      else if (st === "failed") this.tryIceRestart("iceConnectionState=failed");
     };
     this.signaling = (0, import_shared.createSignalingChannel)(
       import_supabase.supabase,
@@ -174,24 +248,112 @@ var CallSession = class {
       this.connectTimer = null;
       if (this.connectedOnce || this.ended) return;
       clog(
-        "\u23F1\uFE0F connect watchdog expired \u2014 never reached connected. states:",
+        "\u23F1\uFE0F connect watchdog expired",
         "conn=",
         this.pc?.connectionState,
         "ice=",
-        this.pc?.iceConnectionState,
-        "sig=",
-        this.pc?.signalingState,
-        "\u2192 ending (no stuck Connecting\u2026)"
+        this.pc?.iceConnectionState
       );
       this.end(false);
     }, CONNECT_TIMEOUT_MS);
+    this.adaptiveTimer = setInterval(() => {
+      void this.probeAndAdapt();
+    }, 2500);
   }
-  // A transient 'disconnected' on either state machine: give ICE ~12s to recover
-  // (network blip / wifi↔cellular handoff) before tearing the call down. Only
-  // ends if BOTH state machines are still not connected when the grace expires.
+  /**
+   * Root white-screen fix: aggregate every remote track into ONE MediaStream and
+   * re-emit it whenever a track is added or unmutes. RTCView must re-bind when
+   * the first video frame becomes available (audio-only stream → white SurfaceView).
+   */
+  handleRemoteTrack(e) {
+    const track = e?.track;
+    if (!track) return;
+    clog("ontrack", track.kind, "muted=", track.muted, "readyState=", track.readyState);
+    if (!this.remoteStream) {
+      const fromEvent = e.streams?.[0];
+      this.remoteStream = fromEvent ? fromEvent : new import_react_native_webrtc.MediaStream();
+    }
+    const already = this.remoteStream.getTracks().some((t) => t.id === track.id);
+    if (!already) {
+      try {
+        this.remoteStream.addTrack(track);
+      } catch {
+      }
+    }
+    this.emitRemote();
+    const reemit = () => {
+      clog("remote track unmute/live", track.kind);
+      this.emitRemote();
+    };
+    try {
+      track.onunmute = reemit;
+      track.onmute = () => clog("remote track mute", track.kind);
+      track.onended = () => {
+        clog("remote track ended", track.kind);
+        try {
+          this.remoteStream?.removeTrack(track);
+        } catch {
+        }
+        this.emitRemote();
+      };
+    } catch {
+    }
+  }
+  emitRemote() {
+    if (!this.remoteStream) {
+      this.cb.onRemoteStream(null);
+      return;
+    }
+    this.cb.onRemoteStream(this.remoteStream);
+  }
+  onTransportBlip() {
+    if (this.ended) return;
+    this.cb.onReconnecting?.(true);
+    if (!this.iceRestartTimer) {
+      this.iceRestartTimer = setTimeout(() => {
+        this.iceRestartTimer = null;
+        const ice = this.pc?.iceConnectionState;
+        const cs = this.pc?.connectionState;
+        if (ice !== "connected" && ice !== "completed" && cs !== "connected") {
+          this.tryIceRestart("disconnect-grace");
+        }
+      }, ICE_RESTART_GRACE_MS);
+    }
+    this.scheduleReconnectTeardown();
+  }
+  async tryIceRestart(reason) {
+    if (this.ended || !this.pc) return;
+    if (!this.isCaller) {
+      clog("ICE blip on callee \u2014 wait for caller restart (", reason, ")");
+      return;
+    }
+    if (this.iceRestartInFlight) return;
+    if (this.iceRestartAttempts >= MAX_ICE_RESTARTS) {
+      clog("\u274C ICE restart exhausted (", reason, ") \u2192 ending");
+      this.end(false);
+      return;
+    }
+    this.iceRestartInFlight = true;
+    this.iceRestartAttempts += 1;
+    clog("\u{1F504} ICE restart #", this.iceRestartAttempts, reason);
+    try {
+      this.cachedOffer = null;
+      this.answered = false;
+      const offer = await this.pc.createOffer({ iceRestart: true });
+      if (this.ended || !this.pc) return;
+      await this.pc.setLocalDescription(offer);
+      this.cachedOffer = offer;
+      this.signaling?.send({ kind: "offer", from: this.selfId, data: offer });
+    } catch (e) {
+      clog("ICE restart failed", e?.message ?? e);
+      this.end(false);
+    } finally {
+      this.iceRestartInFlight = false;
+    }
+  }
   scheduleReconnectTeardown() {
     if (this.reconnectTimer || this.ended) return;
-    clog("disconnected \u2014 12s grace before teardown");
+    clog("disconnected \u2014 teardown in", DISCONNECT_TEARDOWN_MS, "ms if not recovered");
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       const cs = this.pc?.connectionState;
@@ -200,18 +362,35 @@ var CallSession = class {
         clog("reconnect grace expired \u2014 ending");
         this.end(false);
       }
-    }, 12e3);
+    }, DISCONNECT_TEARDOWN_MS);
   }
-  // Called when our own signaling subscription goes live.
+  async preferCodecs() {
+    const pc = this.pc;
+    if (!pc?.getTransceivers) return;
+    for (const t of pc.getTransceivers()) {
+      if (t.sender?.track?.kind !== "video") continue;
+      const caps = RTCRtpSender?.getCapabilities?.("video");
+      if (!caps?.codecs?.length || !t.setCodecPreferences) continue;
+      const preferred = [
+        ...caps.codecs.filter((c) => /h264/i.test(c.mimeType)),
+        ...caps.codecs.filter((c) => /vp8/i.test(c.mimeType)),
+        ...caps.codecs.filter((c) => !/h264|vp8/i.test(c.mimeType))
+      ];
+      try {
+        t.setCodecPreferences(preferred);
+      } catch {
+      }
+    }
+  }
   onChannelReady() {
-    clog(this.isCaller ? "CALLER" : "CALLEE", "signaling channel LIVE");
+    clog(this.isCaller ? "CALLER" : "CALLEE", "signaling LIVE");
     if (this.ended) return;
     if (!this.isCaller) this.startReadyHeartbeat();
   }
   startReadyHeartbeat() {
     if (this.readyTimer) return;
     const ping = () => {
-      if (this.ended || this.offerHandled || this.readyTicks > 12) {
+      if (this.ended || this.offerHandled || this.readyTicks > 24) {
         this.stopReadyHeartbeat();
         return;
       }
@@ -219,7 +398,7 @@ var CallSession = class {
       this.signaling?.send({ kind: "ready", from: this.selfId });
     };
     ping();
-    this.readyTimer = setInterval(ping, 700);
+    this.readyTimer = setInterval(ping, 280);
   }
   stopReadyHeartbeat() {
     if (this.readyTimer) {
@@ -227,17 +406,49 @@ var CallSession = class {
       this.readyTimer = null;
     }
   }
-  // Caller: build the offer once, cache it, and (re)broadcast it. Re-sending the
-  // SAME cached SDP on each `ready` is safe and covers a dropped first offer.
-  async makeOffer() {
-    if (!this.pc || this.answered) return;
-    if (!this.cachedOffer) {
-      const offer = await this.pc.createOffer({});
-      await this.pc.setLocalDescription(offer);
-      this.cachedOffer = offer;
+  async makeOffer(iceRestart = false) {
+    if (!this.pc || this.ended || !this.isCaller) return;
+    if (this.answered && !iceRestart) return;
+    if (this.offerInFlight) {
+      await this.offerInFlight;
+      if (!this.ended && !this.answered && this.cachedOffer && !iceRestart) {
+        this.signaling?.send({ kind: "offer", from: this.selfId, data: this.cachedOffer });
+      }
+      return;
     }
-    clog("CALLER \u2192 offer");
-    this.signaling?.send({ kind: "offer", from: this.selfId, data: this.cachedOffer });
+    this.offerInFlight = (async () => {
+      if (!this.pc || this.ended) return;
+      if (!this.cachedOffer || iceRestart) {
+        const offer = await this.pc.createOffer({
+          iceRestart: !!iceRestart,
+          offerToReceiveAudio: true,
+          offerToReceiveVideo: this.type === "video"
+        });
+        if (this.ended || !this.pc) return;
+        await this.pc.setLocalDescription(offer);
+        this.cachedOffer = offer;
+      }
+      clog("CALLER \u2192 offer", iceRestart ? "(ICE restart)" : "");
+      this.signaling?.send({ kind: "offer", from: this.selfId, data: this.cachedOffer });
+      if (!iceRestart && !this.offerRetryTimer) {
+        let n = 0;
+        this.offerRetryTimer = setInterval(() => {
+          if (this.ended || this.answered || n++ > 12) {
+            if (this.offerRetryTimer) clearInterval(this.offerRetryTimer);
+            this.offerRetryTimer = null;
+            return;
+          }
+          if (this.cachedOffer) {
+            this.signaling?.send({ kind: "offer", from: this.selfId, data: this.cachedOffer });
+          }
+        }, 900);
+      }
+    })();
+    try {
+      await this.offerInFlight;
+    } finally {
+      this.offerInFlight = null;
+    }
   }
   async onSignal(msg) {
     if (!this.pc || this.ended) return;
@@ -246,9 +457,14 @@ var CallSession = class {
       if (msg.kind === "ready") {
         if (this.isCaller) await this.makeOffer();
       } else if (msg.kind === "offer") {
-        if (this.offerHandled) {
+        const isRestart = this.offerHandled && this.pc.signalingState === "stable";
+        if (this.offerHandled && !isRestart) {
           if (this.cachedAnswer) {
-            this.signaling?.send({ kind: "answer", from: this.selfId, data: this.cachedAnswer });
+            this.signaling?.send({
+              kind: "answer",
+              from: this.selfId,
+              data: this.cachedAnswer
+            });
           }
           return;
         }
@@ -263,11 +479,20 @@ var CallSession = class {
         clog("CALLEE \u2192 answer");
         this.signaling?.send({ kind: "answer", from: this.selfId, data: answer });
       } else if (msg.kind === "answer") {
-        if (this.answered || this.pc.signalingState !== "have-local-offer") return;
-        this.answered = true;
-        await this.pc.setRemoteDescription(new import_react_native_webrtc.RTCSessionDescription(msg.data));
-        this.remoteDescSet = true;
-        await this.flushCandidates();
+        this.stopAllTones();
+        if (this.answered && this.pc.signalingState !== "have-local-offer") {
+          return;
+        }
+        if (this.pc.signalingState === "have-local-offer") {
+          this.answered = true;
+          if (this.offerRetryTimer) {
+            clearInterval(this.offerRetryTimer);
+            this.offerRetryTimer = null;
+          }
+          await this.pc.setRemoteDescription(new import_react_native_webrtc.RTCSessionDescription(msg.data));
+          this.remoteDescSet = true;
+          await this.flushCandidates();
+        }
       } else if (msg.kind === "candidate") {
         const cand = new import_react_native_webrtc.RTCIceCandidate(msg.data);
         if (this.remoteDescSet) await this.pc.addIceCandidate(cand);
@@ -275,7 +500,8 @@ var CallSession = class {
       } else if (msg.kind === "bye") {
         this.end(false);
       }
-    } catch {
+    } catch (e) {
+      clog("onSignal error", msg.kind, e?.message ?? e);
     }
   }
   async flushCandidates() {
@@ -289,42 +515,267 @@ var CallSession = class {
   }
   toggleMute() {
     this.muted = !this.muted;
-    this.localStream?.getAudioTracks().forEach((t) => t.enabled = !this.muted);
+    this.localStream?.getAudioTracks().forEach((t) => {
+      t.enabled = !this.muted;
+    });
     return this.muted;
   }
   toggleVideo() {
     this.videoEnabled = !this.videoEnabled;
-    this.localStream?.getVideoTracks().forEach((t) => t.enabled = this.videoEnabled);
+    this.localStream?.getVideoTracks().forEach((t) => {
+      t.enabled = this.videoEnabled;
+    });
     return this.videoEnabled;
   }
   toggleSpeaker() {
     this.speakerOn = !this.speakerOn;
-    import_react_native_incall_manager.default.setForceSpeakerphoneOn(this.speakerOn);
+    this.applyAudioRoute();
+    try {
+      import_react_native_incall_manager.default.setKeepScreenOn?.(this.type === "video" || this.speakerOn);
+    } catch {
+    }
     return this.speakerOn;
   }
-  switchCamera() {
-    this.localStream?.getVideoTracks().forEach((t) => t._switchCamera?.());
+  /** Earpiece ↔ speaker (InCallManager also routes BT SCO when connected). */
+  applyAudioRoute() {
+    try {
+      import_react_native_incall_manager.default.setForceSpeakerphoneOn(this.speakerOn);
+    } catch {
+    }
+    try {
+      if (!this.speakerOn) {
+        import_react_native_incall_manager.default.chooseAudioRoute?.("EARPIECE");
+      } else {
+        import_react_native_incall_manager.default.chooseAudioRoute?.("SPEAKER_PHONE");
+      }
+    } catch {
+    }
+  }
+  /**
+   * Data-saver mode (beyond WhatsApp defaults): drop capture target to ~360p
+   * and cap outbound frame rate so weak networks stay audible/visible.
+   */
+  setLowDataMode(on) {
+    this.lowDataMode = on;
+    void this.applySenderBitrate(on ? 25e4 : 12e5, on ? 15 : 30);
+    return this.lowDataMode;
+  }
+  async applySenderBitrate(maxBitrate, maxFramerate) {
+    try {
+      const senders = this.pc?.getSenders?.() ?? [];
+      for (const s of senders) {
+        if (s.track?.kind !== "video") continue;
+        const params = s.getParameters?.() ?? {};
+        if (!params.encodings?.length) {
+          params.encodings = [{}];
+        }
+        params.encodings[0].maxBitrate = maxBitrate;
+        params.encodings[0].maxFramerate = maxFramerate;
+        if (this.lowDataMode) {
+          params.encodings[0].scaleResolutionDownBy = 2.5;
+        } else {
+          params.encodings[0].scaleResolutionDownBy = 1;
+        }
+        await s.setParameters(params);
+      }
+    } catch (e) {
+      clog("applySenderBitrate", e?.message ?? e);
+    }
+  }
+  /** Probe candidate pair + packet loss; adapt bitrate; report path to UI. */
+  async probeAndAdapt() {
+    if (this.ended || !this.pc || !this.connectedOnce) return;
+    try {
+      const stats = await this.pc.getStats();
+      let path = "unknown";
+      let loss = 0;
+      let rtt = 0;
+      let dLost = 0;
+      let dRecv = 0;
+      stats.forEach((r) => {
+        if (r.type === "candidate-pair" && (r.nominated || r.selected) && r.state === "succeeded") {
+          const local = stats.get?.(r.localCandidateId);
+          const remote = stats.get?.(r.remoteCandidateId);
+          const typ = String(local?.candidateType || remote?.candidateType || "");
+          if (/relay/i.test(typ)) path = "relay";
+          else if (/host|srflx|prflx/i.test(typ)) path = "direct";
+          if (typeof r.currentRoundTripTime === "number") rtt = r.currentRoundTripTime;
+        }
+        if (r.type === "inbound-rtp" && r.kind === "video") {
+          dLost += Number(r.packetsLost || 0);
+          dRecv += Number(r.packetsReceived || 0);
+        }
+      });
+      const resolved = path;
+      if (resolved !== "unknown" && resolved !== this.lastPath) {
+        this.lastPath = resolved;
+        this.cb.onConnectionPath?.(resolved);
+      }
+      loss = dRecv + dLost > 0 ? dLost / (dRecv + dLost) : 0;
+      if (!this.lowDataMode && resolved === "relay" && (loss > 0.05 || rtt > 0.35)) {
+        void this.applySenderBitrate(35e4, 18);
+      } else if (!this.lowDataMode && loss < 0.01 && rtt < 0.12) {
+        void this.applySenderBitrate(15e5, 30);
+      }
+      let q = 4;
+      if (loss > 0.08 || rtt > 0.5) q = 1;
+      else if (loss > 0.04 || rtt > 0.3) q = 2;
+      else if (loss > 0.015 || rtt > 0.15) q = 3;
+      this.cb.onQuality?.(q);
+    } catch {
+    }
+  }
+  /**
+   * Switch front/back camera. Uses replaceTrack when possible so the remote
+   * peer keeps a continuous video mid stream (smoother than _switchCamera alone).
+   * Facing state is tracked so local RTCView mirror can be toggled (front only).
+   */
+  async switchCamera() {
+    const next = this.facing === "user" ? "environment" : "user";
+    try {
+      const oldTrack = this.localStream?.getVideoTracks()?.[0];
+      if (!oldTrack) return this.facing;
+      const fresh = await import_react_native_webrtc.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          facingMode: { exact: next },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          frameRate: { ideal: 30 }
+        }
+      });
+      const newTrack = fresh.getVideoTracks()[0];
+      if (!newTrack) {
+        fresh.getTracks().forEach((t) => t.stop());
+        oldTrack._switchCamera?.();
+        this.facing = next;
+        this.cb.onFacingChange?.(this.facing);
+        return this.facing;
+      }
+      newTrack.enabled = this.videoEnabled;
+      const sender = this.pc?.getSenders?.()?.find((s) => s.track && s.track.kind === "video");
+      if (sender?.replaceTrack) {
+        await sender.replaceTrack(newTrack);
+      } else {
+        oldTrack._switchCamera?.();
+        fresh.getTracks().forEach((t) => t.stop());
+        this.facing = next;
+        this.cb.onFacingChange?.(this.facing);
+        return this.facing;
+      }
+      try {
+        this.localStream?.removeTrack(oldTrack);
+      } catch {
+      }
+      try {
+        this.localStream?.addTrack(newTrack);
+      } catch {
+      }
+      oldTrack.stop();
+      fresh.getAudioTracks().forEach((t) => t.stop());
+      this.facing = next;
+      this.cb.onLocalStream(this.localStream);
+      this.cb.onFacingChange?.(this.facing);
+      return this.facing;
+    } catch (e) {
+      clog("switchCamera failed, fallback _switchCamera", e?.message ?? e);
+      try {
+        this.localStream?.getVideoTracks().forEach((t) => t._switchCamera?.());
+        this.facing = next;
+        this.cb.onFacingChange?.(this.facing);
+      } catch {
+      }
+      return this.facing;
+    }
+  }
+  getFacing() {
+    return this.facing;
+  }
+  async getStats() {
+    try {
+      return this.pc ? await this.pc.getStats() : null;
+    } catch {
+      return null;
+    }
+  }
+  /** Stop every local call tone. Safe to call repeatedly. */
+  stopAllTones() {
+    try {
+      import_react_native_incall_manager.default.stopRingback?.();
+    } catch {
+    }
+    try {
+      import_react_native_incall_manager.default.stopRingtone?.();
+    } catch {
+    }
+    try {
+      import_react_native_incall_manager.default.stopBusytone?.();
+    } catch {
+    }
   }
   end(sendBye = true) {
     if (this.ended) return;
     this.ended = true;
     this.stopReadyHeartbeat();
+    this.stopAllTones();
+    if (this.adaptiveTimer) {
+      clearInterval(this.adaptiveTimer);
+      this.adaptiveTimer = null;
+    }
+    if (this.offerRetryTimer) {
+      clearInterval(this.offerRetryTimer);
+      this.offerRetryTimer = null;
+    }
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
+    }
+    if (this.iceRestartTimer) {
+      clearTimeout(this.iceRestartTimer);
+      this.iceRestartTimer = null;
     }
     if (this.connectTimer) {
       clearTimeout(this.connectTimer);
       this.connectTimer = null;
     }
-    if (sendBye) this.signaling?.send({ kind: "bye", from: this.selfId });
+    if (sendBye) {
+      try {
+        this.signaling?.send({ kind: "bye", from: this.selfId });
+      } catch {
+      }
+    }
     try {
       this.localStream?.getTracks().forEach((t) => t.stop());
+      this.remoteStream?.getTracks().forEach((t) => {
+        try {
+          t.stop();
+        } catch {
+        }
+      });
       this.pc?.close();
     } catch {
     }
-    import_react_native_incall_manager.default.stop();
-    this.signaling?.close();
+    this.stopAllTones();
+    try {
+      import_react_native_incall_manager.default.stop();
+    } catch {
+    }
+    this.stopAllTones();
+    try {
+      import_react_native_incall_manager.default.setKeepScreenOn?.(false);
+    } catch {
+    }
+    try {
+      import_react_native_incall_manager.default.stopProximitySensor?.();
+    } catch {
+    }
+    try {
+      this.signaling?.close();
+    } catch {
+    }
+    this.localStream = null;
+    this.remoteStream = null;
+    this.pc = null;
     this.cb.onEnded();
   }
 };

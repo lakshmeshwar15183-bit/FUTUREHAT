@@ -1,4 +1,4 @@
--- FUTUREHAT — trust & safety: reports, support tickets, ban appeals, feedback,
+-- Lumixo — trust & safety: reports, support tickets, ban appeals, feedback,
 -- blocks and mutes. Idempotent. Builds on the core schema.
 
 -- ── Reports (user / message / group / channel) ───────────────────────────────

@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "FUTUREHAT",
+    "name": "Lumixo",
     "slug": "futurehat",
-    "version": "2.4.6",
+    "version": "4.6.3",
     "orientation": "portrait",
     "scheme": "futurehat",
     "userInterfaceStyle": "automatic",
@@ -19,33 +19,63 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "dev.lakshmeshwar.futurehat",
-      "buildNumber": "27",
+      "buildNumber": "48",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
-        "NSPhotoLibraryAddUsageDescription": "FUTUREHAT saves photos and media you download to your photo library.",
+        "NSPhotoLibraryAddUsageDescription": "Lumixo saves photos and media you download to your photo library.",
         "UIBackgroundModes": [
-          "audio"
+          "audio",
+          "remote-notification",
+          "voip"
         ]
       }
     },
     "android": {
       "package": "dev.lakshmeshwar.futurehat",
-      "versionCode": 27,
+      "versionCode": 63,
       "allowBackup": false,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#00A884"
+        "backgroundColor": "#FFFFFF"
       },
+      "softwareKeyboardLayoutMode": "resize",
+      "navigationBarColor": "#0B141A",
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "futurehat-app.netlify.app",
+              "pathPrefix": "/reset-password"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
+      ],
       "permissions": [
         "CAMERA",
         "RECORD_AUDIO",
         "READ_EXTERNAL_STORAGE",
         "WRITE_EXTERNAL_STORAGE",
+        "READ_MEDIA_IMAGES",
+        "READ_MEDIA_VIDEO",
         "USE_BIOMETRIC",
         "USE_FINGERPRINT",
         "VIBRATE",
         "POST_NOTIFICATIONS",
-        "USE_FULL_SCREEN_INTENT"
+        "USE_FULL_SCREEN_INTENT",
+        "RECEIVE_BOOT_COMPLETED",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_MICROPHONE",
+        "FOREGROUND_SERVICE_CAMERA",
+        "FOREGROUND_SERVICE_PHONE_CALL",
+        "BLUETOOTH_CONNECT",
+        "WAKE_LOCK"
       ]
     },
     "web": {
@@ -59,27 +89,37 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "FUTUREHAT uses your photos so you can share images and set a profile picture.",
-          "cameraPermission": "FUTUREHAT uses your camera so you can take photos and make video calls."
+          "photosPermission": "Lumixo uses your photos so you can share images and set a profile picture.",
+          "cameraPermission": "Lumixo uses your camera so you can take photos and make video calls."
         }
       ],
       [
         "expo-av",
         {
-          "microphonePermission": "FUTUREHAT uses your microphone to record voice messages and make calls."
+          "microphonePermission": "Lumixo uses your microphone to record voice messages and make calls."
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Lumixo accesses your photos and videos so you can share them in chats.",
+          "savePhotosPermission": "Lumixo saves media you download to your gallery.",
+          "isAccessMediaLocationEnabled": true
         }
       ],
       [
         "expo-local-authentication",
         {
-          "faceIDPermission": "FUTUREHAT uses Face ID to unlock the app and locked chats."
+          "faceIDPermission": "Lumixo uses Face ID to unlock the app and locked chats."
         }
       ],
       [
         "expo-notifications",
         {
           "icon": "./assets/notification-icon.png",
-          "color": "#00A884"
+          "color": "#00A884",
+          "defaultChannel": "messages",
+          "sounds": []
         }
       ],
       [
@@ -108,7 +148,9 @@
       "@config-plugins/react-native-webrtc",
       "./plugins/withReleaseSigning",
       "expo-asset",
-      "expo-font"
+      "expo-font",
+      "./plugins/withAppIcons",
+      "./plugins/withIncomingCallNotifications"
     ]
   }
 }

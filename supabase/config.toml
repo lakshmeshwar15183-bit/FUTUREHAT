@@ -2,7 +2,7 @@
 # https://supabase.com/docs/guides/local-development/cli/config
 # A string used to distinguish different Supabase projects on the same host. Defaults to the
 # working directory name when running `supabase init`.
-project_id = "FUTUREHAT"
+project_id = "Lumixo"
 
 [api]
 enabled = true
@@ -97,8 +97,8 @@ enabled = true
 port = 54323
 # External URL of the API server that frontend connects to.
 api_url = "http://127.0.0.1"
-# OpenAI API Key to use for Supabase AI in the Supabase Studio.
-openai_api_key = "env(OPENAI_API_KEY)"
+# Optional Studio integration key (local Supabase CLI only — not used by Lumixo app).
+# studio_llm_api_key = "env(STUDIO_LLM_API_KEY)"
 
 # Email testing server. Emails sent with the local dev setup are not actually sent - rather, they
 # are monitored, and you can view the emails that would have been sent from the web interface.
@@ -150,17 +150,26 @@ max_buckets = 10
 max_indexes = 5
 
 # Vector Buckets is available to Supabase Pro plan.
-# [storage.vector.buckets.documents-openai]
+# [storage.vector.buckets.documents]
 
 [auth]
 enabled = true
 # The base URL of your website. Used as an allow-list for redirects and for constructing URLs used
 # in emails.
-site_url = "http://127.0.0.1:3000"
+# Production Site URL. Used to build email links and as the fallback redirect.
+# NOTE: for the HOSTED project this value lives in the Supabase Dashboard
+# (Auth → URL Configuration → Site URL) — this file only governs local
+# `supabase start`. Both must be the production origin, never localhost.
+site_url = "https://futurehat-app.netlify.app"
 # The public URL that Auth serves on. Defaults to the API external URL with `/auth/v1` appended.
 # external_url = ""
-# A list of *exact* URLs that auth providers are permitted to redirect to post authentication.
-additional_redirect_urls = ["https://127.0.0.1:3000"]
+# A list of *exact* URLs (wildcards allowed) that auth providers may redirect to
+# post-authentication. The reset page + the app-scheme deep link must be listed.
+additional_redirect_urls = [
+  "https://futurehat-app.netlify.app/reset-password",
+  "https://futurehat-app.netlify.app/**",
+  "futurehat://reset-password",
+]
 # How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
 jwt_expiry = 3600
 # JWT issuer URL. If not set, defaults to auth.external_url.

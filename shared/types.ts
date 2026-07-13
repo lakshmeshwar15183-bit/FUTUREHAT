@@ -1,4 +1,4 @@
-// FUTUREHAT — shared domain types (mirror the Postgres schema in supabase/migrations)
+// Lumixo — shared domain types (mirror the Postgres schema in supabase/migrations)
 
 export type UUID = string;
 
@@ -6,9 +6,13 @@ export type ConversationType = 'direct' | 'group';
 // 'system' = WhatsApp-style centered info notice (e.g. disappearing-messages
 // turned on/off). System messages never disappear and are not user-editable /
 // deletable. Added in migration 0027.
-export type MessageType = 'text' | 'image' | 'file' | 'audio' | 'system';
+// 'video' is a first-class media type (migration 0031). Older videos may still
+// exist as type='file' with a video media_url — treat those as video via
+// isVideoUrl() for backward-compat.
+export type MessageType = 'text' | 'image' | 'video' | 'file' | 'audio' | 'system';
 export type ReceiptStatus = 'delivered' | 'read';
-export type ParticipantRole = 'member' | 'admin';
+/** Group participant role. `super_admin` = group owner/creator (migration 0037). */
+export type ParticipantRole = 'member' | 'admin' | 'super_admin';
 
 export interface Profile {
   id: UUID;
@@ -31,6 +35,44 @@ export interface Conversation {
   /** Disappearing-messages timer (0022): 0 = OFF (default), else 3600..28800
    *  (1–8h). Optional so the type is safe before the migration is applied. */
   disappear_seconds?: number;
+  /** Group description (0037). */
+  description?: string | null;
+  /** WhatsApp-style group permissions (0037). Defaults match WA. */
+  only_admins_can_send?: boolean;
+  only_admins_can_edit_info?: boolean;
+  only_admins_can_add_members?: boolean;
+  only_admins_can_pin?: boolean;
+  only_admins_manage_disappearing?: boolean;
+  approve_new_members?: boolean;
+  member_history_visible?: boolean;
+}
+
+/** Client view of group permission toggles (0037). */
+export interface GroupPermissions {
+  onlyAdminsCanSend: boolean;
+  onlyAdminsCanEditInfo: boolean;
+  onlyAdminsCanAddMembers: boolean;
+  onlyAdminsCanPin: boolean;
+  onlyAdminsManageDisappearing: boolean;
+  approveNewMembers: boolean;
+  memberHistoryVisible: boolean;
+}
+
+/** Enriched group member row for Group Info UI. */
+export interface GroupMember {
+  userId: UUID;
+  role: ParticipantRole;
+  joinedAt: string;
+  profile: Profile;
+}
+
+/** Pending invite-link join request. */
+export interface GroupJoinRequest {
+  userId: UUID;
+  displayName: string | null;
+  avatarUrl: string | null;
+  username: string | null;
+  createdAt: string;
 }
 
 export interface ConversationParticipant {
@@ -61,6 +103,51 @@ export interface Message {
   /** Client-only: this is an optimistic/queued message not yet confirmed by the
    *  server (offline outbox). Never persisted server-side. */
   pending?: boolean;
+  /** Per-attachment metadata produced by the media picker/editor (0030). Optional
+   *  so the type is safe before the migration is applied; old rows read as {}. */
+  media_meta?: MediaMeta | null;
+}
+
+/** Metadata the media picker/editor attaches to an image/file message (0030). */
+export interface MediaMeta {
+  /** View Once: recipient may open exactly once; cannot forward/save/export. */
+  viewOnce?: boolean;
+  /** Uploaded at HD (higher quality tier). */
+  hd?: boolean;
+  /** Chosen quality tier. */
+  quality?: 'standard' | 'hd' | 'original';
+  width?: number;
+  height?: number;
+  /** Video duration in ms (when the attachment is a video). */
+  durationMs?: number;
+  /** True if the image was edited (crop/draw/text/stickers) before sending. */
+  edited?: boolean;
+  /** Video trim intent (ms). Recorded by the video editor; the actual cut is applied
+   *  by a native transcoder when enabled (Phase C). */
+  trimStartMs?: number;
+  trimEndMs?: number;
+  /** Video audio muted (intent; applied by the transcoder). */
+  muted?: boolean;
+  /** Built-in emoji sticker card (offline pack system). */
+  sticker?: boolean;
+  stickerId?: string;
+  /** Glyph shown on the sticker card. */
+  emoji?: string;
+  /** Background hex for the sticker card. */
+  bg?: string;
+  /** Soft bounce in picker/bubble. */
+  animated?: boolean;
+  packId?: string;
+}
+
+/** Result of mark_view_once_seen() / view_once_state() (0030). */
+export interface ViewOnceState {
+  view_once: boolean;
+  is_sender?: boolean;
+  seen?: boolean;
+  can_open?: boolean;
+  first_view?: boolean;
+  consumed?: boolean;
 }
 
 export interface MessageReceipt {
@@ -102,9 +189,16 @@ export interface ConversationSummary {
   unreadCount: number;
   title: string;
   avatarUrl: string | null;
+  /**
+   * Outbound tick for `lastMessage` when the current user sent it.
+   * Derived from message_receipts via shared/messageStatus (single source of truth).
+   * Null/undefined when last message is not mine / missing / system. Defaults to
+   * 'sent' when mine and no recipient receipts yet — never invent 'delivered'.
+   */
+  lastMessageTick?: 'sending' | 'sent' | 'delivered' | 'read' | 'failed' | null;
 }
 
-// ── Premium (FUTUREHAT+) ──────────────────────────────────────────────────────
+// ── Premium (Lumixo+) ──────────────────────────────────────────────────────
 
 export type PlanId = 'monthly' | 'yearly';
 export type SubscriptionStatus = 'active' | 'cancelled' | 'expired' | 'past_due';
@@ -121,6 +215,35 @@ export interface Subscription {
   current_period_start: string;
   current_period_end: string;
   cancel_at_period_end: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Razorpay payment ledger row (migration 0054). amount is paise. */
+export type RazorpayPaymentStatus =
+  | 'created'
+  | 'attempted'
+  | 'authorized'
+  | 'captured'
+  | 'failed'
+  | 'refunded'
+  | 'cancelled';
+
+export interface RazorpayPayment {
+  id: UUID;
+  user_id: UUID;
+  razorpay_order_id: string;
+  razorpay_payment_id: string | null;
+  amount: number;
+  currency: string;
+  plan: PlanId;
+  status: RazorpayPaymentStatus;
+  error_code: string | null;
+  error_description: string | null;
+  refund_id: string | null;
+  amount_refunded: number;
+  signature_verified: boolean;
+  activated: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -286,12 +409,12 @@ export interface NotificationSettings {
   groupMute: boolean;
 }
 
-export type PushKind = 'message' | 'group' | 'call' | 'missed_call' | 'status' | 'system';
+export type PushKind = 'message' | 'group' | 'call' | 'missed_call' | 'status' | 'system' | 'mention';
 
 // ── Chat Lock (0027) ────────────────────────────────────────────────────────────
 // Per-chat lock secured entirely by the DEVICE's own authentication (Android
 // BiometricPrompt / iOS LocalAuthentication → biometric, else device PIN/password).
-// FUTUREHAT never stores a PIN, password, or biometric — it only records WHICH
+// Lumixo never stores a PIN, password, or biometric — it only records WHICH
 // conversations the user chose to lock (locked_conversations) so the choice syncs
 // across their devices. Auto-lock timing + the master enable live in
 // user_preferences.extra.chatLock so they sync too.
@@ -418,8 +541,28 @@ export interface AdminGlobalSearch {
   users: AdminUserSummary[];
   communities: Array<{ id: UUID; name: string; description: string | null; owner_id: UUID; created_at: string }>;
   channels: Array<{ id: UUID; name: string; kind: string; community_id: UUID }>;
-  messages: Array<{ id: UUID; conversation_id: UUID; sender_id: UUID; type: string; content: string | null; created_at: string }>;
-  reports: Array<{ id: UUID; target_type: string; target_id: UUID; reason: string; status: string; created_at: string }>;
+  messages: Array<{
+    id: UUID;
+    conversation_id: UUID;
+    sender_id: UUID;
+    type: string;
+    content: string | null;
+    created_at: string;
+    is_deleted?: boolean;
+  }>;
+  reports: Array<{
+    id: UUID;
+    target_type: string;
+    target_id: UUID;
+    reason: string;
+    status: string;
+    created_at: string;
+    message_id?: UUID | null;
+    conversation_id?: UUID | null;
+    reported_user_id?: UUID | null;
+  }>;
+  /** Chat / conversation hits (by id or name). */
+  conversations?: Array<{ id: UUID; type: string; name: string | null; created_at: string }>;
 }
 
 // ── Message reporting (0017) ────────────────────────────────────────────────
@@ -442,6 +585,8 @@ export interface AdminReport {
   target_id: UUID;
   message_id: UUID | null;
   conversation_id: UUID | null;
+  /** Alias of conversation_id for dashboard labels ("Chat ID"). */
+  chat_id?: UUID | null;
   reporter_id: UUID;
   reported_user_id: UUID | null;
   reason: ReportReason;
@@ -455,6 +600,10 @@ export interface AdminReport {
   reviewed_by: UUID | null;
   message_content: string | null;
   message_exists: boolean;
+  /** text | image | video | audio | file | system … */
+  message_type?: string | null;
+  message_created_at?: string | null;
+  message_media_url?: string | null;
   reporter_username: string | null;
   reporter_name: string | null;
   reporter_avatar: string | null;
@@ -463,6 +612,25 @@ export interface AdminReport {
   reported_avatar: string | null;
   conversation_type: string | null;
   conversation_name: string | null;
+  /** Human label: group name or DM peer(s) — "Receiver / Group". */
+  conversation_label?: string | null;
+}
+
+/** One row from admin_list_deleted_messages() — admin-deleted content trail. */
+export interface AdminDeletedMessage {
+  message_id: string;
+  deleted_by: UUID | null;
+  deleted_by_name: string | null;
+  deleted_by_username: string | null;
+  deleted_at: string;
+  reason: string | null;
+  report_id: string | null;
+  message_type: string | null;
+  conversation_id: string | null;
+  sender_id: string | null;
+  restorable: boolean;
+  message_row_exists: boolean;
+  still_deleted: boolean;
 }
 
 // ── Moderator system (0023) ─────────────────────────────────────────────────
@@ -509,4 +677,71 @@ export interface AdminConversationView {
     id: UUID; sender_id: UUID; type: string; content: string | null; media_url: string | null;
     is_deleted: boolean; created_at: string; edited_at: string | null;
   }>;
+}
+
+// ── Streaks (0029) ──────────────────────────────────────────────────────────
+// Relationship streaks between the two users of a direct conversation. Scores,
+// rewards, roles and milestones are SERVER-AUTHORITATIVE (see supabase/migrations/
+// 0029_streaks.sql); the client only ever READS these and mirrors streak_tier().
+
+export type StreakMilestoneKind = 'diamond' | 'mod_eligible' | 'hall_of_legends';
+
+// One of the caller's streaks, from get_my_streaks(). Drives the chat-list emoji.
+export interface StreakSummary {
+  streak_id: UUID;
+  conversation_id: UUID;
+  score: number;
+  tier: string;                 // emoji derived from score by the DB (mirror below)
+  successful_days: number;
+  peer_id: UUID;
+  peer_username: string | null;
+  peer_name: string | null;
+  peer_avatar: string | null;
+  completed_today: boolean;
+  i_qualified_today: boolean;
+  peer_qualified_today: boolean;
+}
+
+// One score-change ledger row (streak_events) — the Streak History.
+export interface StreakEvent {
+  day: string | null;
+  delta: number;
+  old_score: number;
+  new_score: number;
+  reason: string;               // 'daily_award' | 'missed_penalty' | 'milestone'
+  created_at: string;
+}
+
+export interface StreakMilestoneRow {
+  kind: StreakMilestoneKind;
+  achieved_at: string;
+  achieved_score: number;
+  reward_granted: boolean;
+  meta: Record<string, unknown>;
+}
+
+// get_streak() detail payload for one pair.
+export interface StreakDetail {
+  streak: {
+    streak_id: UUID;
+    conversation_id: UUID;
+    score: number;
+    tier: string;
+    successful_days: number;
+    last_awarded_day: string | null;
+    created_at: string;
+  } | null;
+  milestones: StreakMilestoneRow[];
+  events: StreakEvent[];
+}
+
+// One legendary pair from get_hall_of_legends().
+export interface HallOfLegendsEntry {
+  streak_id: UUID;
+  achieved_at: string;
+  achieved_score: number;
+  current_score: number;
+  current_tier: string;
+  user_a_id: UUID; user_a_username: string | null; user_a_name: string | null; user_a_avatar: string | null;
+  user_b_id: UUID; user_b_username: string | null; user_b_name: string | null; user_b_avatar: string | null;
 }

@@ -1,7 +1,7 @@
 -- 0026_protect_permanent_owner.sql — Absolute protection for the permanent owner.
 -- ============================================================================
 -- WHAT THIS DOES
---   FUTUREHAT has exactly ONE permanent OWNER = the immutable developer allowlist
+--   Lumixo has exactly ONE permanent OWNER = the immutable developer allowlist
 --   (is_developer / is_owner, 0005 + 0013). That account can never be assigned,
 --   transferred, demoted, or moderated through the app.
 --

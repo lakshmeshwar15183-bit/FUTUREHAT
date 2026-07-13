@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — local-first cache (the "read from local DB, sync later"
+// Lumixo mobile — local-first cache (the "read from local DB, sync later"
 // layer that makes chats open instantly and keeps them readable offline, à la
 // WhatsApp). Backed by AsyncStorage, which is already linked in this app (it also
 // persists the auth session), so this adds no new native module / rebuild risk.
@@ -10,6 +10,13 @@
 // crash — the network path still works.
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { ConversationSummary, Message, Profile, MessageType, UUID, RecentContact } from './shared';
+import {
+  mergeProfileIdentity,
+  nicknameStorageKey,
+  normalizeNickname,
+  setNicknameInMap,
+  type NicknameMap,
+} from './shared';
 
 const K = {
   convs: (uid: string) => `fh:cache:convs:${uid}`,
@@ -23,11 +30,28 @@ const K = {
 
 // Cap how many messages we retain per conversation so the cache stays bounded
 // (AsyncStorage on Android is backed by a size-limited SQLite store).
-const MSG_CACHE_LIMIT = 200;
+// Raised for WhatsApp-class offline history (recent slice still sufficient for
+// near-instant open; older history loads from network on scroll).
+/** Exported for tests — keep in sync with offline-test suite. */
+export const MSG_CACHE_LIMIT = 800;
 
-// RFC-4122 v4 id, generated client-side. Not cryptographically strong (fine for
-// message ids); lets us render optimistically and dedupe the realtime echo by id.
+// RFC-4122 v4 id from CSPRNG when available (message PKs via outbox — collisions
+// are catastrophic for that row). Falls back to Math.random only if crypto is missing.
 export function uuidv4(): string {
+  const g = globalThis as { crypto?: { getRandomValues?: (a: Uint8Array) => Uint8Array; randomUUID?: () => string } };
+  if (g.crypto?.randomUUID) {
+    try {
+      return g.crypto.randomUUID();
+    } catch { /* fall through */ }
+  }
+  if (g.crypto?.getRandomValues) {
+    const bytes = new Uint8Array(16);
+    g.crypto.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  }
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
     const r = (Math.random() * 16) | 0;
     const v = c === 'x' ? r : (r & 0x3) | 0x8;
@@ -89,20 +113,63 @@ export async function getCachedMessages(convId: string): Promise<Message[]> {
   return readJSON<Message[]>(K.msgs(convId), []);
 }
 
+// Serialize per-conversation message cache RMW so concurrent realtime + send +
+// full rewrite cannot drop optimistic or historical rows (last-writer-wins race).
+const msgCacheChains = new Map<string, Promise<unknown>>();
+function withMsgCacheLock<T>(convId: string, fn: () => Promise<T>): Promise<T> {
+  const prev = msgCacheChains.get(convId) ?? Promise.resolve();
+  const run = prev.then(fn, fn);
+  msgCacheChains.set(
+    convId,
+    run.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return run;
+}
+
 export async function cacheMessages(convId: string, messages: Message[]): Promise<void> {
-  // Keep chronological (oldest→newest) and bounded to the most recent slice.
-  const trimmed = messages.slice(-MSG_CACHE_LIMIT);
-  await writeJSON(K.msgs(convId), trimmed);
+  return withMsgCacheLock(convId, async () => {
+    // Authoritative network slice wins, but keep local-only optimistic rows
+    // (pending/failed outbox) that are not yet on the server — so a concurrent
+    // full rewrite cannot erase in-flight sends. Do NOT keep all prior cache
+    // rows (that would resurrect deletes).
+    const existing = await getCachedMessages(convId);
+    const networkIds = new Set(messages.map((m) => m.id));
+    const localOnly = existing.filter((m) => {
+      if (networkIds.has(m.id)) return false;
+      const flags = m as Message & { pending?: boolean; failed?: boolean };
+      return !!(flags.pending || flags.failed);
+    });
+    const map = new Map<string, Message>();
+    for (const m of messages) map.set(m.id, m);
+    for (const m of localOnly) map.set(m.id, m);
+    const merged = [...map.values()].sort((a, b) =>
+      a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0,
+    );
+    const trimmed = merged.slice(-MSG_CACHE_LIMIT);
+    await writeJSON(K.msgs(convId), trimmed);
+  });
 }
 
 /** Merge a single new/updated message into the cached thread (used by realtime
  *  and optimistic sends) without a full refetch. */
 export async function upsertCachedMessage(convId: string, message: Message): Promise<void> {
-  const cur = await getCachedMessages(convId);
-  const idx = cur.findIndex((m) => m.id === message.id);
-  if (idx >= 0) cur[idx] = message;
-  else cur.push(message);
-  await cacheMessages(convId, cur);
+  return withMsgCacheLock(convId, async () => {
+    const cur = await getCachedMessages(convId);
+    const idx = cur.findIndex((m) => m.id === message.id);
+    if (idx >= 0) cur[idx] = message;
+    else cur.push(message);
+    // Direct write inside lock (avoid nested withMsgCacheLock deadlock).
+    const trimmed = cur
+      .slice()
+      .sort((a, b) =>
+        a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0,
+      )
+      .slice(-MSG_CACHE_LIMIT);
+    await writeJSON(K.msgs(convId), trimmed);
+  });
 }
 
 // ── Profiles ──────────────────────────────────────────────────────────────────
@@ -111,8 +178,42 @@ export async function getCachedProfile(id: string): Promise<Profile | null> {
   return readJSON<Profile | null>(K.profile(id), null);
 }
 
+/**
+ * Persist a profile without wiping stronger fields with null/empty network data.
+ * Always merges with any prior cache entry.
+ */
 export async function cacheProfile(profile: Profile): Promise<void> {
-  await writeJSON(K.profile(profile.id), profile);
+  const prev = await getCachedProfile(profile.id);
+  const merged = mergeProfileIdentity(prev, profile) ?? profile;
+  await writeJSON(K.profile(merged.id), merged as Profile);
+}
+
+/** Batch-cache participants from a conversation list (offline identity). */
+export async function cacheProfiles(profiles: Profile[]): Promise<void> {
+  await Promise.all(profiles.map((p) => cacheProfile(p)));
+}
+
+// ── Nicknames (local-only, Instagram-class) ───────────────────────────────────
+
+export async function getNicknames(myUserId: string): Promise<NicknameMap> {
+  if (!myUserId) return {};
+  return readJSON<NicknameMap>(nicknameStorageKey(myUserId), {});
+}
+
+export async function setNickname(
+  myUserId: string,
+  peerUserId: string,
+  nickname: string | null,
+): Promise<NicknameMap> {
+  const prev = await getNicknames(myUserId);
+  const next = setNicknameInMap(prev, peerUserId, nickname);
+  await writeJSON(nicknameStorageKey(myUserId), next);
+  return next;
+}
+
+export async function getNickname(myUserId: string, peerUserId: string): Promise<string | null> {
+  const map = await getNicknames(myUserId);
+  return normalizeNickname(map[peerUserId] ?? null);
 }
 
 // ── Recent contacts (persistent "previously chatted users" for New Chat) ───────
@@ -160,27 +261,50 @@ export interface OutboxItem {
   replyTo?: UUID;
   createdAt: string;
   attempts: number;
+  /** Offline media queue (0030): a local file:// URI to UPLOAD on flush before the
+   *  message row is inserted. When set, flushOutbox uploads it and uses the returned
+   *  remote URL as media_url. Lets photos/videos survive an app kill mid-send. */
+  localUri?: string;
+  fileName?: string;
+  mediaMeta?: Record<string, unknown>;
 }
 
 export async function getOutbox(): Promise<OutboxItem[]> {
   return readJSON<OutboxItem[]>(K.outbox, []);
 }
 
+// Serialize outbox RMW so concurrent enqueue/remove/update cannot drop rows.
+let outboxChain: Promise<unknown> = Promise.resolve();
+function withOutboxLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = outboxChain.then(fn, fn);
+  outboxChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
 export async function enqueueOutbox(item: OutboxItem): Promise<void> {
-  const cur = await getOutbox();
-  cur.push(item);
-  await writeJSON(K.outbox, cur);
+  return withOutboxLock(async () => {
+    const cur = await getOutbox();
+    cur.push(item);
+    await writeJSON(K.outbox, cur);
+  });
 }
 
 export async function removeFromOutbox(tempId: string): Promise<void> {
-  const cur = await getOutbox();
-  await writeJSON(K.outbox, cur.filter((i) => i.tempId !== tempId));
+  return withOutboxLock(async () => {
+    const cur = await getOutbox();
+    await writeJSON(K.outbox, cur.filter((i) => i.tempId !== tempId));
+  });
 }
 
 export async function updateOutboxItem(tempId: string, patch: Partial<OutboxItem>): Promise<void> {
-  const cur = await getOutbox();
-  const next = cur.map((i) => (i.tempId === tempId ? { ...i, ...patch } : i));
-  await writeJSON(K.outbox, next);
+  return withOutboxLock(async () => {
+    const cur = await getOutbox();
+    const next = cur.map((i) => (i.tempId === tempId ? { ...i, ...patch } : i));
+    await writeJSON(K.outbox, next);
+  });
 }
 
 // ── Action queue (durable outbox for NON-message mutations) ────────────────────
@@ -201,18 +325,36 @@ export interface QueuedAction {
 export async function getActionQueue(): Promise<QueuedAction[]> {
   return readJSON<QueuedAction[]>(K.actions, []);
 }
+
+// Serialize action-queue RMW (same race as outbox under rapid pin/mute/archive).
+let actionChain: Promise<unknown> = Promise.resolve();
+function withActionLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = actionChain.then(fn, fn);
+  actionChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
 export async function enqueueAction(action: QueuedAction): Promise<void> {
-  const cur = await getActionQueue();
-  cur.push(action);
-  await writeJSON(K.actions, cur);
+  return withActionLock(async () => {
+    const cur = await getActionQueue();
+    cur.push(action);
+    await writeJSON(K.actions, cur);
+  });
 }
 export async function removeAction(id: string): Promise<void> {
-  const cur = await getActionQueue();
-  await writeJSON(K.actions, cur.filter((a) => a.id !== id));
+  return withActionLock(async () => {
+    const cur = await getActionQueue();
+    await writeJSON(K.actions, cur.filter((a) => a.id !== id));
+  });
 }
 export async function updateAction(id: string, patch: Partial<QueuedAction>): Promise<void> {
-  const cur = await getActionQueue();
-  await writeJSON(K.actions, cur.map((a) => (a.id === id ? { ...a, ...patch } : a)));
+  return withActionLock(async () => {
+    const cur = await getActionQueue();
+    await writeJSON(K.actions, cur.map((a) => (a.id === id ? { ...a, ...patch } : a)));
+  });
 }
 
 // ── Reconciliation with in-flight optimistic actions ───────────────────────────
@@ -290,11 +432,13 @@ export async function getPendingMessages(convId: string): Promise<Message[]> {
       sender_id: i.senderId,
       type: i.type,
       content: i.content,
-      media_url: i.mediaUrl ?? null,
+      // Show the local file while it's still uploading (localUri), else the remote url.
+      media_url: i.mediaUrl ?? i.localUri ?? null,
       reply_to: i.replyTo ?? null,
       is_deleted: false,
       created_at: i.createdAt,
       edited_at: null,
       pending: true,
+      media_meta: (i.mediaMeta ?? null) as Message['media_meta'],
     }));
 }

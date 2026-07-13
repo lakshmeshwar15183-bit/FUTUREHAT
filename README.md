@@ -29,7 +29,7 @@
 ### ⭐ FUTUREHAT+ (premium — ₹25/mo · ₹249/yr)
 - ✅ Themes, animated wallpapers, bubble styles, fonts, app icons
 - ✅ Premium emoji + sticker pack
-- ✅ AI: rewrite / translate / summarize / smart replies / assistant
+- ✅ Optional writing tools (premium edge function)
 - ✅ Schedule messages, reminders, unlimited pins
 - ✅ Ghost mode, hide chats, app lock (PIN + biometric)
 - ✅ FUTUREHAT+ badge, higher upload limits — **all core features stay free**

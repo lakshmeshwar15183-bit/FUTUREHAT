@@ -1,10 +1,11 @@
-// FUTUREHAT mobile — Notification settings (WhatsApp layout). Grouped MESSAGE /
+// Lumixo mobile — Notification settings (WhatsApp layout). Grouped MESSAGE /
 // CALLS / STATUS / GROUPS sections stored in user_preferences.extra.notifications
 // (synced to the profile → restore on any device). Notification tone / ringtone
 // use the DEVICE SYSTEM DEFAULT sound; the tone rows open Android's per-channel
 // settings for native customization (no bundled sounds, no in-app picker).
 import React, { useCallback, useMemo, useState } from 'react';
-import { Alert, Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Alert } from '../ui/dialog';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 
@@ -14,7 +15,18 @@ import {
   DEFAULT_NOTIFICATION_SETTINGS,
 } from '../lib/shared';
 import type { NotificationSettings } from '../lib/shared';
-import { CHANNELS } from '../lib/notifications';
+import {
+  CHANNELS,
+  getNotificationPermissionGranted,
+  openBatteryOptimizationSettings,
+  openNotificationSystemSettings,
+  registerForPush,
+} from '../lib/notifications';
+import {
+  detectOemFamily,
+  getOemGuide,
+  openAppBatterySettings,
+} from '../lib/notificationSetup';
 import { getCache, setCache } from '../lib/localCache';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 
@@ -39,12 +51,15 @@ async function openChannelSettings(channelId: string) {
 export default function NotificationsScreen() {
   const colors = useColors();
   const styles = useMemo(() => makeStyles(colors), [colors]);
+  const oem = useMemo(() => getOemGuide(detectOemFamily()), []);
   const [n, setN] = useState<NotificationSettings>(DEFAULT_NOTIFICATION_SETTINGS);
+  const [osGranted, setOsGranted] = useState<boolean | null>(null);
 
   useFocusEffect(
     useCallback(() => {
       getCache<NotificationSettings | null>('notifsV2', null).then((c) => { if (c) setN({ ...DEFAULT_NOTIFICATION_SETTINGS, ...c }); });
       getNotificationSettings(supabase).then((s) => { setN(s); setCache('notifsV2', s); }).catch(() => {});
+      getNotificationPermissionGranted().then(setOsGranted).catch(() => setOsGranted(null));
     }, []),
   );
 
@@ -77,6 +92,90 @@ export default function NotificationsScreen() {
 
   return (
     <ScrollView style={styles.container}>
+      {/* SYSTEM — required for killed-app delivery */}
+      <Text style={styles.sectionLabel}>SYSTEM</Text>
+      <View style={styles.group}>
+        <Pressable
+          style={styles.row}
+          onPress={async () => {
+            const ok = await registerForPush();
+            setOsGranted(ok);
+            if (!ok) {
+              Alert.alert(
+                'Notifications off',
+                'Allow notifications so you still get messages when Lumixo is closed.',
+                [
+                  { text: 'Not now', style: 'cancel' },
+                  { text: 'Open settings', onPress: () => void openNotificationSystemSettings() },
+                ],
+              );
+            }
+          }}
+        >
+          <View style={{ flex: 1, marginRight: spacing(3) }}>
+            <Text style={styles.rowLabel}>Notification permission</Text>
+            <Text style={styles.rowDesc}>
+              {osGranted === null
+                ? 'Checking…'
+                : osGranted
+                  ? 'Allowed — messages can arrive when the app is closed'
+                  : 'Denied — tap to allow or open system settings'}
+            </Text>
+          </View>
+          <Ionicons
+            name={osGranted ? 'checkmark-circle' : 'alert-circle-outline'}
+            size={22}
+            color={osGranted ? colors.primary : colors.danger}
+          />
+        </Pressable>
+        {Platform.OS === 'android' && (
+          <Pressable
+            style={styles.row}
+            onPress={() => {
+              Alert.alert(
+                'Background delivery',
+                'Some phones pause apps in the background. Set Lumixo battery usage to Unrestricted so message and call alerts still arrive when the app is closed.',
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Open battery settings', onPress: () => void openBatteryOptimizationSettings() },
+                ],
+              );
+            }}
+          >
+            <View style={{ flex: 1, marginRight: spacing(3) }}>
+              <Text style={styles.rowLabel}>Battery optimization</Text>
+              <Text style={styles.rowDesc}>
+                Allow unrestricted battery so notifications work after force-stop
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
+          </Pressable>
+        )}
+        {Platform.OS === 'android' && oem.aggressive && (
+          <Pressable
+            style={styles.row}
+            onPress={() => {
+              Alert.alert(
+                oem.title,
+                `${oem.body}\n\n${oem.steps.map((s, i) => `${i + 1}. ${s}`).join('\n')}`,
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Open settings', onPress: () => void openAppBatterySettings() },
+                ],
+              );
+            }}
+          >
+            <View style={{ flex: 1, marginRight: spacing(3) }}>
+              <Text style={styles.rowLabel}>{oem.brandLabel} background settings</Text>
+              <Text style={styles.rowDesc}>
+                This phone may block closed-app alerts — follow the recommended steps
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
+          </Pressable>
+        )}
+      </View>
+
       {/* MESSAGE */}
       <Text style={styles.sectionLabel}>MESSAGE</Text>
       <View style={styles.group}>

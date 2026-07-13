@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — lightweight time formatting (no external date lib).
+// Lumixo mobile — lightweight time formatting (no external date lib).
 export function formatTime(iso?: string | null): string {
   if (!iso) return '';
   const d = new Date(iso);

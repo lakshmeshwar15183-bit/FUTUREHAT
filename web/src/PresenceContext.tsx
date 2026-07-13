@@ -1,10 +1,11 @@
-// FUTUREHAT — global online/offline presence via Supabase Realtime Presence.
+// Lumixo — global online/offline presence via Supabase Realtime Presence.
 // Exposes the set of currently-online user ids and keeps last_seen fresh.
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { supabase } from './supabase';
 import { useAuth } from './AuthContext';
 import { joinPresence, touchLastSeen } from '@shared/api';
+import { afterFirstPaint } from './lib/startupCache';
 
 const PresenceContext = createContext<{ onlineIds: Set<string> }>({ onlineIds: new Set() });
 
@@ -17,17 +18,26 @@ export function PresenceProvider({ children }: { children: ReactNode }) {
       setOnlineIds(new Set());
       return;
     }
-    const channel = joinPresence(supabase, user.id, setOnlineIds);
-    touchLastSeen(supabase);
-    const heartbeat = setInterval(() => touchLastSeen(supabase), 60000);
+    // Presence is non-critical — join after first paint so it never delays chats.
+    let channel: { unsubscribe: () => void } | null = null;
+    let heartbeat: ReturnType<typeof setInterval> | null = null;
+    let cancelled = false;
     const onUnload = () => { touchLastSeen(supabase); };
-    window.addEventListener('beforeunload', onUnload);
+
+    afterFirstPaint(() => {
+      if (cancelled) return;
+      channel = joinPresence(supabase, user.id, setOnlineIds);
+      touchLastSeen(supabase);
+      heartbeat = setInterval(() => touchLastSeen(supabase), 60000);
+      window.addEventListener('beforeunload', onUnload);
+    });
 
     return () => {
-      clearInterval(heartbeat);
+      cancelled = true;
+      if (heartbeat) clearInterval(heartbeat);
       window.removeEventListener('beforeunload', onUnload);
       touchLastSeen(supabase);
-      channel.unsubscribe();
+      channel?.unsubscribe();
     };
   }, [user]);
 

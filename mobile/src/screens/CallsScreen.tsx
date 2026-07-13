@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — Calls tab: WhatsApp-style call history.
+// Lumixo mobile — Calls tab: WhatsApp-style call history.
 //   • Grouped history (repeated calls from one contact → "Name (n)"), newest
 //     first, incoming/outgoing/missed direction + voice/video icons, WA timestamps.
 //   • Long-press → multi-select with a top action bar (count · select all · delete).
@@ -9,7 +9,14 @@
 //   • Realtime reload + keyset pagination. Delete is per-user (delete-for-me).
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator, Alert, FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View,
+  ActivityIndicator,
+  FlatList,
+  Modal,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
@@ -24,9 +31,12 @@ import type { CallGroup, CallHistoryItem, ConversationSummary, Profile, CallType
 import { useCalls } from '../calls/CallContext';
 import { getCache, setCache } from '../lib/localCache';
 import { formatListTimestamp } from '../lib/time';
-import { useColors, spacing, radius, font, type Palette } from '../theme';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useColors, spacing, radius, font, listPerf, type Palette } from '../theme';
 import Avatar from '../components/Avatar';
+import { LumixoCat } from '../components/LumixoCat';
 import type { RootStackParamList } from '../navigation/types';
+import { Alert, showSheet } from '../ui/dialog';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 const PAGE = 60;
@@ -45,7 +55,7 @@ export default function CallsScreen() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set()); // group keys
   const [selecting, setSelecting] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
+
   const [pickerOpen, setPickerOpen] = useState(false);
 
   const load = useCallback(async (opts: { silent?: boolean } = {}) => {
@@ -121,7 +131,6 @@ export default function CallsScreen() {
   }, [load]);
 
   const clearAll = useCallback(() => {
-    setMenuOpen(false);
     Alert.alert('Clear call log', 'Clear your entire call history? This only affects you — contacts and chats are not deleted.', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Clear', style: 'destructive', onPress: async () => {
@@ -131,6 +140,17 @@ export default function CallsScreen() {
       } },
     ]);
   }, [load]);
+
+  const openOverflow = useCallback(() => {
+    showSheet({
+      title: 'Calls',
+      actions: [
+        { text: 'Clear call log', icon: 'trash', style: 'destructive', onPress: () => clearAll() },
+        { text: 'Scheduled calls', icon: 'info', onPress: () => navigation.navigate('ScheduledCalls') },
+        { text: 'Call settings', icon: 'settings', onPress: () => navigation.navigate('CallSettings') },
+      ],
+    });
+  }, [clearAll, navigation]);
 
   // ── Header (native tab header, swapped for selection) ──────────────────────
   useLayoutEffect(() => {
@@ -156,12 +176,12 @@ export default function CallsScreen() {
         headerRight: () => (
           <View style={{ flexDirection: 'row', gap: spacing(4), paddingHorizontal: spacing(3) }}>
             <Pressable onPress={() => setSearchOpen((v) => !v)} hitSlop={10}><Ionicons name="search" size={22} color={colors.isLight ? '#fff' : colors.text} /></Pressable>
-            <Pressable onPress={() => setMenuOpen(true)} hitSlop={10}><Ionicons name="ellipsis-vertical" size={22} color={colors.isLight ? '#fff' : colors.text} /></Pressable>
+            <Pressable onPress={openOverflow} hitSlop={10}><Ionicons name="ellipsis-vertical" size={22} color={colors.isLight ? '#fff' : colors.text} /></Pressable>
           </View>
         ),
       });
     }
-  }, [navigation, selecting, selected, colors, cancelSelect, deleteSelected]);
+  }, [navigation, selecting, selected, colors, cancelSelect, deleteSelected, selectAll, openOverflow]);
 
   // ── Place a call from the FAB picker ───────────────────────────────────────
   const placeCall = useCallback(async (conv: ConversationSummary, type: CallType) => {
@@ -176,6 +196,10 @@ export default function CallsScreen() {
     const isSel = selected.has(g.key);
     const missed = g.anyMissed;
     const out = g.latest.direction === 'outgoing';
+    // The real call records behind this row (newest first) — passed to the
+    // detail screen so it shows THIS call's metadata, not generic contact info.
+    const idSet = new Set(g.callIds);
+    const groupCallsList = items.filter((it) => idSet.has(it.id));
     return (
       <Pressable
         onLongPress={() => enterSelect(g.key)}
@@ -187,6 +211,7 @@ export default function CallsScreen() {
             title: g.title,
             username: g.peer_username ?? undefined,
             avatarUrl: g.peer_avatar,
+            calls: groupCallsList,
           });
         }}
         style={({ pressed }) => [styles.row, (isSel || pressed) && { backgroundColor: colors.surfaceAlt }]}
@@ -217,6 +242,7 @@ export default function CallsScreen() {
           onPress={() => (selecting ? toggle(g.key) : navigation.navigate('CallDetail', {
             conversationId: g.conversation_id, peerId: g.peer_id ?? undefined,
             title: g.title, username: g.peer_username ?? undefined, avatarUrl: g.peer_avatar,
+            calls: groupCallsList,
           }))}
         >
           <Ionicons name={g.latest.type === 'video' ? 'videocam' : 'call'} size={22} color={colors.primary} />
@@ -245,10 +271,17 @@ export default function CallsScreen() {
         onEndReached={loadMore}
         onEndReachedThreshold={0.4}
         contentContainerStyle={groups.length === 0 ? { flex: 1 } : { paddingBottom: 96 }}
+        initialNumToRender={listPerf.generic.initialNumToRender}
+        maxToRenderPerBatch={listPerf.generic.maxToRenderPerBatch}
+        windowSize={listPerf.generic.windowSize}
+        updateCellsBatchingPeriod={listPerf.generic.updateCellsBatchingPeriod}
+        removeClippedSubviews={listPerf.generic.removeClippedSubviews}
         ListEmptyComponent={
           !loading ? (
             <View style={styles.empty}>
-              <View style={styles.emptyIllus}><Ionicons name="call-outline" size={54} color={colors.primary} /></View>
+              <View style={styles.emptyIllus}>
+                <LumixoCat mood="wave" size="md" decorative />
+              </View>
               <Text style={styles.emptyText}>No recent calls</Text>
               <Text style={styles.emptySub}>Start a voice or video call from any chat, or tap the button below.</Text>
             </View>
@@ -257,33 +290,14 @@ export default function CallsScreen() {
       />
 
       {/* Always-visible FAB */}
-      <Pressable style={({ pressed }) => [styles.fab, pressed && { opacity: 0.85 }]} onPress={() => setPickerOpen(true)}>
-        <Ionicons name="call" size={24} color="#fff" />
-        <Ionicons name="add" size={16} color="#fff" style={styles.fabPlus} />
+      <Pressable style={({ pressed }) => [styles.fab, pressed && { opacity: 0.88, transform: [{ scale: 0.96 }] }]} onPress={() => setPickerOpen(true)}>
+        <Ionicons name="call" size={22} color="#fff" />
+        <Ionicons name="add" size={14} color="#fff" style={styles.fabPlus} />
       </Pressable>
-
-      {/* Overflow menu */}
-      <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
-        <Pressable style={styles.menuBackdrop} onPress={() => setMenuOpen(false)}>
-          <View style={styles.menu}>
-            <MenuItem label="Clear call log" onPress={clearAll} colors={colors} styles={styles} />
-            <MenuItem label="Scheduled calls" onPress={() => { setMenuOpen(false); navigation.navigate('ScheduledCalls'); }} colors={colors} styles={styles} />
-            <MenuItem label="Call settings" onPress={() => { setMenuOpen(false); navigation.navigate('CallSettings'); }} colors={colors} styles={styles} />
-          </View>
-        </Pressable>
-      </Modal>
 
       {/* FAB contact picker */}
       <ContactPicker visible={pickerOpen} onClose={() => setPickerOpen(false)} onCall={placeCall} colors={colors} styles={styles} />
     </View>
-  );
-}
-
-function MenuItem({ label, onPress, colors, styles }: { label: string; onPress: () => void; colors: Palette; styles: Styles }) {
-  return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.menuItem, pressed && { backgroundColor: colors.surfaceAlt }]}>
-      <Text style={styles.menuText}>{label}</Text>
-    </Pressable>
   );
 }
 
@@ -294,6 +308,7 @@ function ContactPicker({
   onCall: (conv: ConversationSummary, type: CallType) => void;
   colors: Palette; styles: Styles;
 }) {
+  const insets = useSafeAreaInsets();
   const [convs, setConvs] = useState<ConversationSummary[]>([]);
   const [q, setQ] = useState('');
   useEffect(() => {
@@ -302,9 +317,13 @@ function ContactPicker({
   }, [visible]);
   const filtered = convs.filter((c) => c.title.toLowerCase().includes(q.trim().toLowerCase()));
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
       <Pressable style={styles.sheetBackdrop} onPress={onClose}>
-        <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+        <Pressable
+          style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 12) + 16 }]}
+          onPress={(e) => e.stopPropagation()}
+        >
+          <View style={styles.handle} />
           <Text style={styles.sheetTitle}>Call a contact</Text>
           <View style={styles.searchBar}>
             <Ionicons name="search" size={18} color={colors.textFaint} />
@@ -351,15 +370,42 @@ const makeStyles = (colors: Palette) =>
     emptyIllus: { width: 108, height: 108, borderRadius: 54, backgroundColor: colors.primary + '18', alignItems: 'center', justifyContent: 'center', marginBottom: spacing(4) },
     emptyText: { color: colors.text, fontSize: font.title, fontWeight: '700' },
     emptySub: { color: colors.textMuted, fontSize: font.small, marginTop: spacing(2), textAlign: 'center' },
-    fab: { position: 'absolute', right: spacing(5), bottom: spacing(6), width: 58, height: 58, borderRadius: 29, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', elevation: 5, shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 5, shadowOffset: { width: 0, height: 3 } },
+    fab: { position: 'absolute', right: spacing(4), bottom: spacing(5), width: 54, height: 54, borderRadius: 27, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', elevation: 5, shadowColor: '#000', shadowOpacity: 0.22, shadowRadius: 6, shadowOffset: { width: 0, height: 3 } },
     fabPlus: { position: 'absolute', right: 12, top: 12 },
-    menuBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.15)' },
-    menu: { position: 'absolute', top: 8, right: 8, backgroundColor: colors.surface, borderRadius: radius.md, paddingVertical: spacing(1), minWidth: 200, elevation: 6, shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 8, shadowOffset: { width: 0, height: 2 } },
-    menuItem: { paddingHorizontal: spacing(4), paddingVertical: spacing(3) },
-    menuText: { color: colors.text, fontSize: font.body },
-    sheetBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-    sheet: { backgroundColor: colors.surface, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, padding: spacing(4), paddingBottom: spacing(8) },
-    sheetTitle: { color: colors.text, fontSize: font.heading, fontWeight: '700', marginBottom: spacing(2) },
+    sheetBackdrop: {
+      flex: 1,
+      backgroundColor: colors.isLight ? 'rgba(15, 23, 28, 0.45)' : 'rgba(0, 0, 0, 0.62)',
+      justifyContent: 'flex-end',
+    },
+    sheet: {
+      backgroundColor: colors.surface,
+      borderTopLeftRadius: 20,
+      borderTopRightRadius: 20,
+      padding: spacing(4),
+      paddingTop: spacing(2),
+      // paddingBottom applied dynamically via safe-area insets
+      shadowColor: '#000',
+      shadowOpacity: 0.3,
+      shadowRadius: 20,
+      shadowOffset: { width: 0, height: -6 },
+      elevation: 24,
+    },
+    handle: {
+      alignSelf: 'center',
+      width: 40,
+      height: 4,
+      borderRadius: 2,
+      backgroundColor: colors.textFaint,
+      opacity: 0.55,
+      marginBottom: spacing(3),
+    },
+    sheetTitle: {
+      color: colors.text,
+      fontSize: font.heading,
+      fontWeight: '700',
+      marginBottom: spacing(2),
+      textAlign: 'center',
+    },
     pickRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: spacing(2.5) },
     pickName: { flex: 1, color: colors.text, fontSize: font.body, marginLeft: spacing(3) },
   });

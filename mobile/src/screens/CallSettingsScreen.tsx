@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — Call Settings. A few persisted call preferences (stored in
+// Lumixo mobile — Call Settings. A few persisted call preferences (stored in
 // user_preferences.extra.calls via callSettingsApi) plus a link to Notifications.
 // Reached from the Calls overflow menu.
 import React, { useCallback, useMemo, useState } from 'react';

@@ -1,8 +1,8 @@
-// FUTUREHAT mobile — Chat settings: enter-to-send, font size, media visibility,
+// Lumixo mobile — Chat settings: enter-to-send, font size, media visibility,
 // upload quality, auto-download, voice transcripts. Standalone; persists via
 // privacyApi chat-settings (user_preferences.extra.chat).
 import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
 import { supabase } from '../lib/supabase';
@@ -10,6 +10,7 @@ import { getChatSettings, setChatSettings, type ChatSettings, type FontSize, typ
 import { getCache, setCache } from '../lib/localCache';
 import { queueAction } from '../lib/sync';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
+import { Alert } from '../ui/dialog';
 
 export default function ChatSettingsScreen() {
   const colors = useColors();
@@ -75,7 +76,12 @@ export default function ChatSettingsScreen() {
             <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
           </Pressable>
           <View style={styles.row}>
-            <Text style={styles.rowLabel}>Auto-download media</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rowLabel}>Auto-download media</Text>
+              <Text style={{ color: colors.textFaint, fontSize: 12, marginTop: 2 }}>
+                Prefer Storage &amp; Data for Wi‑Fi / cellular rules. Off by default.
+              </Text>
+            </View>
             <Switch value={c.autoDownload} onValueChange={(v) => update({ autoDownload: v })} trackColor={{ true: colors.primary, false: colors.border }} />
           </View>
           <View style={[styles.row, styles.rowLast]}>

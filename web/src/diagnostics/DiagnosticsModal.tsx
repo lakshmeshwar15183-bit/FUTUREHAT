@@ -1,4 +1,4 @@
-// FUTUREHAT — Diagnostics & app information. Shows app/build/environment info and
+// Lumixo — Diagnostics & app information. Shows app/build/environment info and
 // lets the user download a diagnostic report (env + recent captured logs) to
 // attach to a support ticket. Self-contained.
 
@@ -25,7 +25,7 @@ export function DiagnosticsModal({ onClose }: { onClose: () => void }) {
   }, [onClose]);
 
   const info: Record<string, string> = {
-    App: 'FUTUREHAT',
+    App: 'Lumixo',
     Version: APP_VERSION,
     Developer: OWNER,
     Platform: navigator.platform || 'unknown',
@@ -39,7 +39,7 @@ export function DiagnosticsModal({ onClose }: { onClose: () => void }) {
 
   function download() {
     const lines = [
-      '=== FUTUREHAT diagnostic report ===',
+      '=== Lumixo diagnostic report ===',
       `Generated: ${new Date().toISOString()}`,
       '',
       ...Object.entries(info).map(([k, v]) => `${k}: ${v}`),
@@ -50,7 +50,7 @@ export function DiagnosticsModal({ onClose }: { onClose: () => void }) {
     const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = `futurehat-diagnostics-${new Date().toISOString().slice(0, 10)}.txt`;
+    a.href = url; a.download = `lumixo-diagnostics-${new Date().toISOString().slice(0, 10)}.txt`;
     document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
   }
 

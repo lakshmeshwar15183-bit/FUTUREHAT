@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-# FUTUREHAT — end-to-end call test launcher.
+# Lumixo — end-to-end call test launcher.
 #
 # ONE command that, the moment an Android phone is connected, builds v1.3.4 (the
 # build carrying the call fix), installs + launches it, and streams the `[call]`
@@ -38,7 +38,7 @@ STAMP="$(date +%Y%m%d-%H%M%S)"
 hr(){ printf '─%.0s' {1..70}; echo; }
 
 # ── 0. Preconditions ────────────────────────────────────────────────────────
-hr; echo "FUTUREHAT call test — $STAMP"; hr
+hr; echo "Lumixo call test — $STAMP"; hr
 if ! command -v java >/dev/null 2>&1 && [ -z "${JAVA_HOME:-}" ]; then
   echo "✗ No JDK. Run:  brew install openjdk@17   (then re-run this script)"; exit 1
 fi

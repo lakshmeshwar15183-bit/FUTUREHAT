@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "dev.lakshmeshwar.futurehat",
+      "sha256_cert_fingerprints": [
+        "92:52:E1:48:FA:A1:26:46:A2:9A:CE:38:86:23:38:25:DF:72:5F:C8:0C:10:70:5C:99:1F:18:17:03:F6:9F:DE"
+      ]
+    }
+  }
+]

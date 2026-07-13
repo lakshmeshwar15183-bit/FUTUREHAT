@@ -47,9 +47,9 @@ All public tables have RLS enabled. Verified policies:
 ✅ XSS — React escapes by default; no `dangerouslySetInnerHTML` in the app.
 ✅ CSRF — bearer-token auth (no ambient cookies) → negligible CSRF surface.
 ✅ Secrets management — anon key is public-by-design; service role/DB password
-   never shipped to client; AI keys live in edge-function secrets.
+   never shipped to client; optional writing-tool keys live in edge-function secrets only.
 ✅ Authorization — enforced at the DB (RLS) not just the client; admin gated by
-   `is_admin`; AI edge function re-checks `is_premium` server-side.
+   `is_admin`; optional writing-tools edge re-checks `is_premium` server-side.
 ✅ Secure file uploads (partial) — media bucket private; type/size checked client
    side (2MB free / 25MB premium); avatars upsert JPEG.
 

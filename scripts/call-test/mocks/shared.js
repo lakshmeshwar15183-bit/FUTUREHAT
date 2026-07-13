@@ -9,6 +9,7 @@ let dropPredicate = null;      // (msg) => boolean : return true to drop
 const busLog = [];
 
 function buildIceServers() { return [{ urls: 'stun:mock' }]; }
+function hasTurn() { return false; }
 
 function createSignalingChannel(client, callId, selfId, onSignal, onReady) {
   const peer = { selfId, onSignal };
@@ -33,6 +34,7 @@ function createSignalingChannel(client, callId, selfId, onSignal, onReady) {
 
 module.exports = {
   buildIceServers,
+  hasTurn,
   createSignalingChannel,
   __setDrop: (fn) => { dropPredicate = fn; },
   __busLog: busLog,

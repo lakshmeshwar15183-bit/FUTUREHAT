@@ -1,6 +1,6 @@
-// FUTUREHAT mobile — Chat Lock (0027). Per-chat lock secured entirely by the
+// Lumixo mobile — Chat Lock (0027). Per-chat lock secured entirely by the
 // DEVICE's own authentication (Android BiometricPrompt / iOS LocalAuthentication →
-// fingerprint / face / device PIN). FUTUREHAT NEVER stores a PIN, password, or
+// fingerprint / face / device PIN). Lumixo NEVER stores a PIN, password, or
 // biometric — it only tracks WHICH conversations are locked (synced via
 // locked_conversations) and the auto-lock timing (extra.chatLock).
 //

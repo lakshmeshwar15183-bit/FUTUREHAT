@@ -1,9 +1,9 @@
-// FUTUREHAT mobile — Privacy settings. Visibility controls (last seen, photo,
+// Lumixo mobile — Privacy settings. Visibility controls (last seen, photo,
 // about, links, status, groups, calls, avatar), read receipts, and a blocked-
 // contacts manager. Standalone screen; persists via privacyApi / supportApi.
 // Wire into RootStackParamList + SettingsScreen on recovery (see PHASE4 log).
 import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
 import { supabase } from '../lib/supabase';
@@ -18,6 +18,7 @@ import { queueAction } from '../lib/sync';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import { useChatLock } from '../security/ChatLock';
 import Avatar from '../components/Avatar';
+import { Alert } from '../ui/dialog';
 
 const AUTO_LOCK_OPTIONS: ChatLockAutoLock[] = [0, 60000, 300000, 1800000];
 
@@ -68,7 +69,7 @@ export default function PrivacyScreen() {
 
   function toggleGhost(v: boolean) {
     if (!isPremium) {
-      Alert.alert('FUTUREHAT+', 'Ghost mode is a premium feature. Upgrade to FUTUREHAT+ to use it.');
+      Alert.alert('Lumixo+', 'Ghost mode is a premium feature. Upgrade to Lumixo+ to use it.');
       return;
     }
     setGhostMode(v);

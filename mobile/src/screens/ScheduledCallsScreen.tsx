@@ -1,9 +1,16 @@
-// FUTUREHAT mobile — Scheduled Calls. List upcoming scheduled calls, schedule a
+// Lumixo mobile — Scheduled Calls. List upcoming scheduled calls, schedule a
 // new one with a contact (voice/video + a time preset), and cancel. Persisted in
 // public.scheduled_calls (0024) + realtime. Reached from the Calls overflow menu.
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator, Alert, FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View,
+  ActivityIndicator,
+  FlatList,
+  Modal,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
@@ -14,8 +21,11 @@ import {
   getMyConversations, getCurrentUser,
 } from '../lib/shared';
 import type { ScheduledCall, ConversationSummary, CallType } from '../lib/shared';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Avatar from '../components/Avatar';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
+import { fabBottom } from '../lib/safeLayout';
+import { Alert } from '../ui/dialog';
 
 const PRESETS: { label: string; ms: number }[] = [
   { label: 'In 1 hour', ms: 3600e3 },
@@ -33,6 +43,7 @@ function presetDate(ms: number): Date {
 
 export default function ScheduledCallsScreen() {
   const colors = useColors();
+  const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const [rows, setRows] = useState<ScheduledCall[]>([]);
   const [convs, setConvs] = useState<ConversationSummary[]>([]);
@@ -98,7 +109,14 @@ export default function ScheduledCallsScreen() {
           </View>
         )}
       />
-      <Pressable style={({ pressed }) => [styles.fab, pressed && { opacity: 0.85 }]} onPress={() => setComposeOpen(true)}>
+      <Pressable
+        style={({ pressed }) => [
+          styles.fab,
+          { bottom: fabBottom(insets, { extra: spacing(5) }) },
+          pressed && { opacity: 0.85 },
+        ]}
+        onPress={() => setComposeOpen(true)}
+      >
         <Ionicons name="add" size={28} color="#fff" />
       </Pressable>
 
@@ -114,6 +132,7 @@ function ComposeModal({
   onClose: () => void; onCreate: (c: ConversationSummary, t: CallType, when: Date) => void;
   colors: Palette; styles: Styles;
 }) {
+  const insets = useSafeAreaInsets();
   const [q, setQ] = useState('');
   const [picked, setPicked] = useState<ConversationSummary | null>(null);
   const [type, setType] = useState<CallType>('audio');
@@ -123,7 +142,10 @@ function ComposeModal({
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <Pressable style={styles.sheetBackdrop} onPress={onClose}>
-        <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+        <Pressable
+          style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 12) + 16 }]}
+          onPress={(e) => e.stopPropagation()}
+        >
           <Text style={styles.sheetTitle}>Schedule a call</Text>
           {!picked ? (
             <>
@@ -188,9 +210,9 @@ const makeStyles = (colors: Palette) =>
     emptyIllus: { width: 96, height: 96, borderRadius: 48, backgroundColor: colors.primary + '18', alignItems: 'center', justifyContent: 'center', marginBottom: spacing(3) },
     emptyText: { color: colors.text, fontSize: font.heading, fontWeight: '700' },
     emptySub: { color: colors.textMuted, fontSize: font.small, marginTop: spacing(2), textAlign: 'center' },
-    fab: { position: 'absolute', right: spacing(5), bottom: spacing(6), width: 56, height: 56, borderRadius: 28, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', elevation: 5, shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 5, shadowOffset: { width: 0, height: 3 } },
+    fab: { position: 'absolute', right: spacing(5), width: 56, height: 56, borderRadius: 28, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', elevation: 5, shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 5, shadowOffset: { width: 0, height: 3 } },
     sheetBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-    sheet: { backgroundColor: colors.surface, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, padding: spacing(4), paddingBottom: spacing(8) },
+    sheet: { backgroundColor: colors.surface, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, padding: spacing(4) },
     sheetTitle: { color: colors.text, fontSize: font.heading, fontWeight: '700', marginBottom: spacing(2) },
     searchBar: { flexDirection: 'row', alignItems: 'center', gap: spacing(2), backgroundColor: colors.surfaceAlt, paddingHorizontal: spacing(3), borderRadius: radius.pill },
     searchInput: { flex: 1, color: colors.text, fontSize: font.body, paddingVertical: spacing(2.5) },

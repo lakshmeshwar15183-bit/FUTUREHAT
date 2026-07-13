@@ -1,4 +1,4 @@
-// FUTUREHAT — lightweight in-memory diagnostic log ring buffer. Call
+// Lumixo — lightweight in-memory diagnostic log ring buffer. Call
 // initDiagnostics() once at startup (from main.tsx during recovery wiring) to
 // start capturing uncaught errors and rejections; use logDiag() to record notable
 // events, and getDiagnostics() to read them for the Diagnostics export.

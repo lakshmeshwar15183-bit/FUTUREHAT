@@ -1,46 +1,92 @@
-// FUTUREHAT web — Auth screen with interactive mascot + motion.
+// Lumixo web — Auth screen with official Lumi cat mascot.
+// Authentication APIs/Supabase are unchanged — UI/animation only.
 
-import { useState, type FormEvent } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { useEffect, useState, type FormEvent } from 'react';
 import { signInWithEmail, signUpWithEmail } from '@shared/api';
 import { supabase } from './supabase';
-import { Mascot } from './Mascot';
-import { spring, quick } from './motion';
+import { LumixoCat } from './mascot/LumixoCat';
+import { CAT_MOTION, catGazeFromEmail, catMoodFromAuth, type CatMood } from '@shared/lumixoCat';
 import './Auth.css';
 
+function resetRedirectUrl(): string {
+  const envSite = (import.meta as any).env?.VITE_SITE_URL as string | undefined;
+  let base = envSite?.replace(/\/+$/, '') || '';
+  if (!base) {
+    const origin = window.location.origin;
+    const isLocal = /localhost|127\.0\.0\.1/.test(origin);
+    if (isLocal) {
+      base = 'https://futurehat-app.netlify.app';
+      console.warn('[auth] VITE_SITE_URL unset on localhost — using production site for reset redirect');
+    } else {
+      base = origin.replace(/\/+$/, '');
+    }
+  }
+  return `${base}/reset-password`;
+}
+
 export function AuthScreen() {
-  const [mode, setMode] = useState<'signin' | 'signup'>('signin');
+  const [mode, setMode] = useState<'signin' | 'signup' | 'forgot'>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [loading, setLoading] = useState(false);
-  const [pwFocused, setPwFocused] = useState(false);
-  const [happy, setHappy] = useState(false);
+  const [emailFocused, setEmailFocused] = useState(false);
+  const [passwordFocused, setPasswordFocused] = useState(false);
+  const [success, setSuccess] = useState(false);
+  const [showConfused, setShowConfused] = useState(false);
 
-  const gaze = Math.min(1, email.length / 24);
+  const gaze = catGazeFromEmail(email);
+  const baseMood: CatMood = catMoodFromAuth({
+    passwordFocused,
+    emailFocused: emailFocused || (!passwordFocused && email.length > 0 && !success),
+    error: showConfused ? error : null,
+    success,
+  });
+  // Welcome wave on signup when not typing / celebrating.
+  const mood: CatMood = baseMood === 'idle' && mode === 'signup' ? 'wave' : baseMood;
+
+  // Confused mood: brief shake + ~1s sad eyes, then back to idle/watching.
+  useEffect(() => {
+    if (!error) return;
+    setShowConfused(true);
+    const t = setTimeout(() => setShowConfused(false), CAT_MOTION.confuseHoldMs + 600);
+    return () => clearTimeout(t);
+  }, [error]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError('');
+    setNotice('');
+    setSuccess(false);
     setLoading(true);
     try {
       if (mode === 'signup') {
         const { error: err } = await signUpWithEmail(supabase, email, password, displayName);
         if (err) throw err;
-        setHappy(true);
+        setSuccess(true);
         setTimeout(() => {
           alert('Account created! Sign in to continue.');
           setMode('signin');
-          setHappy(false);
-        }, 700);
+          setSuccess(false);
+        }, 900);
+      } else if (mode === 'forgot') {
+        const { error: err } = await supabase.auth.resetPasswordForEmail(email, {
+          redirectTo: resetRedirectUrl(),
+        });
+        if (err) throw err;
+        setNotice('Password reset link sent. Check your email and click the link to continue.');
+        setMode('signin');
       } else {
         const { error: err } = await signInWithEmail(supabase, email, password);
         if (err) throw err;
-        setHappy(true);
+        setSuccess(true);
+        // Session listener navigates; keep celebrate until unmount.
       }
     } catch (err: any) {
       setError(err.message || 'Authentication failed');
+      setSuccess(false);
     } finally {
       setLoading(false);
     }
@@ -49,84 +95,136 @@ export function AuthScreen() {
   return (
     <div className="auth-screen">
       <div className="auth-aurora" aria-hidden />
-      <motion.div
-        className="auth-card glass"
-        initial={{ opacity: 0, y: 24, scale: 0.96 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        transition={spring}
-      >
-        <div className="auth-mascot">
-          <Mascot gaze={gaze} coverEyes={pwFocused} happy={happy} />
+      <div className={`auth-card glass auth-card-enter ${success ? 'auth-card-success' : ''}`}>
+        <div className="auth-mascot" aria-hidden>
+          <LumixoCat mood={mood} gaze={gaze} size="hero" decorative />
         </div>
-        <h1 className="auth-logo">FUTUREHAT</h1>
+        <h1 className="auth-logo">Lumixo</h1>
         <p className="auth-tagline">Real-time messaging, reimagined</p>
 
         <form onSubmit={handleSubmit} className="auth-form">
-          <AnimatePresence initial={false} mode="popLayout">
-            {mode === 'signup' && (
-              <motion.input
-                key="name"
-                layout
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: 48 }}
-                exit={{ opacity: 0, height: 0 }}
-                transition={quick}
-                type="text"
-                placeholder="Display name"
-                value={displayName}
-                onChange={(e) => setDisplayName(e.target.value)}
-                required
-                disabled={loading}
-              />
-            )}
-          </AnimatePresence>
+          {mode === 'signup' && (
+            <input
+              type="text"
+              placeholder="Display name"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              required
+              disabled={loading || success}
+              autoComplete="name"
+            />
+          )}
           <input
             type="email"
             placeholder="Email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            onFocus={() => setPwFocused(false)}
+            onFocus={() => {
+              setEmailFocused(true);
+              setPasswordFocused(false);
+            }}
+            onBlur={() => setEmailFocused(false)}
             required
-            disabled={loading}
+            disabled={loading || success}
+            autoComplete="email"
           />
-          <input
-            type="password"
-            placeholder="Password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            onFocus={() => setPwFocused(true)}
-            onBlur={() => setPwFocused(false)}
-            required
-            minLength={6}
-            disabled={loading}
-          />
-          <AnimatePresence>
-            {error && (
-              <motion.div
-                className="auth-error"
-                initial={{ opacity: 0, y: -6 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }}
-              >
-                {error}
-              </motion.div>
+          {mode !== 'forgot' && (
+            <input
+              type="password"
+              placeholder="Password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              onFocus={() => {
+                setPasswordFocused(true);
+                setEmailFocused(false);
+              }}
+              onBlur={() => setPasswordFocused(false)}
+              required
+              minLength={6}
+              disabled={loading || success}
+              autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+            />
+          )}
+          {error && (
+            <div className="auth-error" role="alert">
+              {error}
+            </div>
+          )}
+          {notice && (
+            <div className="auth-error" role="status" style={{ background: 'rgba(0, 168, 132, 0.15)', color: 'inherit' }}>
+              {notice}
+            </div>
+          )}
+          <button type="submit" disabled={loading || success} className="auth-submit">
+            {loading ? (
+              <span className="fh-spinner" style={{ width: 20, height: 20, borderWidth: 2 }} />
+            ) : success ? (
+              'Welcome!'
+            ) : mode === 'signin' ? (
+              'Sign In'
+            ) : mode === 'signup' ? (
+              'Create account'
+            ) : (
+              'Send reset link'
             )}
-          </AnimatePresence>
-          <motion.button whileTap={{ scale: 0.96 }} type="submit" disabled={loading} className="auth-submit">
-            {loading ? <span className="fh-spinner" style={{ width: 20, height: 20, borderWidth: 2 }} /> : mode === 'signin' ? 'Sign In' : 'Create account'}
-          </motion.button>
+          </button>
         </form>
 
         <div className="auth-toggle">
-          {mode === 'signin' ? (
-            <>New here? <a onClick={() => setMode('signup')}>Create an account</a></>
-          ) : (
-            <>Already have an account? <a onClick={() => setMode('signin')}>Sign in</a></>
+          {mode === 'signin' && (
+            <>
+              <a
+                onClick={() => {
+                  setError('');
+                  setNotice('');
+                  setMode('forgot');
+                }}
+              >
+                Forgot password?
+              </a>
+              <span style={{ margin: '0 8px', opacity: 0.5 }}>·</span>
+              New here?{' '}
+              <a
+                onClick={() => {
+                  setError('');
+                  setNotice('');
+                  setMode('signup');
+                }}
+              >
+                Create an account
+              </a>
+            </>
+          )}
+          {mode === 'signup' && (
+            <>
+              Already have an account?{' '}
+              <a
+                onClick={() => {
+                  setError('');
+                  setNotice('');
+                  setMode('signin');
+                }}
+              >
+                Sign in
+              </a>
+            </>
+          )}
+          {mode === 'forgot' && (
+            <>
+              Remembered it?{' '}
+              <a
+                onClick={() => {
+                  setError('');
+                  setNotice('');
+                  setMode('signin');
+                }}
+              >
+                Back to sign in
+              </a>
+            </>
           )}
         </div>
-      </motion.div>
-
-      <div className="auth-footer">Developed by LAKSHMESHWAR PANDEY</div>
+      </div>
     </div>
   );
 }

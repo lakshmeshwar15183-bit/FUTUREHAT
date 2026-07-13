@@ -1,4 +1,4 @@
-// FUTUREHAT — shared data-access layer
+// Lumixo — shared data-access layer
 // All chat, auth, and realtime operations. Framework-agnostic; web and mobile both import this.
 
 import type {
@@ -20,7 +20,60 @@ import type {
   StatusViewer,
   UUID,
   MessageType,
+  MediaMeta,
+  ViewOnceState,
 } from './types.js';
+import {
+  aggregateRecipientTick,
+  type TickStatus,
+} from './messageStatus.js';
+import {
+  resolveConversationTitle,
+  resolveConversationAvatar,
+  resolveDisplayName,
+  mergeProfileIdentity,
+} from './identity.js';
+
+// Re-export tick helpers so web/mobile can import from the shared API barrel.
+export {
+  type TickStatus,
+  type ReceiptLike,
+  tickRank,
+  maxTick,
+  mergeTick,
+  receiptStatusToTick,
+  aggregateRecipientTick,
+  buildTickMap,
+  applyReceiptToTickMap,
+  computeOutboundTick,
+  tickIsDouble,
+  tickIsRead,
+  tickLabel,
+  tickGlyph,
+} from './messageStatus.js';
+
+export {
+  type IdentityLike,
+  resolveDisplayName,
+  resolveUsernameHandle,
+  resolveAvatarUrl,
+  mergeProfileIdentity,
+  resolveConversationTitle,
+  resolveConversationAvatar,
+  isWeakLabel,
+  isWeakTitle,
+  cleanLabel,
+  mergeConversationIdentityFields,
+  stabilizeConversationList,
+} from './identity.js';
+
+export {
+  type NicknameMap,
+  normalizeNickname,
+  nicknameStorageKey,
+  setNicknameInMap,
+  getNicknameFromMap,
+} from './nicknames.js';
 
 // ── Auth ────────────────────────────────────────────────────────────────────
 
@@ -76,19 +129,94 @@ export async function getCurrentUser(client: SupabaseClient): Promise<User | nul
 
 // ── Profiles ────────────────────────────────────────────────────────────────
 
+/** Safe peer-facing columns — never phone, account_status, ban fields, role. */
+export const PROFILE_PUBLIC_COLS =
+  'id, username, display_name, about, avatar_url, last_seen, created_at';
+
+/** Own account columns (phone OK — RLS: own row only). */
+const PROFILE_SELF_COLS =
+  'id, phone, username, display_name, about, avatar_url, last_seen, created_at';
+
+/**
+ * Batch-load peer profiles without phone. Uses public_profiles (0050/0051);
+ * falls back to column-limited profiles select if the view is missing.
+ *
+ * Chunked `.in()` queries — large participant graphs were silently truncating /
+ * failing PostgREST URL limits, leaving holes that became "Unknown" titles.
+ */
+export async function getProfilesPublic(
+  client: SupabaseClient,
+  userIds: UUID[],
+): Promise<Map<UUID, Profile>> {
+  const map = new Map<UUID, Profile>();
+  const ids = [...new Set(userIds.filter(Boolean))];
+  if (!ids.length) return map;
+
+  const CHUNK = 80;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const slice = ids.slice(i, i + CHUNK);
+    const { data, error } = await client
+      .from('public_profiles')
+      .select(PROFILE_PUBLIC_COLS)
+      .in('id', slice);
+    if (!error && data) {
+      for (const p of data as Profile[]) map.set(p.id, { ...p, phone: null });
+      continue;
+    }
+    // Fallback: never select * or phone.
+    const { data: rows } = await client
+      .from('profiles')
+      .select(PROFILE_PUBLIC_COLS)
+      .in('id', slice);
+    for (const p of (rows as Profile[]) ?? []) map.set(p.id, { ...p, phone: null });
+  }
+  return map;
+}
+
 export async function getMyProfile(client: SupabaseClient): Promise<Profile | null> {
   const user = await getCurrentUser(client);
   if (!user) return null;
-  const { data } = await client.from('profiles').select('*').eq('id', user.id).single();
-  return data;
+  // Own row only — phone allowed for account UI. Never used for peer display.
+  const { data } = await client
+    .from('profiles')
+    .select(PROFILE_SELF_COLS)
+    .eq('id', user.id)
+    .single();
+  return data as Profile | null;
 }
 
 export async function getProfile(
   client: SupabaseClient,
   userId: UUID,
 ): Promise<Profile | null> {
-  const { data } = await client.from('profiles').select('*').eq('id', userId).single();
-  return data;
+  // public_profiles omits phone / ban fields (0050/0051).
+  const { data, error } = await client
+    .from('public_profiles')
+    .select(PROFILE_PUBLIC_COLS)
+    .eq('id', userId)
+    .maybeSingle();
+  if (!error && data) return { ...(data as Profile), phone: null };
+  // Self or admin path / pre-0050: limited columns on base table (never select *).
+  const { data: row } = await client
+    .from('profiles')
+    .select(PROFILE_PUBLIC_COLS)
+    .eq('id', userId)
+    .maybeSingle();
+  return row ? { ...(row as Profile), phone: null } : null;
+}
+
+/** Full own profile including phone (account settings). RLS: own row only. */
+export async function getMyFullProfile(
+  client: SupabaseClient,
+): Promise<(Profile & { phone?: string | null }) | null> {
+  const user = await getCurrentUser(client);
+  if (!user) return null;
+  const { data } = await client
+    .from('profiles')
+    .select('id, phone, username, display_name, about, avatar_url, last_seen, created_at')
+    .eq('id', user.id)
+    .maybeSingle();
+  return data as Profile | null;
 }
 
 export async function updateMyProfile(
@@ -101,16 +229,36 @@ export async function updateMyProfile(
   return { error };
 }
 
+/** Strip PostgREST filter metacharacters so user input cannot break `.or()` / `.ilike()`. */
+function sanitizeSearchTerm(raw: string, maxLen = 64): string {
+  return raw
+    .trim()
+    .slice(0, maxLen)
+    .replace(/[%_,.()"'\\]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export async function searchProfiles(
   client: SupabaseClient,
   query: string,
 ): Promise<Profile[]> {
-  const { data } = await client
-    .from('profiles')
-    .select('*')
-    .or(`username.ilike.%${query}%,display_name.ilike.%${query}%`)
+  const q = sanitizeSearchTerm(query);
+  if (q.length < 1) return [];
+  // Prefer public_profiles (no phone/moderation columns) when the view exists;
+  // fall back to profiles for older DBs.
+  const { data, error } = await client
+    .from('public_profiles')
+    .select('id, username, display_name, about, avatar_url, last_seen, created_at')
+    .or(`username.ilike.%${q}%,display_name.ilike.%${q}%`)
     .limit(20);
-  return data || [];
+  if (!error && data) return data as Profile[];
+  const { data: fallback } = await client
+    .from('profiles')
+    .select('id, username, display_name, about, avatar_url, last_seen, created_at')
+    .or(`username.ilike.%${q}%,display_name.ilike.%${q}%`)
+    .limit(20);
+  return (fallback as Profile[]) || [];
 }
 
 // ── Conversations ───────────────────────────────────────────────────────────
@@ -129,26 +277,21 @@ export async function createGroupConversation(
   client: SupabaseClient,
   name: string,
   participantIds: UUID[],
+  avatarUrl?: string | null,
+  description?: string | null,
 ): Promise<{ conversationId: UUID | null; error: Error | null }> {
-  const user = await getCurrentUser(client);
-  if (!user) return { conversationId: null, error: new Error('not authenticated') };
-
-  const { data: conv, error: convErr } = await client
-    .from('conversations')
-    .insert({ type: 'group', name, created_by: user.id })
-    .select('id')
-    .single();
-  if (convErr || !conv) return { conversationId: null, error: convErr };
-
-  const participants = [user.id, ...participantIds].map((uid) => ({
-    conversation_id: conv.id,
-    user_id: uid,
-    role: uid === user.id ? 'admin' : 'member',
-  }));
-  const { error: partErr } = await client.from('conversation_participants').insert(participants);
-  if (partErr) return { conversationId: null, error: partErr };
-
-  return { conversationId: conv.id, error: null };
+  // Delegates to the SECURITY DEFINER RPC (0033, extended in 0037). Prefer the
+  // full groupsApi helper when you need push notify + description; this keeps
+  // the historic import path working for both web and mobile create flows.
+  const { data, error } = await client.rpc('create_group_conversation', {
+    p_name: name,
+    p_member_ids: participantIds,
+    p_avatar_url: avatarUrl ?? null,
+    p_description: description ?? null,
+  });
+  if (error) return { conversationId: null, error: new Error(error.message) };
+  // Callers (NewGroupScreen / GroupModal) fire sendPush for "added to group".
+  return { conversationId: (data as UUID) ?? null, error: null };
 }
 
 export async function getMyConversations(
@@ -180,10 +323,9 @@ export async function getMyConversations(
   if (!convs.length) return [];
   const allParts = (partsRes.data ?? []) as { conversation_id: UUID; user_id: UUID }[];
 
-  // One query for every participant profile across all conversations (was N).
+  // One query for every participant profile — public_profiles only (no phone).
   const userIds = [...new Set(allParts.map((p) => p.user_id))];
-  const { data: profs } = await client.from('profiles').select('*').in('id', userIds);
-  const profById = new Map<UUID, Profile>((profs ?? []).map((p): [UUID, Profile] => [p.id, p as Profile]));
+  const profById = await getProfilesPublic(client, userIds);
   const partIdsByConv = new Map<UUID, UUID[]>();
   for (const p of allParts) {
     const arr = partIdsByConv.get(p.conversation_id) ?? [];
@@ -214,11 +356,12 @@ export async function getMyConversations(
         .maybeSingle();
 
       const otherProfiles = profiles.filter((p) => p.id !== user.id);
-      const title =
-        conv.type === 'group'
-          ? conv.name || 'Group'
-          : otherProfiles[0]?.display_name || 'Unknown';
-      const avatarUrl = conv.type === 'group' ? conv.avatar_url : otherProfiles[0]?.avatar_url;
+      // Identity: never fall back to the string "Unknown" when a profile exists
+      // but display_name is empty — use username / Contact via resolveConversationTitle.
+      // Missing profile rows (chunk/RLS race) → "Contact", not "Unknown"; list merge
+      // with local cache restores the previous good name.
+      const title = resolveConversationTitle(conv, otherProfiles);
+      const avatarUrl = resolveConversationAvatar(conv, otherProfiles);
 
       // Unread = messages from others in this conversation that I haven't read.
       // Best-effort + clamped: any error or over-count falls back to 0 (never wrong-high).
@@ -252,9 +395,30 @@ export async function getMyConversations(
         unreadCount,
         title,
         avatarUrl,
+        // Filled below from a batched receipts query (single source of truth).
+        lastMessageTick: null,
       };
     }),
   );
+
+  // Attach outbound ticks for last messages I sent so chat list + chat thread
+  // always agree (never hardcode double-ticks in the list UI).
+  const myLastIds = summaries
+    .map((s) => s.lastMessage)
+    .filter((m): m is Message => !!m && m.sender_id === user.id && !m.is_deleted && m.type !== 'system')
+    .map((m) => m.id);
+
+  if (myLastIds.length > 0) {
+    const receipts = await getReceipts(client, myLastIds);
+    for (const s of summaries) {
+      const m = s.lastMessage;
+      if (!m || m.sender_id !== user.id || m.is_deleted || m.type === 'system') {
+        s.lastMessageTick = null;
+        continue;
+      }
+      s.lastMessageTick = aggregateRecipientTick(receipts, m.id, user.id);
+    }
+  }
 
   return summaries.sort((a, b) => {
     const aTime = a.lastMessage?.created_at || a.conversation.created_at;
@@ -360,7 +524,7 @@ export async function getSharedMedia(
       .from('messages')
       .select('*')
       .eq('conversation_id', conversationId)
-      .in('type', ['image', 'file'])
+      .in('type', ['image', 'video', 'file'])
       .eq('is_deleted', false)
       .order('created_at', { ascending: false })
       .limit(limit);
@@ -385,7 +549,7 @@ export async function searchAllMessages(
   query: string,
   limit = 40,
 ): Promise<MessageSearchHit[]> {
-  const q = query.trim();
+  const q = sanitizeSearchTerm(query, 100);
   if (!q) return [];
   try {
     const { data } = await client
@@ -394,7 +558,7 @@ export async function searchAllMessages(
       .eq('is_deleted', false)
       .ilike('content', `%${q}%`)
       .order('created_at', { ascending: false })
-      .limit(limit);
+      .limit(Math.min(limit, 100));
     return (data || []).map((m) => ({ message: m as Message, conversationId: (m as Message).conversation_id }));
   } catch {
     return [];
@@ -404,17 +568,36 @@ export async function searchAllMessages(
 /** A URL anywhere in text — used to classify "link" messages in search filters. */
 export const LINK_RE = /https?:\/\/[^\s]+|www\.[^\s]+/i;
 
+/** Canonical video-file detector. Shared by web + mobile so detection never
+ *  diverges. Used both to render first-class `type='video'` messages and to
+ *  keep treating legacy `type='file'` rows that carry a video URL as video. */
+export const VIDEO_RE = /\.(mp4|webm|mov|m4v|ogv|ogg)(\?|#|$)/i;
+export function isVideoUrl(url?: string | null): boolean {
+  return !!url && VIDEO_RE.test(url);
+}
+/** True for any message that should render/behave as a video — the first-class
+ *  type OR a legacy file row with a video URL. */
+export function isVideoMessage(m: Pick<Message, 'type' | 'media_url'>): boolean {
+  return m.type === 'video' || (m.type === 'file' && isVideoUrl(m.media_url));
+}
+
 /** Message-kind buckets for filtered (media / links / docs / voice) search. */
 export type SearchKind = 'all' | 'media' | 'links' | 'docs' | 'voice';
 export function messageMatchesKind(m: Message, kind: SearchKind): boolean {
   switch (kind) {
-    case 'media': return m.type === 'image' || (m.type === 'file' && /\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(m.media_url ?? ''));
+    case 'media': return m.type === 'image' || isVideoMessage(m);
     case 'links': return m.type === 'text' && LINK_RE.test(m.content ?? '');
-    case 'docs': return m.type === 'file' && !/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(m.media_url ?? '');
+    case 'docs': return m.type === 'file' && !isVideoUrl(m.media_url);
     case 'voice': return m.type === 'audio';
     default: return true;
   }
 }
+
+const MAX_MESSAGE_CHARS = 16000;
+// Never include 'system' — clients cannot forge system messages (DB + client).
+const ALLOWED_MESSAGE_TYPES = new Set<MessageType>([
+  'text', 'image', 'video', 'file', 'audio',
+]);
 
 export async function sendMessage(
   client: SupabaseClient,
@@ -424,9 +607,18 @@ export async function sendMessage(
   mediaUrl?: string,
   replyTo?: UUID,
   id?: UUID,
+  mediaMeta?: MediaMeta,
 ): Promise<{ message: Message | null; error: Error | null }> {
   const user = await getCurrentUser(client);
   if (!user) return { message: null, error: new Error('not authenticated') };
+  if (!conversationId) return { message: null, error: new Error('missing conversation') };
+  // Clients must not forge system messages or unknown types.
+  if (type === 'system' || !ALLOWED_MESSAGE_TYPES.has(type)) {
+    return { message: null, error: new Error('invalid message type') };
+  }
+  if (content && content.length > MAX_MESSAGE_CHARS) {
+    return { message: null, error: new Error('message too long') };
+  }
 
   // An explicit client-generated `id` lets the app render the message
   // optimistically and, when the realtime INSERT echoes back, dedupe by the SAME
@@ -438,31 +630,69 @@ export async function sendMessage(
       conversation_id: conversationId,
       sender_id: user.id,
       type,
-      content,
+      content: content ?? null,
       media_url: mediaUrl,
       reply_to: replyTo,
+      // Only send media_meta when provided & non-empty, so text messages and the
+      // pre-0030 clients stay byte-identical (column defaults to '{}').
+      ...(mediaMeta && Object.keys(mediaMeta).length ? { media_meta: mediaMeta } : {}),
     })
     .select()
     .single();
   return { message: data, error };
 }
 
+// ── View Once (0030) ──────────────────────────────────────────────────────────
+// Mark a View-Once message as opened by the current user. Server-authoritative and
+// idempotent: the FIRST recipient open records the view (first_view=true); later
+// opens (or the sender) report consumed. Returns null on error (caller decides UX).
+export async function markViewOnceSeen(
+  client: SupabaseClient,
+  messageId: UUID,
+): Promise<ViewOnceState | null> {
+  const { data, error } = await client.rpc('mark_view_once_seen', { p_message: messageId });
+  if (error) return null;
+  return data as ViewOnceState;
+}
+
+// Read-only: may the current user still open this View-Once message? (no consume)
+export async function getViewOnceState(
+  client: SupabaseClient,
+  messageId: UUID,
+): Promise<ViewOnceState | null> {
+  const { data, error } = await client.rpc('view_once_state', { p_message: messageId });
+  if (error) return null;
+  return data as ViewOnceState;
+}
+
 // Edit a message's text (sets edited_at). RLS allows only the sender.
+// Never edit system messages (DB also freezes them; this is defense-in-depth).
 export async function editMessage(
   client: SupabaseClient,
   messageId: UUID,
   content: string,
 ): Promise<{ message: Message | null; error: Error | null }> {
+  const { data: existing } = await client
+    .from('messages')
+    .select('id, type, sender_id')
+    .eq('id', messageId)
+    .maybeSingle();
+  if (!existing) return { message: null, error: new Error('message not found') };
+  if ((existing as { type?: string }).type === 'system') {
+    return { message: null, error: new Error('system messages cannot be edited') };
+  }
   const { data, error } = await client
     .from('messages')
     .update({ content, edited_at: new Date().toISOString() })
     .eq('id', messageId)
+    .neq('type', 'system')
     .select()
     .single();
   return { message: data, error };
 }
 
 // Soft-delete a message (keeps the row so threads/realtime stay consistent).
+// System messages are immutable in DB; filter client-side too.
 export async function deleteMessage(
   client: SupabaseClient,
   messageId: UUID,
@@ -470,7 +700,8 @@ export async function deleteMessage(
   const { error } = await client
     .from('messages')
     .update({ is_deleted: true, content: null, media_url: null })
-    .eq('id', messageId);
+    .eq('id', messageId)
+    .neq('type', 'system');
   return { error };
 }
 
@@ -489,6 +720,47 @@ export async function forwardMessage(
   return res;
 }
 
+/**
+ * Mark a message as delivered to THIS device (grey double-tick for the sender).
+ * Insert-only on conflict: never downgrades an existing `read` receipt.
+ * Call when the recipient's client first receives the message (realtime, push,
+ * or history load) — not only when they open the chat.
+ */
+export async function markMessageAsDelivered(
+  client: SupabaseClient,
+  messageId: UUID,
+): Promise<{ error: Error | null }> {
+  const user = await getCurrentUser(client);
+  if (!user) return { error: new Error('not authenticated') };
+
+  const { error } = await client.from('message_receipts').upsert(
+    { message_id: messageId, user_id: user.id, status: 'delivered' },
+    { onConflict: 'message_id,user_id', ignoreDuplicates: true },
+  );
+  return { error };
+}
+
+/** Mark many messages delivered (batch). Same non-downgrade semantics. */
+export async function markMessagesAsDelivered(
+  client: SupabaseClient,
+  messageIds: UUID[],
+): Promise<{ error: Error | null }> {
+  const user = await getCurrentUser(client);
+  if (!user) return { error: new Error('not authenticated') };
+  const ids = [...new Set(messageIds.filter(Boolean))];
+  if (!ids.length) return { error: null };
+
+  const rows = ids.map((message_id) => ({
+    message_id,
+    user_id: user.id,
+    status: 'delivered' as const,
+  }));
+  const { error } = await client
+    .from('message_receipts')
+    .upsert(rows, { onConflict: 'message_id,user_id', ignoreDuplicates: true });
+  return { error };
+}
+
 export async function markMessageAsRead(
   client: SupabaseClient,
   messageId: UUID,
@@ -500,6 +772,20 @@ export async function markMessageAsRead(
     .from('message_receipts')
     .upsert({ message_id: messageId, user_id: user.id, status: 'read' });
   return { error };
+}
+
+/**
+ * Resolve the outbound tick for a single message id (list preview / deep link).
+ * Uses the same aggregate as getMyConversations / chat bubbles.
+ */
+export async function getMessageTick(
+  client: SupabaseClient,
+  messageId: UUID,
+  senderId?: string | null,
+): Promise<TickStatus> {
+  const receipts = await getReceipts(client, [messageId]);
+  const me = senderId ?? (await getCurrentUser(client))?.id ?? null;
+  return aggregateRecipientTick(receipts, messageId, me);
 }
 
 // Mark an ENTIRE conversation as read (WhatsApp "Mark as read"). Upserts a 'read'
@@ -1035,6 +1321,45 @@ export function subscribeStatusViews(
 // plus an explicit contentType (RN has no File/Blob upload that reliably works
 // against Supabase storage). Keeping one implementation avoids duplicating the
 // bucket/path/public-url logic across platforms.
+/** Allowed media extensions (block executables / scripts). */
+const SAFE_MEDIA_EXT = new Set([
+  'jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif',
+  'mp4', 'mov', 'webm', 'm4v',
+  'm4a', 'mp3', 'aac', 'ogg', 'wav', 'opus',
+  'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'csv', 'zip',
+]);
+
+const SAFE_MIME_PREFIX = /^(image\/|video\/|audio\/|application\/pdf|application\/zip|application\/msword|application\/vnd\.|text\/plain|text\/csv)/i;
+
+function assertSafeUpload(
+  fileName: string,
+  contentType?: string,
+  byteLength?: number,
+): Error | null {
+  const ext = (fileName.split('.').pop() || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (!ext || !SAFE_MEDIA_EXT.has(ext)) {
+    return new Error('unsupported file type');
+  }
+  if (
+    contentType &&
+    contentType !== 'application/octet-stream' &&
+    !SAFE_MIME_PREFIX.test(contentType)
+  ) {
+    return new Error('unsupported content type');
+  }
+  // Hard ceiling matches premium max (2 GB). Free/premium soft limits are
+  // enforced in the client via FREE_LIMITS / PREMIUM_LIMITS.
+  if (typeof byteLength === 'number' && byteLength > 2 * 1024 * 1024 * 1024) {
+    return new Error('file too large');
+  }
+  // Block double extensions like evil.pdf.exe
+  const base = fileName.toLowerCase();
+  if (/\.(exe|bat|cmd|sh|apk|dex|js|html|htm|svg|php|asp|aspx|dll|so|msi|scr|ps1)(\.|$)/i.test(base)) {
+    return new Error('unsupported file type');
+  }
+  return null;
+}
+
 export async function uploadMedia(
   client: SupabaseClient,
   conversationId: UUID,
@@ -1042,7 +1367,20 @@ export async function uploadMedia(
   fileName: string,
   contentType?: string,
 ): Promise<{ url: string | null; error: Error | null }> {
-  const ext = fileName.split('.').pop() || 'bin';
+  if (!conversationId || !/^[0-9a-fA-F-]{36}$/.test(conversationId)) {
+    return { url: null, error: new Error('invalid conversation') };
+  }
+  const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120) || 'file.bin';
+  const byteLength =
+    typeof (file as ArrayBuffer).byteLength === 'number'
+      ? (file as ArrayBuffer).byteLength
+      : typeof (file as Blob).size === 'number'
+        ? (file as Blob).size
+        : undefined;
+  const bad = assertSafeUpload(safeName, contentType, byteLength);
+  if (bad) return { url: null, error: bad };
+
+  const ext = safeName.split('.').pop() || 'bin';
   const path = `${conversationId}/${Date.now()}.${ext}`;
   const { error } = await client.storage
     .from('media')
@@ -1051,6 +1389,74 @@ export async function uploadMedia(
 
   const { data } = client.storage.from('media').getPublicUrl(path);
   return { url: data.publicUrl, error: null };
+}
+
+// ── Signed media URLs ───────────────────────────────────────────────────────
+// The `media` bucket is PRIVATE (migrations 0002/0015 — read is scoped to
+// conversation membership via RLS). A `getPublicUrl()` link therefore hits the
+// `/object/public/media/…` endpoint, which returns 400/403 for a private bucket
+// no matter the RLS — the classic "image renders as a black screen" bug. The fix
+// is to serve media through short-lived SIGNED urls, which honour RLS. We keep
+// storing the public url (so old rows and the DB shape don't change) and resolve
+// it to a signed url at render time via `signedMediaUrl` below.
+
+/** Extract the object path (`<conv>/<file>`) from a stored media-bucket URL.
+ *  Handles both `/object/public/media/…` and `/object/sign/media/…` forms.
+ *  Returns null for anything that isn't a media-bucket URL (data URIs, stickers,
+ *  external links, local `file://` uris) so callers can pass those through. */
+export function mediaPathFromUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  const m = url.match(/\/storage\/v1\/object\/(?:public\/|sign\/|authenticated\/)?media\/([^?#]+)/);
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
+// Cache signed urls in-memory keyed by object path, with their expiry, so we make
+// at most one createSignedUrl round-trip per media item per hour and expo-image's
+// url-keyed cache keeps hitting (a fresh token every render would bust it).
+const SIGNED_TTL_SECONDS = 60 * 60; // 1 hour
+const signedUrlCache = new Map<string, { url: string; expiresAt: number }>();
+
+/** Resolve a stored media_url into a displayable url. For private-bucket media
+ *  this returns a signed url (cached until ~1 min before expiry); everything else
+ *  (data URIs, stickers, external/local urls) is returned unchanged. On any error
+ *  it falls back to the original url rather than throwing, so callers can always
+ *  render *something* and surface a retry. */
+export async function signedMediaUrl(
+  client: SupabaseClient,
+  url: string | null | undefined,
+): Promise<string | null> {
+  if (!url) return url ?? null;
+  const path = mediaPathFromUrl(url);
+  if (!path) return url; // not private media — pass through unchanged
+
+  const now = Date.now();
+  const cached = signedUrlCache.get(path);
+  if (cached && cached.expiresAt > now + 60_000) return cached.url;
+
+  const { data, error } = await client.storage
+    .from('media')
+    .createSignedUrl(path, SIGNED_TTL_SECONDS);
+
+  if (error) {
+    console.warn('[media] signedUrl error for path:', path, 'error:', error.message);
+    return null; // Return null so SignedImage shows retry button instead of 403
+  }
+
+  if (!data?.signedUrl) {
+    console.warn('[media] signedUrl returned no URL for path:', path);
+    return null;
+  }
+
+  signedUrlCache.set(path, { url: data.signedUrl, expiresAt: now + SIGNED_TTL_SECONDS * 1000 });
+  return data.signedUrl;
+}
+
+/** Evict a cached signed URL so the next signedMediaUrl() call re-signs. Called
+ *  on user-initiated retry so a transient signing error doesn't stick around
+ *  for an hour. No-op for non-media urls. */
+export function invalidateSignedMediaUrl(url: string | null | undefined): void {
+  const path = mediaPathFromUrl(url);
+  if (path) signedUrlCache.delete(path);
 }
 
 // Upload status media (image / video / audio) to the private `status` bucket,

@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — dependency-free date/time picker. A horizontal 30-day
+// Lumixo mobile — dependency-free date/time picker. A horizontal 30-day
 // strip plus hour/minute steppers, so a selection is always a valid Date (no
 // free-text parsing). Controlled: parent owns {dayOffset, hour, minute} and the
 // `anchor` (today). Shared by EventComposerModal (C1) and ScheduleMessageModal

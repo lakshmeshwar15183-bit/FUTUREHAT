@@ -1,8 +1,8 @@
-// FUTUREHAT mobile — horizontal Status strip (WhatsApp home-screen parity).
-// Mounted at the top of the Chats list: "My status" tile + a horizontal row of
-// recent updates with seen/unseen rings. Opens the full-screen viewer or the
-// composer. Loads instantly from cache, refreshes on focus, and stays live via
-// realtime status changes. Replaces the old dedicated Status tab.
+// Lumixo mobile — horizontal Status strip. Compact home-screen row: small
+// "My status" avatar (with blue +) + horizontal row of recent updates. Opens
+// the full-screen viewer or the composer. Loads instantly from cache, refreshes
+// on focus, and stays live via realtime status changes. Height ~58dp — fits
+// snugly below the filter chips so more chats are visible.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -24,6 +24,7 @@ import Avatar from '../Avatar';
 import { buildStatusGroups, pruneExpiredGroups, type StatusGroup } from './statusData';
 import StatusViewer from './StatusViewer';
 import StatusComposer, { type ComposerMode } from './StatusComposer';
+import { showSheet } from '../../ui/dialog';
 
 const CACHE_KEY = 'status:tray';
 
@@ -35,7 +36,6 @@ export default function StatusStrip() {
   const [mine, setMine] = useState<StatusGroup | null>(null);
   const [groups, setGroups] = useState<StatusGroup[]>([]);
   const [viewing, setViewing] = useState<StatusGroup | null>(null);
-  const [menuOpen, setMenuOpen] = useState(false);
   const [composeMode, setComposeMode] = useState<ComposerMode | null>(null);
   const [audience, setAudience] = useState<StatusAudience>('everyone');
   const [members, setMembers] = useState<string[]>([]);
@@ -114,12 +114,18 @@ export default function StatusStrip() {
 
   function openMine() {
     if (mine) setViewing(mine);
-    else setMenuOpen(true);
+    else openStatusMenu();
   }
 
-  function choose(mode: ComposerMode) {
-    setMenuOpen(false);
-    setComposeMode(mode);
+  function openStatusMenu() {
+    showSheet({
+      title: 'Add to status',
+      actions: [
+        { text: 'Text', icon: 'info', onPress: () => setComposeMode('text') },
+        { text: 'Photo or video', icon: 'photo', onPress: () => setComposeMode('media') },
+        { text: 'Audio', icon: 'file', onPress: () => setComposeMode('audio') },
+      ],
+    });
   }
 
   return (
@@ -130,43 +136,39 @@ export default function StatusStrip() {
         contentContainerStyle={styles.row}
         keyboardShouldPersistTaps="handled"
       >
-        {/* My status tile */}
-        <Pressable style={styles.tile} onPress={openMine} onLongPress={() => setMenuOpen(true)}>
-          <View>
+        {/* My status tile — WhatsApp behavior: avatar opens the viewer (or the
+            picker if no status yet); the "+" badge is its own Pressable that
+            ALWAYS opens the picker so users can post additional statuses. */}
+        <View style={styles.tile}>
+          <Pressable
+            onPress={openMine}
+            onLongPress={openStatusMenu}
+            style={({ pressed }) => (pressed ? { opacity: 0.7 } : null)}
+          >
             <View style={[styles.ring, { borderColor: mine ? colors.primary : 'transparent' }]}>
-              <Avatar uri={mine?.profile?.avatar_url} name="Me" size={56} />
+              <Avatar uri={mine?.profile?.avatar_url} name="Me" size={42} />
             </View>
-            <View style={styles.addBadge}>
-              <Ionicons name="add" size={15} color="#fff" />
-            </View>
-          </View>
-          <Text style={styles.tileLabel} numberOfLines={1}>My status</Text>
-        </Pressable>
+          </Pressable>
+          <Pressable
+            style={({ pressed }) => [styles.addBadge, pressed && { opacity: 0.7 }]}
+            onPress={openStatusMenu}
+            hitSlop={8}
+            accessibilityLabel="Add status"
+            accessibilityRole="button"
+          >
+            <Ionicons name="add" size={12} color="#fff" />
+          </Pressable>
+        </View>
 
-        {/* Recent updates */}
+        {/* Recent updates — avatar-only tiles keep the row height compact */}
         {groups.map((g) => (
           <Pressable key={g.userId} style={styles.tile} onPress={() => setViewing(g)}>
             <View style={[styles.ring, { borderColor: g.allSeen ? colors.border : colors.primary }]}>
-              <Avatar uri={g.profile?.avatar_url} name={g.profile?.display_name} size={56} />
+              <Avatar uri={g.profile?.avatar_url} name={g.profile?.display_name} size={42} />
             </View>
-            <Text style={styles.tileLabel} numberOfLines={1}>
-              {firstName(g.profile?.display_name) ?? 'User'}
-            </Text>
           </Pressable>
         ))}
       </ScrollView>
-
-      {/* Add-status menu */}
-      <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
-        <Pressable style={styles.backdrop} onPress={() => setMenuOpen(false)}>
-          <View style={styles.sheet}>
-            <Text style={styles.sheetTitle}>Add to status</Text>
-            <MenuItem icon="text" label="Text" onPress={() => choose('text')} colors={colors} />
-            <MenuItem icon="camera" label="Photo or video" onPress={() => choose('media')} colors={colors} />
-            <MenuItem icon="mic" label="Audio" onPress={() => choose('audio')} colors={colors} />
-          </View>
-        </Pressable>
-      </Modal>
 
       {/* Composer */}
       {composeMode && uid && (
@@ -196,30 +198,6 @@ export default function StatusStrip() {
   );
 }
 
-function MenuItem({
-  icon,
-  label,
-  onPress,
-  colors,
-}: {
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-  onPress: () => void;
-  colors: Palette;
-}) {
-  return (
-    <Pressable
-      style={({ pressed }) => [{ flexDirection: 'row', alignItems: 'center', paddingVertical: spacing(3.5) }, pressed && { opacity: 0.6 }]}
-      onPress={onPress}
-    >
-      <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' }}>
-        <Ionicons name={icon} size={20} color="#fff" />
-      </View>
-      <Text style={{ color: colors.text, fontSize: font.body, marginLeft: spacing(4) }}>{label}</Text>
-    </Pressable>
-  );
-}
-
 function firstName(name?: string | null): string | null {
   if (!name) return null;
   return name.split(' ')[0];
@@ -232,21 +210,15 @@ const makeStyles = (colors: Palette) =>
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: colors.border,
     },
-    row: { paddingHorizontal: spacing(3), paddingVertical: spacing(2.5), gap: spacing(3) },
-    tile: { alignItems: 'center', width: 70 },
-    ring: { borderWidth: 2.5, borderRadius: 34, padding: 2 },
+    // Compact row: total height ≈ 58dp — small avatar + minimal padding.
+    row: { paddingHorizontal: spacing(3), paddingVertical: spacing(1.5), gap: spacing(2) },
+    tile: { alignItems: 'center' },
+    ring: { borderWidth: 2, borderRadius: 26, padding: 1.5 },
     addBadge: {
       position: 'absolute', bottom: -1, right: -1,
-      backgroundColor: colors.primary, width: 20, height: 20, borderRadius: 10,
+      backgroundColor: colors.primary, width: 16, height: 16, borderRadius: 8,
       alignItems: 'center', justifyContent: 'center',
-      borderWidth: 2, borderColor: colors.surface,
+      borderWidth: 1.5, borderColor: colors.surface,
     },
     tileLabel: { color: colors.textMuted, fontSize: font.tiny, marginTop: spacing(1), maxWidth: 66 },
-    backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-    sheet: {
-      backgroundColor: colors.surface,
-      borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg,
-      paddingHorizontal: 20, paddingTop: 16, paddingBottom: spacing(8),
-    },
-    sheetTitle: { color: colors.text, fontSize: font.heading, fontWeight: '700', marginBottom: 8 },
   });

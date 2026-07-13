@@ -1,4 +1,4 @@
-// FUTUREHAT — inline poll card: question, options with live tallies + bars, and
+// Lumixo — inline poll card: question, options with live tallies + bars, and
 // tap-to-vote (single or multiple choice). Self-contained: fetches its own votes
 // and refetches after voting. Used inside ChatView's poll panel.
 

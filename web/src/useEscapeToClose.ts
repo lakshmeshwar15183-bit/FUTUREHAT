@@ -1,4 +1,4 @@
-// FUTUREHAT — close a modal/overlay when the user presses Escape.
+// Lumixo — close a modal/overlay when the user presses Escape.
 // Pairs with the existing click-outside-to-close behaviour so every modal
 // dismisses consistently (WhatsApp-grade keyboard ergonomics).
 import { useEffect } from 'react';

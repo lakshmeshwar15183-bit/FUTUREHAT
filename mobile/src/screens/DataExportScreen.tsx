@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — Export my data. Gathers the user's own data via shared APIs
+// Lumixo mobile — Export my data. Gathers the user's own data via shared APIs
 // and writes a JSON file, then opens the native share sheet. Standalone.
 import React, { useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
@@ -42,11 +42,11 @@ export default function DataExportScreen() {
         }
       }
       const payload = {
-        export: { app: 'FUTUREHAT', version: APP_VERSION, generated_at: new Date().toISOString(), credit: CREDIT },
+        export: { app: 'Lumixo', version: APP_VERSION, generated_at: new Date().toISOString(), credit: CREDIT },
         profile, preferences, subscription, conversations, messages, communities,
         support_tickets: tickets, blocked_user_ids: blocked, muted_conversation_ids: muted,
       };
-      const uri = FileSystem.cacheDirectory + `futurehat-data-${Date.now()}.json`;
+      const uri = FileSystem.cacheDirectory + `lumixo-data-${Date.now()}.json`;
       await FileSystem.writeAsStringAsync(uri, JSON.stringify(payload, null, 2));
       if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(uri, { mimeType: 'application/json' });
       setStatus('Done — your data has been exported.');
@@ -58,7 +58,7 @@ export default function DataExportScreen() {
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ padding: spacing(4) }}>
       <Text style={styles.title}>Export my data</Text>
-      <Text style={styles.desc}>Download a copy of your FUTUREHAT data — profile, preferences, subscription, conversations, communities and support history — as a JSON file.</Text>
+      <Text style={styles.desc}>Download a copy of your Lumixo data — profile, preferences, subscription, conversations, communities and support history — as a JSON file.</Text>
       <View style={styles.row}>
         <Text style={styles.rowLabel}>Include message history</Text>
         <Switch value={includeMessages} onValueChange={setIncludeMessages} trackColor={{ true: colors.primary, false: colors.border }} />

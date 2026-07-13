@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "790045657467",
+    "project_id": "futurehat-473e2",
+    "storage_bucket": "futurehat-473e2.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:790045657467:android:5a40d61a1e9a9c269395de",
+        "android_client_info": {
+          "package_name": "dev.lakshmeshwar.futurehat"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBo66JqotK-hCDghcb40BB68c4EVN1ECQc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

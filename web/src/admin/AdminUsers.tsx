@@ -1,4 +1,4 @@
-// FUTUREHAT — Admin ▸ User Management. Search any user (id/username/email/phone),
+// Lumixo — Admin ▸ User Management. Search any user (id/username/email/phone),
 // view the full profile, and run every owner/admin action. Every action calls a
 // server RPC that re-checks privilege and writes an audit_log row (0013); the
 // buttons here only decide what to *offer*.
@@ -13,6 +13,7 @@ import {
   assignModerator, removeModerator,
 } from '@shared/adminApi';
 import type { AdminUserSummary, AdminUserDetail, PremiumDuration } from '@shared/types';
+import { safeMediaSrc } from '../util/safeUrl';
 
 const DURATIONS: { id: PremiumDuration; label: string }[] = [
   { id: '1m', label: '1 Month' }, { id: '3m', label: '3 Months' },
@@ -83,7 +84,7 @@ export function AdminUsers({ isOwner }: { isOwner: boolean }) {
           {results.length === 0 && <div className="admin-empty">No results yet — search above.</div>}
           {results.map((r) => (
             <button key={r.id} className={`admin-user-row ${detail?.id === r.id ? 'active' : ''}`} onClick={() => open(r.id)}>
-              <div className="admin-avatar">{r.avatar_url ? <img src={r.avatar_url} alt="" /> : (r.display_name || '?')[0]}</div>
+              <div className="admin-avatar">{safeMediaSrc(r.avatar_url) ? <img src={safeMediaSrc(r.avatar_url)!} alt="" /> : (r.display_name || '?')[0]}</div>
               <div className="admin-user-row-main">
                 <div className="admin-user-row-name">
                   {r.display_name || r.username || 'Unnamed'}
@@ -104,13 +105,13 @@ export function AdminUsers({ isOwner }: { isOwner: boolean }) {
           ) : (
             <>
               <div className="admin-user-head">
-                <div className="admin-avatar lg">{u.avatar_url ? <img src={u.avatar_url} alt="" /> : (u.display_name || '?')[0]}</div>
+                <div className="admin-avatar lg">{safeMediaSrc(u.avatar_url) ? <img src={safeMediaSrc(u.avatar_url)!} alt="" /> : (u.display_name || '?')[0]}</div>
                 <div>
                   <div className="admin-user-title">
                     {u.display_name || 'Unnamed'}
                     {u.verified && <span className="badge-verified">✓</span>}
                     {u.owner && <span className="badge-owner">OWNER</span>}
-                    {u.premium && <span className="badge-premium">FUTUREHAT+</span>}
+                    {u.premium && <span className="badge-premium">Lumixo+</span>}
                   </div>
                   <div className="admin-user-sub">@{u.username || '—'} · {u.role}</div>
                 </div>
@@ -134,7 +135,7 @@ export function AdminUsers({ isOwner }: { isOwner: boolean }) {
                   <div>
                     <div className="admin-owner-protected-title">Owner account — protected</div>
                     <div className="admin-owner-protected-body">
-                      This is the permanent FUTUREHAT Owner. It cannot be banned, suspended, disabled,
+                      This is the permanent Lumixo Owner. It cannot be banned, suspended, disabled,
                       locked, logged out, deleted, demoted, un-verified, or otherwise modified.
                     </div>
                   </div>
@@ -180,13 +181,13 @@ export function AdminUsers({ isOwner }: { isOwner: boolean }) {
                   <button className="danger" onClick={() => act(
                     () => removeModerator(supabase, u.id),
                     'Moderator removed',
-                    `Remove ${u.display_name || 'this user'} as a FUTUREHAT Moderator? They will be notified and lose the Moderator Dashboard.`,
+                    `Remove ${u.display_name || 'this user'} as a Lumixo Moderator? They will be notified and lose the Moderator Dashboard.`,
                   )}>Remove Moderator</button>
                 ) : (
                   <button onClick={() => act(
                     () => assignModerator(supabase, u.id),
                     'Moderator assigned',
-                    `Appoint ${u.display_name || 'this user'} as an official FUTUREHAT Moderator? They will be notified and gain the Moderator Dashboard.`,
+                    `Appoint ${u.display_name || 'this user'} as an official Lumixo Moderator? They will be notified and gain the Moderator Dashboard.`,
                   )}>Assign Moderator</button>
                 )}
                 {/* Admin is permanent (single hardcoded owner/admin) — never assignable via the app. */}

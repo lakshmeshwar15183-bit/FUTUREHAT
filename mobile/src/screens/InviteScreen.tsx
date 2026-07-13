@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — invite friends: shareable link + native share sheet. The
+// Lumixo mobile — invite friends: shareable link + native share sheet. The
 // link carries an optional ?ref=username. QR generation is deferred (needs a QR
 // lib). Standalone.
 import React, { useEffect, useMemo, useState } from 'react';

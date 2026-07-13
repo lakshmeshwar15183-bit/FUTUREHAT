@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — Moderator Dashboard (Phase 1). Native equivalent of
+// Lumixo mobile — Moderator Dashboard (Phase 1). Native equivalent of
 // web/src/moderator/ModeratorDashboard.tsx. Two sections — Reported Messages and
 // Reported Profiles — over the reports surface (0017) + moderator RPCs (0023),
 // with exactly five per-report actions: Review · Issue Warning · Close – No
@@ -225,7 +225,7 @@ function WarningModal({
       <Pressable style={styles.modalBackdrop} onPress={onClose}>
         <Pressable style={styles.modalCard} onPress={(e) => e.stopPropagation()}>
           <Text style={styles.modalTitle}>⚠ Issue official warning</Text>
-          <Text style={styles.modalHint}>An official FUTUREHAT warning will be delivered to {who}’s mailbox and permanently recorded.</Text>
+          <Text style={styles.modalHint}>An official Lumixo warning will be delivered to {who}’s mailbox and permanently recorded.</Text>
           <Text style={styles.modalLabel}>Reason</Text>
           <View style={styles.chipWrap}>
             {WARNING_REASONS.map((r) => (

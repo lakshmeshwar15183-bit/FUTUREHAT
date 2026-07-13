@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — Diagnostics & app info. Shows environment details and lets
+// Lumixo mobile — Diagnostics & app info. Shows environment details and lets
 // the user share a diagnostic report to attach to a support ticket. Standalone.
 import React, { useCallback, useMemo, useState } from 'react';
 import {
@@ -18,6 +18,10 @@ import { useFocusEffect } from '@react-navigation/native';
 
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import { APP_NAME, APP_VERSION, CREDIT } from '../branding';
+import { getLastCrash } from '../lib/prodLog';
+import { runProdHealthChecks } from '../lib/prodHealth';
+import { getLatencySummary } from '../lib/notifLatency';
+import { isNativeIncomingCallAvailable } from '../lib/incomingCallNative';
 
 // Device locale from RN's built-in native settings (no extra dependency).
 // iOS exposes an array under AppleLanguages; Android exposes a `localeIdentifier`.
@@ -38,6 +42,9 @@ export default function DiagnosticsScreen() {
 
   const [online, setOnline] = useState('checking…');
   const [connection, setConnection] = useState('unknown');
+  const [lastCrash, setLastCrash] = useState<string>('none');
+  const [healthLines, setHealthLines] = useState<string[]>([]);
+  const [latencyLine, setLatencyLine] = useState('no samples yet');
 
   const { width, height } = Dimensions.get('window');
   const scale = PixelRatio.get();
@@ -52,6 +59,9 @@ export default function DiagnosticsScreen() {
     Online: online,
     Connection: connection,
     Screen: `${Math.round(width)}×${Math.round(height)} @${scale}x`,
+    'Last crash': lastCrash,
+    'Native call notif': isNativeIncomingCallAvailable() ? 'yes (CallStyle/full-screen)' : 'fallback (expo)',
+    'Notif latency': latencyLine,
   };
 
   useFocusEffect(
@@ -61,6 +71,27 @@ export default function DiagnosticsScreen() {
         if (!active) return;
         setOnline(state.isConnected ? 'yes' : 'no');
         setConnection(state.type || 'unknown');
+      });
+      getLastCrash().then((c) => {
+        if (!active) return;
+        setLastCrash(c ? `${c.at} · ${c.label}: ${c.message}` : 'none');
+      });
+      getLatencySummary().then((s) => {
+        if (!active) return;
+        if (!s.count) {
+          setLatencyLine('no samples yet');
+          return;
+        }
+        setLatencyLine(
+          `n=${s.count} avg=${s.avgDeliveryMs}ms p95=${s.p95DeliveryMs}ms`,
+        );
+      });
+      // Refresh production health (TURN, auth redirect, Supabase).
+      void runProdHealthChecks().then((r) => {
+        if (!active) return;
+        setHealthLines(
+          r.items.map((i) => `${i.ok ? 'OK' : i.severity.toUpperCase()} · ${i.id}: ${i.message}`),
+        );
       });
       return () => { active = false; };
     }, []),
@@ -72,6 +103,9 @@ export default function DiagnosticsScreen() {
       `Generated: ${new Date().toISOString()}`,
       '',
       ...Object.entries(info).map(([k, v]) => `${k}: ${v}`),
+      '',
+      '=== Production health ===',
+      ...(healthLines.length ? healthLines : ['(no health report yet)']),
     ];
     Share.share({ message: lines.join('\n') });
   }
@@ -86,8 +120,18 @@ export default function DiagnosticsScreen() {
           </View>
         ))}
       </View>
+      {healthLines.length > 0 && (
+        <View style={[styles.group, { marginTop: spacing(3) }]}>
+          <Text style={[styles.k, { padding: spacing(3), fontWeight: '700' }]}>Production health</Text>
+          {healthLines.map((line, i) => (
+            <View key={i} style={[styles.row, i === healthLines.length - 1 && styles.rowLast]}>
+              <Text style={styles.v}>{line}</Text>
+            </View>
+          ))}
+        </View>
+      )}
       <Pressable style={styles.btn} onPress={shareReport}><Text style={styles.btnText}>Share diagnostic report</Text></Pressable>
-      <Text style={styles.note}>The report is generated locally and only shared if you choose to send it.</Text>
+      <Text style={styles.note}>The report is generated locally and only shared if you choose to send it. Critical health lines (TURN, auth redirect) must be OK before public release.</Text>
     </ScrollView>
   );
 }

@@ -1,4 +1,4 @@
-// FUTUREHAT — verify the permanent developer override.
+// Lumixo — verify the permanent developer override.
 // Signs in (or signs up, if the account doesn't exist yet) as the developer
 // email, then asserts lifetime Premium + Admin straight from the live backend.
 //
@@ -27,7 +27,7 @@ async function main() {
   let signedUp = false;
   let si = await c.auth.signInWithPassword({ email: EMAIL, password: PASSWORD });
   if (si.error) {
-    const up = await c.auth.signUp({ email: EMAIL, password: PASSWORD, options: { data: { display_name: 'FUTUREHAT Developer' } } });
+    const up = await c.auth.signUp({ email: EMAIL, password: PASSWORD, options: { data: { display_name: 'Lumixo Developer' } } });
     if (up.error) { ok('Authenticate developer', false, up.error.message); return finish(); }
     signedUp = true;
     if (!up.data.session) {

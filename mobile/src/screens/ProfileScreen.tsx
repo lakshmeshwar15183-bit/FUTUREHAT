@@ -1,7 +1,7 @@
-// FUTUREHAT mobile — view a user's profile. Shows avatar/name/username/about
+// Lumixo mobile — view a user's profile. Shows avatar/name/username/about
 // and contextual actions (message / call, or edit when it's me).
 import React, { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Image, Linking, Modal, Pressable, ScrollView, Share, StyleSheet, Switch, Text, View } from 'react-native';
+import { ActivityIndicator, Image, Linking, Modal, Pressable, ScrollView, Share, StyleSheet, Switch, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -12,10 +12,11 @@ import {
   blockUser, unblockUser, getBlockedIds, submitReport, getSharedMedia,
   getMutedIds, muteConversation, unmuteConversation,
   getPremiumUserIds, joinPresence, leavePresence,
-  getDisappearing, setConversationDisappearing,
+  getDisappearing, setConversationDisappearing, isVideoMessage,
+  resolveDisplayName, resolveUsernameHandle, mergeProfileIdentity,
 } from '../lib/shared';
 import type { Profile, CallType, Message } from '../lib/shared';
-import { getCachedProfile, cacheProfile } from '../lib/localCache';
+import { getCachedProfile, cacheProfile, getNickname, setNickname } from '../lib/localCache';
 import { queueAction } from '../lib/sync';
 import { formatLastSeen } from '../lib/time';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
@@ -23,8 +24,8 @@ import { useCalls } from '../calls/CallContext';
 import { useChatLock } from '../security/ChatLock';
 import Avatar from '../components/Avatar';
 import MediaViewer, { type ViewerItem } from '../components/MediaViewer';
-import { isVideoUrl } from '../components/MessageBubble';
 import type { RootStackParamList } from '../navigation/types';
+import { Alert } from '../ui/dialog';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'Profile'>;
 type Rt = RouteProp<RootStackParamList, 'Profile'>;
@@ -48,7 +49,7 @@ export default function ProfileScreen() {
   const locked = !!convId && chatLock.isLocked(convId);
 
   // Toggle Chat Lock for this conversation. Enabling requires device auth (WhatsApp
-  // parity); FUTUREHAT never stores the credential — the OS verifies it.
+  // parity); Lumixo never stores the credential — the OS verifies it.
   async function toggleChatLock(value: boolean) {
     if (!convId) return;
     if (value) {
@@ -65,6 +66,8 @@ export default function ProfileScreen() {
   }
 
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [nickname, setNicknameState] = useState<string | null>(null);
+  const [myUid, setMyUid] = useState<string | null>(null);
   const [isMe, setIsMe] = useState(false);
   const [loading, setLoading] = useState(true);
   const [blocked, setBlocked] = useState(false);
@@ -85,7 +88,7 @@ export default function ProfileScreen() {
     () => photos.map((m) => ({
       id: m.id,
       url: m.media_url!,
-      kind: m.type === 'image' && !isVideoUrl(m.media_url) ? ('image' as const) : ('video' as const),
+      kind: isVideoMessage(m) ? ('video' as const) : ('image' as const),
       caption: m.content || null,
     })),
     [photos],
@@ -95,13 +98,22 @@ export default function ProfileScreen() {
   useEffect(() => {
     (async () => {
       // Instant: show the cached profile first (offline included, no spinner),
-      // then refresh from the network below.
+      // then refresh from the network below. Never clear a good cache to null.
       const cached = await getCachedProfile(params.userId);
       if (cached) { setProfile(cached); setLoading(false); }
       const me = await getCurrentUser(supabase);
       setIsMe(me?.id === params.userId);
+      setMyUid(me?.id ?? null);
+      if (me?.id && me.id !== params.userId) {
+        const nick = await getNickname(me.id, params.userId).catch(() => null);
+        setNicknameState(nick);
+      }
       const p = await getProfile(supabase, params.userId).catch(() => null);
-      if (p) { setProfile(p); cacheProfile(p); }
+      if (p) {
+        setProfile((prev) => (mergeProfileIdentity(prev, p) as Profile) ?? p);
+        cacheProfile(p);
+      }
+      // Network failed / empty: keep cached profile — never replace with blank.
       const ids = await getBlockedIds(supabase).catch(() => [] as string[]);
       setBlocked(ids.includes(params.userId));
       const premiumIds = await getPremiumUserIds(supabase).catch(() => [] as string[]);
@@ -117,8 +129,9 @@ export default function ProfileScreen() {
         const mutedIds = await getMutedIds(supabase).catch(() => [] as string[]);
         setMuted(mutedIds.includes(convId));
         const media = await getSharedMedia(supabase, convId).catch(() => [] as Message[]);
-        setPhotos(media.filter((m) => m.type === 'image' && m.media_url));
-        setDocs(media.filter((m) => m.type === 'file'));
+        // Shared media gallery: photos + videos (type=video and legacy file videos).
+        setPhotos(media.filter((m) => m.media_url && (m.type === 'image' || isVideoMessage(m))));
+        setDocs(media.filter((m) => m.type === 'file' && !isVideoMessage(m)));
         setDisappearSecs(await getDisappearing(supabase, convId).catch(() => 0));
       }
     })();
@@ -140,10 +153,29 @@ export default function ProfileScreen() {
   }, [isMe, params.userId]);
 
   const presence = online ? 'online' : formatLastSeen(profile?.last_seen) || 'offline';
+  const displayName = resolveDisplayName(profile, {
+    nickname: isMe ? null : nickname,
+    fallback: 'Contact',
+  });
+  const handle = resolveUsernameHandle(profile);
+
+  async function editNickname() {
+    if (!myUid || isMe) return;
+    Alert.prompt(
+      nickname ? 'Edit nickname' : 'Add nickname',
+      'Only you will see this name. Leave empty to remove. Does not change their account.',
+      async (value: string) => {
+        const next = await setNickname(myUid, params.userId, value);
+        setNicknameState(next[params.userId] ?? null);
+      },
+      'plain-text',
+      nickname ?? '',
+    );
+  }
 
   async function toggleBlock() {
     const was = blocked;
-    if (!was && !(await confirmAsync('Block user', `Block ${profile?.display_name ?? 'this user'}?`))) return;
+    if (!was && !(await confirmAsync('Block user', `Block ${displayName}?`))) return;
     setBlocked(!was); // instant; syncs in the background (auto-retries offline)
     queueAction(was ? 'unblock' : 'block', { userId: params.userId });
   }
@@ -168,22 +200,16 @@ export default function ProfileScreen() {
   }
 
   function report() {
-    Alert.prompt?.('Report user', 'What is the issue?', async (reason?: string) => {
+    Alert.prompt('Report user', 'What is the issue?', async (reason?: string) => {
       if (!reason?.trim()) return;
       const { error } = await submitReport(supabase, 'user', params.userId, reason.trim());
       Alert.alert(error ? 'Error' : 'Reported', error ? error.message : 'Our safety team will review this.');
     });
-    // Android lacks Alert.prompt; fall back to a direct report.
-    if (!Alert.prompt) {
-      submitReport(supabase, 'user', params.userId, 'Reported from profile').then(({ error }) =>
-        Alert.alert(error ? 'Error' : 'Reported', error ? error.message : 'Our safety team will review this.'),
-      );
-    }
   }
 
   function shareContact() {
-    const handle = profile?.username ? `@${profile.username}` : params.userId.slice(0, 8);
-    Share.share({ message: `${profile?.display_name ?? 'FUTUREHAT user'} (${handle}) on FUTUREHAT` });
+    const h = handle || params.userId.slice(0, 8);
+    Share.share({ message: `${displayName} (${h}) on Lumixo` });
   }
 
   async function message() {
@@ -191,7 +217,7 @@ export default function ProfileScreen() {
     if (conversationId) {
       navigation.replace('Chat', {
         conversationId,
-        title: profile?.display_name ?? 'Chat',
+        title: displayName,
       });
     }
   }
@@ -214,7 +240,7 @@ export default function ProfileScreen() {
     <ScrollView style={styles.container}>
       <View style={styles.header}>
         <View>
-          <Avatar uri={profile?.avatar_url} name={profile?.display_name} size={120} />
+          <Avatar uri={profile?.avatar_url} name={displayName} size={120} />
           {!!convId && disappearSecs > 0 && (
             <View style={styles.avatarDisappearBadge}>
               <Ionicons name="timer-outline" size={16} color="#fff" />
@@ -222,7 +248,7 @@ export default function ProfileScreen() {
           )}
         </View>
         <View style={styles.nameRow}>
-          <Text style={styles.name}>{profile?.display_name ?? 'FUTUREHAT user'}</Text>
+          <Text style={styles.name}>{displayName}</Text>
           {isPremium && (
             <Ionicons name="star" size={18} color={colors.primary} style={styles.premiumBadge} />
           )}
@@ -230,9 +256,30 @@ export default function ProfileScreen() {
             <Ionicons name="shield-checkmark" size={18} color="#3b82f6" style={styles.premiumBadge} />
           )}
         </View>
-        {!!profile?.username && <Text style={styles.username}>@{profile.username}</Text>}
+        {!!nickname && !isMe && (
+          <Text style={styles.username}>
+            {resolveDisplayName(profile, { fallback: handle || 'Contact' })}
+            {handle ? ` · ${handle}` : ''}
+          </Text>
+        )}
+        {!nickname && !!handle && <Text style={styles.username}>{handle}</Text>}
         {!isMe && <Text style={styles.presence}>{presence}</Text>}
       </View>
+
+      {!isMe && (
+        <Pressable style={styles.nickRow} onPress={editNickname}>
+          <Ionicons name="pencil-outline" size={18} color={colors.primary} />
+          <View style={{ flex: 1, marginLeft: 12 }}>
+            <Text style={styles.nickTitle}>{nickname ? 'Nickname' : 'Add nickname'}</Text>
+            <Text style={styles.nickSub}>
+              {nickname
+                ? `${nickname} · only you see this`
+                : 'Only you will see this name'}
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
+        </Pressable>
+      )}
 
       {!isMe && (
         <View style={styles.actions}>
@@ -256,7 +303,7 @@ export default function ProfileScreen() {
       )}
 
       <Section title="About">
-        <Text style={styles.about}>{profile?.about || 'Hey there! I am using FUTUREHAT.'}</Text>
+        <Text style={styles.about}>{profile?.about || 'Hey there! I am using Lumixo.'}</Text>
       </Section>
 
       {!!profile?.phone && (
@@ -289,7 +336,7 @@ export default function ProfileScreen() {
             <View style={styles.disappearTextWrap}>
               <Text style={styles.actionRowText}>{locked ? 'On' : 'Off'}</Text>
               <Text style={styles.disappearHint}>
-                Require fingerprint, face, or your device PIN to open this chat. FUTUREHAT never stores your PIN or biometrics.
+                Require fingerprint, face, or your device PIN to open this chat. Lumixo never stores your PIN or biometrics.
               </Text>
             </View>
             <Switch
@@ -355,7 +402,7 @@ export default function ProfileScreen() {
           <Pressable style={styles.actionRow} onPress={toggleBlock}>
             <Ionicons name={blocked ? 'checkmark-circle-outline' : 'ban-outline'} size={20} color={colors.danger} />
             <Text style={[styles.actionRowText, { color: colors.danger }]}>
-              {blocked ? 'Unblock' : 'Block'} {profile?.display_name ?? 'user'}
+              {blocked ? 'Unblock' : 'Block'} {displayName}
             </Text>
           </Pressable>
         </View>
@@ -428,6 +475,17 @@ const makeStyles = (colors: Palette) =>
     header: { alignItems: 'center', paddingVertical: spacing(8), backgroundColor: colors.surface },
     nameRow: { flexDirection: 'row', alignItems: 'center', marginTop: spacing(3) },
     name: { color: colors.text, fontSize: font.title, fontWeight: '700' },
+    nickRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginHorizontal: spacing(4),
+      marginTop: spacing(3),
+      padding: spacing(3.5),
+      borderRadius: radius.md,
+      backgroundColor: colors.surface,
+    },
+    nickTitle: { color: colors.text, fontSize: font.body, fontWeight: '600' },
+    nickSub: { color: colors.textMuted, fontSize: font.tiny, marginTop: 2 },
     premiumBadge: { marginLeft: 6 },
     avatarDisappearBadge: {
       position: 'absolute', right: 2, bottom: 2,

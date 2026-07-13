@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# FUTUREHAT — apply pending SQL migrations to the live Supabase database.
+# Lumixo — apply pending SQL migrations to the live Supabase database.
 #
 # Why a script: this Mac has no `psql` and the repo intentionally keeps the DB
 # password / service-role key OUT of version control and out of web/.env.local
@@ -15,7 +15,7 @@
 # so re-running is safe.
 set -euo pipefail
 
-PROJECT_REF="toscljrivrawvlfebdzz"   # FUTUREHAT, ap-northeast-2
+PROJECT_REF="toscljrivrawvlfebdzz"   # Lumixo, ap-northeast-2
 NPM_CACHE="/tmp/fh-npm-cache"        # ~/.npm is EACCES-broken on this Mac
 
 if [[ -z "${SUPABASE_DB_PASSWORD:-}" ]]; then

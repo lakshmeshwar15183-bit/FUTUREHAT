@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — client enforcement of the owner/admin controls, mirroring
+// Lumixo mobile — client enforcement of the owner/admin controls, mirroring
 // web/src/admin/AdminGate.tsx. Mounted high in the tree; it:
 //   • registers this device (so the Owner can see/revoke it),
 //   • signs out banned / disabled / locked accounts,
@@ -116,7 +116,7 @@ export default function AdminGate() {
     return <Overlay title="Account unavailable" body={`Your account has been ${blocked}. Contact support if you believe this is a mistake.`} colors={colors} />;
   }
   if (maintenance) {
-    return <Overlay title="Under maintenance" body="FUTUREHAT is temporarily unavailable. Please check back soon." colors={colors} />;
+    return <Overlay title="Under maintenance" body="Lumixo is temporarily unavailable. Please check back soon." colors={colors} />;
   }
   if (announcement && !dismissed) {
     return (

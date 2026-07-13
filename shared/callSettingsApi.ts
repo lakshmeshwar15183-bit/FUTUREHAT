@@ -1,4 +1,4 @@
-// FUTUREHAT — Call settings. Stored in the existing `user_preferences.extra`
+// Lumixo — Call settings. Stored in the existing `user_preferences.extra`
 // jsonb bag under the `calls` namespace (mirrors shared/privacyApi.ts), so no new
 // table is required. These are client-side call preferences surfaced by the Calls
 // module's "Call Settings" screen.

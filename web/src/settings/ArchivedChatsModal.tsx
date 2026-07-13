@@ -1,4 +1,4 @@
-// FUTUREHAT — Archived chats: lists conversations the user has archived, with
+// Lumixo — Archived chats: lists conversations the user has archived, with
 // unarchive and open actions. Self-contained (getMyConversations + archived ids
 // from accountApi). Opening hands the conversation id to the parent via onOpen
 // (wired during recovery). Backed by 0010_account_privacy.archived_conversations.
@@ -10,6 +10,7 @@ import { getMyConversations } from '@shared/api';
 import { getArchivedIds, unarchiveConversation } from '@shared/accountApi';
 import type { ConversationSummary } from '@shared/types';
 import { modalBackdrop, modalPanel } from '../motion';
+import { LumixoCat } from '../mascot/LumixoCat';
 import './settings-panels.css';
 
 export function ArchivedChatsModal({ onClose, onOpen }: { onClose: () => void; onOpen?: (conversationId: string) => void }) {
@@ -44,7 +45,12 @@ export function ArchivedChatsModal({ onClose, onOpen }: { onClose: () => void; o
         <p className="sp-sub">Conversations you’ve tucked away. They stay archived until you unarchive them.</p>
 
         {loading ? <div className="sp-note">Loading…</div> : items.length === 0 ? (
-          <div className="sp-note">No archived chats.</div>
+          <div className="sp-note" style={{ textAlign: 'center' }}>
+            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 8 }} aria-hidden>
+              <LumixoCat mood="sleeping" size="sm" decorative />
+            </div>
+            No archived chats.
+          </div>
         ) : (
           <section className="sp-section">
             {items.map((c) => (

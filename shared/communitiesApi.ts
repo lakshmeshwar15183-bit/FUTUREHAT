@@ -1,4 +1,4 @@
-// FUTUREHAT — communities, channels, polls and events (framework-agnostic).
+// Lumixo — communities, channels, polls and events (framework-agnostic).
 // Channels reuse the conversations/messages stack: creating a channel creates a
 // backing conversation, so every chat feature works inside a channel for free.
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -57,12 +57,13 @@ export async function createCommunity(
   client: SupabaseClient,
   name: string,
   description?: string,
+  avatarUrl?: string | null,
 ): Promise<{ community: Community | null; error: Error | null }> {
   const user = await getCurrentUser(client);
   if (!user) return { community: null, error: new Error('not authenticated') };
   const { data, error } = await client
     .from('communities')
-    .insert({ name, description: description ?? null, owner_id: user.id })
+    .insert({ name, description: description ?? null, avatar_url: avatarUrl, owner_id: user.id })
     .select()
     .single();
   if (error || !data) return { community: null, error };
@@ -107,8 +108,20 @@ export async function getCommunityMembers(
   const members = (data ?? []) as CommunityMember[];
   const ids = members.map((m) => m.user_id);
   if (!ids.length) return [];
-  const { data: profiles } = await client.from('profiles').select('*').in('id', ids);
-  const byId = new Map((profiles ?? []).map((p: any) => [p.id, p as Profile]));
+  // Peer profiles without phone (public_profiles). Never select *.
+  const { data: profiles, error: profErr } = await client
+    .from('public_profiles')
+    .select('id, username, display_name, about, avatar_url, last_seen, created_at')
+    .in('id', ids);
+  let rows = (profiles ?? []) as Profile[];
+  if (profErr) {
+    const { data: fallback } = await client
+      .from('profiles')
+      .select('id, username, display_name, about, avatar_url, last_seen, created_at')
+      .in('id', ids);
+    rows = (fallback ?? []) as Profile[];
+  }
+  const byId = new Map(rows.map((p) => [p.id, { ...p, phone: null } as Profile]));
   return members.map((m) => ({ ...m, profile: byId.get(m.user_id) }));
 }
 

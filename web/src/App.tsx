@@ -1,17 +1,36 @@
-// FUTUREHAT web — main app (conversation list + chat) with premium wiring.
+// Lumixo web — main app (conversation list + chat) with premium wiring.
+// Performance: cache-first chat list, deferred secondary network, lazy ChatView.
 
-import { useState, useEffect, useRef, useMemo, lazy, Suspense, type MouseEvent } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { useState, useEffect, useRef, useMemo, useCallback, Suspense, type MouseEvent } from 'react';
 import { useAuth } from './AuthContext';
 import { usePremium } from './PremiumContext';
 import { usePresence } from './PresenceContext';
 import { UpgradeProvider, useUpgrade } from './premium/UpgradeProvider';
 import { PremiumBadge } from './premium/PremiumBadge';
 import { supabase } from './supabase';
-import { signOut, getMyConversations, searchProfiles, startDirectConversation, searchAllMessages, type MessageSearchHit } from '@shared/api';
+import {
+  signOut,
+  getMyConversations,
+  searchProfiles,
+  startDirectConversation,
+  searchAllMessages,
+  isVideoMessage,
+  markMessageAsDelivered,
+  applyReceiptToTickMap,
+  computeOutboundTick,
+  tickGlyph,
+  tickIsRead,
+  stabilizeConversationList,
+  resolveDisplayName,
+  type MessageSearchHit,
+  type TickStatus,
+} from '@shared/api';
+import type { MessageReceipt } from '@shared/types';
+import { readNicknames } from './lib/nicknames';
 import { listRecentContacts, removeRecentContact, type RecentContact } from '@shared/recentContactsApi';
 import {
   getPinnedIds, pinConversation, unpinConversation,
+  getFavoriteIds, favoriteConversation, unfavoriteConversation,
 } from '@shared/premiumApi';
 import { getLockedIds, lockConversation, unlockConversation, getChatLockSettings } from '@shared/chatLockApi';
 import type { ChatLockSettings } from '@shared/types';
@@ -21,27 +40,69 @@ import {
   getBlockedIds, blockUser, unblockUser, submitReport,
 } from '@shared/supportApi';
 import { FREE_LIMITS } from '@shared/premium/features';
-import type { ConversationSummary, Profile } from '@shared/types';
-import { ChatView } from './ChatView';
+import { getMyStreaks, processMyStreaks, subscribeStreakChanges, indexStreaksByConversation } from '@shared/streakApi';
+import type { ConversationSummary, Profile, StreakSummary } from '@shared/types';
 import { StatusStrip } from './status/StatusStrip';
 import { WebNotifications } from './lib/WebNotificationsBridge';
 import { CommunitiesIcon, NewGroupIcon, NewChatIcon, SettingsIcon, SignOutIcon, SearchIcon, MoreIcon, PhoneIcon, TrashIcon } from './Icons';
+import { LumixoCat } from './mascot/LumixoCat';
 import { format, isToday, isYesterday } from 'date-fns';
-import { listItem, spring } from './motion';
+import {
+  afterFirstPaint,
+  readCachedConversations,
+  writeCachedConversations,
+  mark,
+} from './lib/startupCache';
+import { startWebOutbox } from './lib/outbox';
+import { lazyStable } from './lib/lazyStable';
+import { ErrorBoundary } from './lib/ErrorBoundary';
 import './App.css';
 
-// Modals are lazy — they're off the critical path and keep the initial bundle small.
-const ProfileModal = lazy(() => import('./ProfileModal').then((m) => ({ default: m.ProfileModal })));
-const GroupModal = lazy(() => import('./GroupModal').then((m) => ({ default: m.GroupModal })));
-const SettingsModal = lazy(() => import('./premium/SettingsModal').then((m) => ({ default: m.SettingsModal })));
-const HelpSupportModal = lazy(() => import('./support/HelpSupportModal').then((m) => ({ default: m.HelpSupportModal })));
-const CommunitiesModal = lazy(() => import('./communities/CommunitiesModal').then((m) => ({ default: m.CommunitiesModal })));
-const StarredMessagesModal = lazy(() => import('./StarredMessagesModal').then((m) => ({ default: m.StarredMessagesModal })));
-const AdminDashboard = lazy(() => import('./admin/AdminDashboard').then((m) => ({ default: m.AdminDashboard })));
-const AdminGate = lazy(() => import('./admin/AdminGate').then((m) => ({ default: m.AdminGate })));
-const ModeratorDashboard = lazy(() => import('./moderator/ModeratorDashboard').then((m) => ({ default: m.ModeratorDashboard })));
-const Mailbox = lazy(() => import('./Mailbox').then((m) => ({ default: m.Mailbox })));
-const CallsView = lazy(() => import('./calls/CallsView').then((m) => ({ default: m.CallsView })));
+// ChatView is large — load once; lazyStable never re-suspends (no blank skeleton on remount).
+const ChatView = lazyStable('ChatView', () => import('./ChatView').then((m) => ({ default: m.ChatView })));
+
+// Modals are lazy — off the critical path; stable promises avoid fallback flashes.
+const ProfileModal = lazyStable('ProfileModal', () => import('./ProfileModal').then((m) => ({ default: m.ProfileModal })));
+const GroupModal = lazyStable('GroupModal', () => import('./GroupModal').then((m) => ({ default: m.GroupModal })));
+const JoinGroupInvite = lazyStable('JoinGroupInvite', () => import('./JoinGroupInvite').then((m) => ({ default: m.JoinGroupInvite })));
+const SettingsModal = lazyStable('SettingsModal', () => import('./premium/SettingsModal').then((m) => ({ default: m.SettingsModal })));
+const HelpSupportModal = lazyStable('HelpSupportModal', () => import('./support/HelpSupportModal').then((m) => ({ default: m.HelpSupportModal })));
+const CommunitiesModal = lazyStable('CommunitiesModal', () => import('./communities/CommunitiesModal').then((m) => ({ default: m.CommunitiesModal })));
+const StarredMessagesModal = lazyStable('StarredMessagesModal', () => import('./StarredMessagesModal').then((m) => ({ default: m.StarredMessagesModal })));
+const AdminDashboard = lazyStable('AdminDashboard', () => import('./admin/AdminDashboard').then((m) => ({ default: m.AdminDashboard })));
+const AdminGate = lazyStable('AdminGate', () => import('./admin/AdminGate').then((m) => ({ default: m.AdminGate })));
+const ModeratorDashboard = lazyStable('ModeratorDashboard', () => import('./moderator/ModeratorDashboard').then((m) => ({ default: m.ModeratorDashboard })));
+const Mailbox = lazyStable('Mailbox', () => import('./Mailbox').then((m) => ({ default: m.Mailbox })));
+const CallsView = lazyStable('CallsView', () => import('./calls/CallsView').then((m) => ({ default: m.CallsView })));
+
+function ChatSkeleton() {
+  return (
+    <div className="chat-skeleton" aria-busy="true" aria-label="Loading chat">
+      <div className="chat-skeleton-head" />
+      <div className="chat-skeleton-body">
+        <div className="chat-skeleton-bubble theirs" />
+        <div className="chat-skeleton-bubble mine" />
+        <div className="chat-skeleton-bubble theirs short" />
+      </div>
+    </div>
+  );
+}
+
+function ConvListSkeleton({ rows = 8 }: { rows?: number }) {
+  return (
+    <div className="conv-list-skeleton" aria-busy="true" aria-label="Loading chats">
+      {Array.from({ length: rows }, (_, i) => (
+        <div key={i} className="boot-row conv-skel-row">
+          <div className="boot-av" />
+          <div className="boot-lines">
+            <div className="skel" style={{ width: `${45 + (i % 3) * 12}%` }} />
+            <div className="skel" style={{ width: `${60 + (i % 4) * 8}%`, height: 10 }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 // Offline-first cache for recent contacts (web parity with mobile's AsyncStorage
 // layer): render the last-known list instantly on open, then reconcile from the
@@ -58,12 +119,27 @@ function writeCachedRecent(uid: string, list: RecentContact[]): void {
 }
 
 function AppInner() {
-  const { profile } = useAuth();
+  // Durable offline message outbox (localStorage + online flush).
+  useEffect(() => startWebOutbox(), []);
+  // Prefetch ChatView after first paint so first open is instant (no Suspense flash).
+  useEffect(() => {
+    afterFirstPaint(() => {
+      void import('./ChatView');
+    });
+  }, []);
+  const { user, profile } = useAuth();
   const { isPremium, premiumUserIds } = usePremium();
   const { onlineIds } = usePresence();
   const { open: openUpgrade } = useUpgrade();
+  const uid = user?.id ?? profile?.id ?? null;
 
-  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  // Cache-first: paint last-known chats instantly (sync localStorage read).
+  const [conversations, setConversations] = useState<ConversationSummary[]>(() =>
+    uid ? readCachedConversations(uid) : [],
+  );
+  const [listHydrating, setListHydrating] = useState(() =>
+    uid ? readCachedConversations(uid).length === 0 : true,
+  );
   const [selectedConvId, setSelectedConvId] = useState<string | null>(null);
   const [showSearch, setShowSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -71,10 +147,13 @@ function AppInner() {
   // Persistent "previously chatted users" for New Chat — INDEPENDENT of the
   // conversation list, so deleting a chat never removes the person here (parity
   // with mobile; backed by public.recent_contacts). Rendered when no query.
-  const [recentContacts, setRecentContacts] = useState<RecentContact[]>([]);
+  const [recentContacts, setRecentContacts] = useState<RecentContact[]>(() =>
+    uid ? readCachedRecent(uid).filter((r) => r.contact && r.contact.id !== uid) : [],
+  );
   const [loading, setLoading] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [showGroup, setShowGroup] = useState(false);
+  const [groupInviteToken, setGroupInviteToken] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [showCommunities, setShowCommunities] = useState(false);
@@ -85,6 +164,8 @@ function AppInner() {
   const [showCalls, setShowCalls] = useState(false);
 
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
+  const [pinnedOrder, setPinnedOrder] = useState<string[]>([]);
+  const [favIds, setFavIds] = useState<Set<string>>(new Set());
   // Chat Lock (0027): per-chat locks secured by the device's own auth (fingerprint /
   // face / PIN via WebAuthn). Locked chats stay hidden from the list until revealed
   // with device auth this session; they re-lock when the tab is hidden.
@@ -95,25 +176,147 @@ function AppInner() {
   const [showMenu, setShowMenu] = useState(false); // sidebar "⋮ More" overflow menu
   const [mutedIds, setMutedIds] = useState<Set<string>>(new Set());
   const [blockedIds, setBlockedIds] = useState<Set<string>>(new Set());
+  // Server-authoritative streak summary per conversation → chat-row emoji.
+  const [streaks, setStreaks] = useState<Record<string, StreakSummary>>({});
 
   const mountedRef = useRef(true);
-  useEffect(() => {
-    mountedRef.current = true;
-    loadConversations();
-    getPinnedIds(supabase).then((ids) => { if (mountedRef.current) setPinnedIds(new Set(ids)); }).catch(() => {});
-    getLockedIds(supabase).then((ids) => { if (mountedRef.current) setLockedIds(new Set(ids)); }).catch(() => {});
-    getChatLockSettings(supabase).then((s) => { if (mountedRef.current) setLockSettings(s); }).catch(() => {});
-    getMutedIds(supabase).then((ids) => { if (mountedRef.current) setMutedIds(new Set(ids)); }).catch(() => {});
-    getBlockedIds(supabase).then((ids) => { if (mountedRef.current) setBlockedIds(new Set(ids)); }).catch(() => {});
-    return () => { mountedRef.current = false; };
-  }, []);
 
-  async function loadConversations() {
+  const loadConversations = useCallback(async () => {
+    mark('convs-fetch-start');
     try {
       const convs = await getMyConversations(supabase);
-      if (mountedRef.current) setConversations(convs);
-    } catch { /* transient network error — keep prior list */ }
-  }
+      if (!mountedRef.current) return;
+      // Never clobber good cached names with weak network results; apply nicknames.
+      const cached = uid ? readCachedConversations(uid) : [];
+      const nicks = uid ? readNicknames(uid) : {};
+      const stabilized = stabilizeConversationList(convs, cached, nicks, uid);
+      setConversations(stabilized);
+      setListHydrating(false);
+      mark('convs-fetch-done');
+      if (uid) writeCachedConversations(uid, stabilized);
+    } catch {
+      /* transient network — keep cache */
+      if (mountedRef.current) setListHydrating(false);
+    }
+  }, [uid]);
+
+  useEffect(() => {
+    // Deep link: /invite/g/<token> opens the group join flow.
+    try {
+      const path = window.location.pathname || '';
+      const m = path.match(/\/invite\/g\/([a-zA-Z0-9_-]+)/);
+      if (m?.[1]) setGroupInviteToken(m[1]);
+    } catch { /* ignore */ }
+  }, []);
+
+  // Re-seed cache when uid becomes available (profile load after session).
+  useEffect(() => {
+    if (!uid) return;
+    const cached = readCachedConversations(uid);
+    if (cached.length) {
+      const nicks = readNicknames(uid);
+      const withNicks = stabilizeConversationList(cached, cached, nicks, uid);
+      setConversations((prev) => (prev.length ? prev : withNicks));
+      setListHydrating(false);
+    }
+  }, [uid]);
+
+  // Realtime receipts keep list preview ticks identical to the open chat.
+  useEffect(() => {
+    if (!uid) return;
+    const ch = supabase
+      .channel(`web-list-receipts:${uid}`)
+      .on('postgres_changes' as any, { event: '*', schema: 'public', table: 'message_receipts' }, (payload: any) => {
+        const r = payload?.new as MessageReceipt | undefined;
+        if (!r?.message_id || r.user_id === uid) return;
+        setConversations((prev) => {
+          let changed = false;
+          const next = prev.map((item) => {
+            const m = item.lastMessage;
+            if (!m || m.id !== r.message_id || m.sender_id !== uid) return item;
+            const map = new Map<string, TickStatus>();
+            if (item.lastMessageTick) map.set(m.id, item.lastMessageTick);
+            const updated = applyReceiptToTickMap(map, r, uid);
+            const tick = updated.get(m.id) ?? item.lastMessageTick ?? 'sent';
+            if (tick === item.lastMessageTick) return item;
+            changed = true;
+            return { ...item, lastMessageTick: tick };
+          });
+          if (changed) writeCachedConversations(uid, next);
+          return changed ? next : prev;
+        });
+      })
+      .subscribe();
+    return () => { void supabase.removeChannel(ch); };
+  }, [uid]);
+
+  // Mark inbound messages delivered even when the chat is not open.
+  useEffect(() => {
+    if (!uid) return;
+    const ch = supabase
+      .channel(`web-list-deliver:${uid}`)
+      .on('postgres_changes' as any, { event: 'INSERT', schema: 'public', table: 'messages' }, (payload: any) => {
+        const m = payload?.new as { id?: string; sender_id?: string; type?: string } | undefined;
+        if (!m?.id || m.sender_id === uid || m.type === 'system') return;
+        void markMessageAsDelivered(supabase, m.id).catch(() => {});
+      })
+      .subscribe();
+    return () => { void supabase.removeChannel(ch); };
+  }, [uid]);
+
+  // Critical path: conversation list only. Everything else after first paint.
+  useEffect(() => {
+    mountedRef.current = true;
+    void loadConversations();
+    // Prefetch ChatView chunk while user scans the list.
+    afterFirstPaint(() => {
+      void import('./ChatView');
+    });
+    afterFirstPaint(() => {
+      getPinnedIds(supabase).then((ids) => {
+        if (!mountedRef.current) return;
+        setPinnedOrder(ids);
+        setPinnedIds(new Set(ids));
+      }).catch(() => {});
+      getFavoriteIds(supabase).then((ids) => {
+        if (mountedRef.current) setFavIds(new Set(ids));
+      }).catch(() => {});
+      getLockedIds(supabase).then((ids) => {
+        if (mountedRef.current) setLockedIds(new Set(ids));
+      }).catch(() => {});
+      getChatLockSettings(supabase).then((s) => {
+        if (mountedRef.current) setLockSettings(s);
+      }).catch(() => {});
+      getMutedIds(supabase).then((ids) => {
+        if (mountedRef.current) setMutedIds(new Set(ids));
+      }).catch(() => {});
+      getBlockedIds(supabase).then((ids) => {
+        if (mountedRef.current) setBlockedIds(new Set(ids));
+      }).catch(() => {});
+      // Streaks never block UI — process then load (idle).
+      void (async () => {
+        await processMyStreaks(supabase).catch(() => 0);
+        const list = await getMyStreaks(supabase).catch(() => [] as StreakSummary[]);
+        if (mountedRef.current) setStreaks(indexStreaksByConversation(list));
+      })();
+    });
+    return () => { mountedRef.current = false; };
+  }, [loadConversations]);
+
+  // Realtime streaks — subscribe after paint.
+  useEffect(() => {
+    let sub: { unsubscribe: () => void } | null = null;
+    afterFirstPaint(() => {
+      sub = subscribeStreakChanges(supabase, () => {
+        getMyStreaks(supabase)
+          .then((list) => {
+            if (mountedRef.current) setStreaks(indexStreaksByConversation(list));
+          })
+          .catch(() => {});
+      });
+    });
+    return () => { sub?.unsubscribe(); };
+  }, []);
 
   // Auto-lock: when the tab is hidden, re-lock the revealed Locked chats area after
   // the configured delay (0 = immediately). Returning within the window cancels it.
@@ -221,12 +424,40 @@ function AppInner() {
   async function togglePin(id: string) {
     setMenuFor(null);
     const wasPinned = pinnedIds.has(id);
-    if (!wasPinned && !isPremium && pinnedIds.size >= FREE_LIMITS.pinnedChats) return openUpgrade();
-    // optimistic
-    setPinnedIds((s) => { const n = new Set(s); wasPinned ? n.delete(id) : n.add(id); return n; });
+    if (!wasPinned && !isPremium && pinnedOrder.length >= FREE_LIMITS.pinnedChats) return openUpgrade();
+    // optimistic — preserve pin order (new pins append)
+    setPinnedOrder((prev) => {
+      const next = wasPinned ? prev.filter((x) => x !== id) : [...prev.filter((x) => x !== id), id];
+      setPinnedIds(new Set(next));
+      return next;
+    });
     const { error } = wasPinned ? await unpinConversation(supabase, id) : await pinConversation(supabase, id);
-    if (error) { // roll back
-      setPinnedIds((s) => { const n = new Set(s); wasPinned ? n.add(id) : n.delete(id); return n; });
+    if (error) {
+      setPinnedOrder((prev) => {
+        const next = wasPinned ? [...prev.filter((x) => x !== id), id] : prev.filter((x) => x !== id);
+        setPinnedIds(new Set(next));
+        return next;
+      });
+    }
+  }
+
+  async function toggleFavorite(id: string) {
+    setMenuFor(null);
+    const was = favIds.has(id);
+    setFavIds((s) => {
+      const n = new Set(s);
+      was ? n.delete(id) : n.add(id);
+      return n;
+    });
+    const { error } = was
+      ? await unfavoriteConversation(supabase, id)
+      : await favoriteConversation(supabase, id);
+    if (error) {
+      setFavIds((s) => {
+        const n = new Set(s);
+        was ? n.add(id) : n.delete(id);
+        return n;
+      });
     }
   }
 
@@ -296,6 +527,10 @@ function AppInner() {
   // message search across all chats.
   const [chatFilter, setChatFilter] = useState('');
   const [msgHits, setMsgHits] = useState<MessageSearchHit[]>([]);
+  // WhatsApp-class facet chips (mobile parity) — keep the primary strip short.
+  type ListFilter = 'all' | 'unread' | 'groups' | 'favorites' | 'pinned' | 'streaks' | 'locked';
+  const [listFilter, setListFilter] = useState<ListFilter>('all');
+  const [moreFilters, setMoreFilters] = useState(false);
   const filterQ = chatFilter.trim().toLowerCase();
   const convById = useMemo(() => {
     const m = new Map<string, ConversationSummary>();
@@ -319,17 +554,31 @@ function AppInner() {
   );
 
   const visibleConvs = useMemo(() => {
-    const list = conversations.filter((c) => (locksRevealed || !lockedIds.has(c.conversation.id))
-      && (!filterQ || c.title.toLowerCase().includes(filterQ)));
+    const list = conversations.filter((c) => {
+      const id = c.conversation.id;
+      // Locked chats stay hidden until unlocked this session (except Locked chip).
+      if (!locksRevealed && listFilter !== 'locked' && lockedIds.has(id)) return false;
+      if (filterQ && !c.title.toLowerCase().includes(filterQ)) return false;
+      switch (listFilter) {
+        case 'unread': return c.unreadCount > 0;
+        case 'groups': return c.conversation.type === 'group';
+        case 'favorites': return favIds.has(id);
+        case 'pinned': return pinnedIds.has(id);
+        case 'streaks': return (streaks[id]?.score ?? 0) > 0;
+        case 'locked': return lockedIds.has(id);
+        default: return true;
+      }
+    });
+    const pinIndex = new Map(pinnedOrder.map((id, i) => [id, i]));
     return [...list].sort((a, b) => {
-      const ap = pinnedIds.has(a.conversation.id) ? 1 : 0;
-      const bp = pinnedIds.has(b.conversation.id) ? 1 : 0;
-      if (ap !== bp) return bp - ap;
+      const ai = pinIndex.has(a.conversation.id) ? pinIndex.get(a.conversation.id)! : 1e9;
+      const bi = pinIndex.has(b.conversation.id) ? pinIndex.get(b.conversation.id)! : 1e9;
+      if (ai !== bi) return ai - bi;
       const at = a.lastMessage?.created_at || a.conversation.created_at;
       const bt = b.lastMessage?.created_at || b.conversation.created_at;
       return new Date(bt).getTime() - new Date(at).getTime();
     });
-  }, [conversations, pinnedIds, lockedIds, locksRevealed, filterQ]);
+  }, [conversations, pinnedOrder, lockedIds, locksRevealed, filterQ, listFilter, favIds, pinnedIds, streaks]);
 
   const selectedConv = conversations.find((c) => c.conversation.id === selectedConvId);
 
@@ -352,18 +601,37 @@ function AppInner() {
     const d = new Date(t);
     return isToday(d) ? format(d, 'h:mm a') : isYesterday(d) ? 'Yesterday' : format(d, 'MM/dd/yy');
   }
-  function previewText(conv: ConversationSummary): string {
+  function previewBody(conv: ConversationSummary): string {
     const m = conv.lastMessage;
-    if (!m) return 'No messages yet';
+    if (!m) return 'Tap to start chatting';
     if (m.is_deleted) return 'This message was deleted';
     // System notices (disappearing-messages on/off) show verbatim, no "You:" prefix.
     if (m.type === 'system') return m.content ?? '';
-    const body =
-      m.type === 'image' ? '📷 Photo' :
-      m.type === 'audio' ? '🎤 Voice message' :
-      m.type === 'file' ? `📎 ${m.content || 'File'}` :
-      (m.content || '');
-    if (m.sender_id === profile?.id) return `You: ${body}`;
+    if (m.type === 'image') return /\.gif(\?|#|$)/i.test(m.media_url ?? '') ? '🎞️ GIF' : '📷 Photo';
+    if (m.type === 'audio') return '🎤 Voice message';
+    if (m.type === 'video' || isVideoMessage(m)) return '🎥 Video';
+    if (m.type === 'file') return m.content?.trim() ? `📄 ${m.content}` : '📄 Document';
+    return m.content || '';
+  }
+  function previewMine(conv: ConversationSummary): boolean {
+    const m = conv.lastMessage;
+    return !!m && !m.is_deleted && m.type !== 'system' && m.sender_id === profile?.id;
+  }
+  /** Same outbound tick rules as ChatView bubbles (single source of truth). */
+  function previewTick(conv: ConversationSummary): TickStatus | null {
+    if (!previewMine(conv) || !conv.lastMessage || !profile?.id) return null;
+    if (conv.lastMessage.pending) return 'sending';
+    if (conv.lastMessageTick) return conv.lastMessageTick;
+    return computeOutboundTick({
+      messageId: conv.lastMessage.id,
+      senderId: profile.id,
+      receipts: [],
+    });
+  }
+  function previewText(conv: ConversationSummary): string {
+    const m = conv.lastMessage;
+    const body = previewBody(conv);
+    if (!m || m.is_deleted || m.type === 'system' || previewMine(conv)) return body;
     if (conv.conversation.type === 'group') {
       const s = conv.participants.find((p) => p.id === m.sender_id)?.display_name;
       return s ? `${s.split(' ')[0]}: ${body}` : body;
@@ -375,10 +643,10 @@ function AppInner() {
     <div className={`app ${selectedConvId ? 'chat-open' : ''}`} onClick={() => { setMenuFor(null); setShowMenu(false); }}>
       <div className="sidebar">
         <div className="sidebar-header">
-          <h2>🎩 FUTUREHAT{isPremium && <PremiumBadge compact />}</h2>
+          <h2>🎩 Lumixo{isPremium && <PremiumBadge compact />}</h2>
           <div className="sidebar-actions">
             {!isPremium && (
-              <button onClick={openUpgrade} className="icon-btn upgrade-pill" title="Upgrade to FUTUREHAT+" aria-label="Upgrade to FUTUREHAT+">✦</button>
+              <button onClick={openUpgrade} className="icon-btn upgrade-pill" title="Upgrade to Lumixo+" aria-label="Upgrade to Lumixo+">✦</button>
             )}
             <button onClick={() => setShowCommunities(true)} className="icon-btn" title="Communities" aria-label="Communities"><CommunitiesIcon /></button>
             <button onClick={() => setShowCalls(true)} className="icon-btn" title="Calls" aria-label="Calls"><PhoneIcon /></button>
@@ -393,91 +661,97 @@ function AppInner() {
                 aria-haspopup="menu"
                 aria-expanded={showMenu}
               ><MoreIcon /></button>
-              <AnimatePresence>
-                {showMenu && (
-                  <motion.div
-                    className="conv-menu header-menu glass"
-                    role="menu"
-                    initial={{ opacity: 0, scale: 0.92, y: -4 }}
-                    animate={{ opacity: 1, scale: 1, y: 0 }}
-                    exit={{ opacity: 0, scale: 0.92, y: -4 }}
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <button role="menuitem" onClick={() => { setShowMenu(false); setShowGroup(true); }}>New group</button>
-                    <button role="menuitem" onClick={() => { setShowMenu(false); setShowStarred(true); }}>Starred messages</button>
-                    <button role="menuitem" onClick={() => { setShowMenu(false); setShowSettings(true); }}>Settings</button>
-                    <button role="menuitem" className="danger" onClick={() => { setShowMenu(false); signOut(supabase); }}>Sign out</button>
-                  </motion.div>
-                )}
-              </AnimatePresence>
+              {showMenu && (
+                <div
+                  className="conv-menu header-menu glass"
+                  role="menu"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <button type="button" role="menuitem" onClick={() => { setShowMenu(false); setShowGroup(true); }}>New group</button>
+                  <button type="button" role="menuitem" onClick={() => { setShowMenu(false); setShowStarred(true); }}>Starred messages</button>
+                  <button type="button" role="menuitem" onClick={() => { setShowMenu(false); setShowSettings(true); }}>Settings</button>
+                  <button type="button" role="menuitem" className="danger" onClick={() => { setShowMenu(false); signOut(supabase); }}>Sign out</button>
+                </div>
+              )}
             </div>
           </div>
         </div>
 
-        {/* Status strip (WhatsApp home parity) — under the FUTUREHAT header. */}
+        {/* Status strip (WhatsApp home parity) — under the Lumixo header. */}
         <StatusStrip />
 
-        <AnimatePresence>
-          {showSearch && (
-            <motion.div className="search-panel" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}>
-              <input
-                type="text"
-                placeholder="Search by username or name..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                autoFocus
-              />
-              <button onClick={handleSearch} disabled={loading}>{loading ? '...' : 'Search'}</button>
-              <div className="search-results">
-                {searchQuery.trim() ? (
-                  <>
-                    {searchResults.map((u) => (
-                      <div key={u.id} className="search-result" onClick={() => handleStartChat(u)}>
-                        <div className="avatar">{u.display_name?.[0] || '?'}</div>
-                        <div className="result-info">
-                          <div className="result-name">
-                            {u.display_name || 'Unknown'}
-                            {premiumUserIds.has(u.id) && <PremiumBadge compact />}
-                          </div>
-                          <div className="result-username">@{u.username || u.id.slice(0, 8)}</div>
+        {showSearch && (
+          <div className="search-panel">
+            <input
+              type="text"
+              placeholder="Search by username or name..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+              autoFocus
+            />
+            <button type="button" onClick={handleSearch} disabled={loading}>{loading ? '...' : 'Search'}</button>
+            <div className="search-results">
+              {searchQuery.trim() ? (
+                <>
+                  {searchResults.map((u) => (
+                    <div key={u.id} className="search-result" onClick={() => handleStartChat(u)}>
+                      <div className="avatar">{u.display_name?.[0] || '?'}</div>
+                      <div className="result-info">
+                        <div className="result-name">
+                          {resolveDisplayName(u, { fallback: u.username ? `@${u.username}` : 'Contact' })}
+                          {premiumUserIds.has(u.id) && <PremiumBadge compact />}
                         </div>
+                        <div className="result-username">@{u.username || u.id.slice(0, 8)}</div>
                       </div>
-                    ))}
-                    {searchResults.length === 0 && !loading && <div className="no-results">No users found</div>}
-                  </>
-                ) : (
-                  <>
-                    {recentContacts.length > 0 && <div className="recent-label">RECENT CONTACTS</div>}
-                    {recentContacts.map((r) => r.contact && (
-                      <div key={r.contact.id} className="search-result" onClick={() => handleStartChat(r.contact)}>
-                        <div className="avatar">{r.contact.display_name?.[0] || '?'}</div>
-                        <div className="result-info">
-                          <div className="result-name">
-                            {r.contact.display_name || 'FUTUREHAT user'}
-                            {premiumUserIds.has(r.contact.id) && <PremiumBadge compact />}
-                          </div>
-                          <div className="result-username">@{r.contact.username || r.contact.id.slice(0, 8)}</div>
+                    </div>
+                  ))}
+                  {searchResults.length === 0 && !loading && (
+                    <div className="no-results">
+                      <div className="no-results-mascot" aria-hidden>
+                        <LumixoCat mood="confused" size="sm" decorative />
+                      </div>
+                      No users found
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  {recentContacts.length > 0 && <div className="recent-label">RECENT CONTACTS</div>}
+                  {recentContacts.map((r) => r.contact && (
+                    <div key={r.contact.id} className="search-result" onClick={() => handleStartChat(r.contact)}>
+                      <div className="avatar">{r.contact.display_name?.[0] || '?'}</div>
+                      <div className="result-info">
+                        <div className="result-name">
+                          {r.contact.display_name || 'Lumixo user'}
+                          {premiumUserIds.has(r.contact.id) && <PremiumBadge compact />}
                         </div>
-                        <button
-                          className="recent-remove"
-                          title="Remove from recent contacts"
-                          aria-label="Remove from recent contacts"
-                          onClick={(e) => handleRemoveRecent(r.contact, e)}
-                        >
-                          <TrashIcon size={16} />
-                        </button>
+                        <div className="result-username">@{r.contact.username || r.contact.id.slice(0, 8)}</div>
                       </div>
-                    ))}
-                    {recentContacts.length === 0 && (
-                      <div className="no-results">No recent contacts yet. Search above to start your first chat.</div>
-                    )}
-                  </>
-                )}
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+                      <button
+                        type="button"
+                        className="recent-remove"
+                        title="Remove from recent contacts"
+                        aria-label="Remove from recent contacts"
+                        onClick={(e) => handleRemoveRecent(r.contact, e)}
+                      >
+                        <TrashIcon size={16} />
+                      </button>
+                    </div>
+                  ))}
+                  {recentContacts.length === 0 && (
+                    <div className="no-results">
+                      <div className="no-results-mascot" aria-hidden>
+                        <LumixoCat mood="wave" size="sm" decorative />
+                      </div>
+                      No recent contacts yet. Search above to start your first chat.
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Global search: filter chats by name + search all messages */}
         <div className="chatlist-search">
@@ -491,7 +765,59 @@ function AppInner() {
           {chatFilter && <button className="chatlist-search-clear" onClick={() => setChatFilter('')} aria-label="Clear search">✕</button>}
         </div>
 
-        {lockedCount > 0 && (
+        {/* Primary filter chips (mobile parity) — All / Unread / Groups / Favourites + More */}
+        {!filterQ && (
+          <div className="filter-chips" role="tablist" aria-label="Chat filters">
+            {([
+              { key: 'all' as const, label: 'All' },
+              { key: 'unread' as const, label: 'Unread' },
+              { key: 'groups' as const, label: 'Groups' },
+              { key: 'favorites' as const, label: 'Favourites' },
+            ]).map((chip) => (
+              <button
+                key={chip.key}
+                type="button"
+                role="tab"
+                aria-selected={listFilter === chip.key}
+                className={`filter-chip ${listFilter === chip.key ? 'active' : ''}`}
+                onClick={() => { setListFilter(chip.key); setMoreFilters(false); }}
+              >
+                {chip.label}
+              </button>
+            ))}
+            <button
+              type="button"
+              className={`filter-chip ${moreFilters || ['pinned', 'streaks', 'locked'].includes(listFilter) ? 'active' : ''}`}
+              onClick={() => setMoreFilters((v) => !v)}
+            >
+              {(['pinned', 'streaks', 'locked'] as ListFilter[]).includes(listFilter) && !moreFilters
+                ? ({ pinned: 'Pinned', streaks: 'Streaks', locked: 'Locked' } as Record<string, string>)[listFilter]
+                : 'More'}
+            </button>
+          </div>
+        )}
+        {!filterQ && moreFilters && (
+          <div className="filter-chips filter-chips-more" role="tablist" aria-label="More filters">
+            {([
+              { key: 'pinned' as const, label: 'Pinned' },
+              { key: 'streaks' as const, label: 'Streaks' },
+              { key: 'locked' as const, label: 'Locked' },
+            ]).map((chip) => (
+              <button
+                key={chip.key}
+                type="button"
+                role="tab"
+                aria-selected={listFilter === chip.key}
+                className={`filter-chip ${listFilter === chip.key ? 'active' : ''}`}
+                onClick={() => { setListFilter(chip.key); setMoreFilters(false); }}
+              >
+                {chip.label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {lockedCount > 0 && (listFilter === 'locked' || !locksRevealed) && (
           <button className="locked-toggle" onClick={toggleLockReveal}>
             {locksRevealed ? '🔓 Hide locked chats' : `🔒 Locked chats (${lockedCount})`}
           </button>
@@ -516,19 +842,24 @@ function AppInner() {
         )}
 
         <div className="conversation-list">
-          <AnimatePresence initial={false}>
-            {visibleConvs.map((conv) => {
+          {listHydrating && conversations.length === 0 ? (
+            <ConvListSkeleton />
+          ) : (
+            visibleConvs.map((conv) => {
               const id = conv.conversation.id;
               return (
-                <motion.div
+                <div
                   key={id}
-                  layout
-                  variants={listItem}
-                  initial="initial"
-                  animate="animate"
-                  exit="exit"
                   className={`conversation-item ${selectedConvId === id ? 'active' : ''} ${lockedIds.has(id) ? 'is-locked' : ''} ${conv.unreadCount > 0 ? 'unread' : ''}`}
                   onClick={() => setSelectedConvId(id)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      setSelectedConvId(id);
+                    }
+                  }}
                 >
                   <div className="avatar avatar-wrap">
                     {conv.title[0]}
@@ -540,6 +871,7 @@ function AppInner() {
                   <div className="conversation-info">
                     <div className="conversation-title">
                       {pinnedIds.has(id) && <span className="pin-mark">📌</span>}
+                      {favIds.has(id) && <span className="pin-mark" title="Favourite">⭐</span>}
                       {conv.conversation.type === 'group' && <CommunitiesIcon size={14} className="group-mark" />}
                       <span className="conv-name">{conv.title}</span>
                       {otherIsPremium(conv) && <PremiumBadge compact />}
@@ -547,63 +879,121 @@ function AppInner() {
                       <span className="conversation-time">{lastMsgTime(conv)}</span>
                     </div>
                     <div className="conversation-bottom">
-                      <div className="conversation-preview">{previewText(conv)}</div>
+                      <div className="conversation-preview">
+                        {(() => {
+                          const t = previewTick(conv);
+                          if (!t) return null;
+                          return (
+                            <span
+                              className={`preview-ticks${tickIsRead(t) ? ' read' : ''}`}
+                              aria-label={t}
+                            >
+                              {tickGlyph(t)}
+                            </span>
+                          );
+                        })()}
+                        {previewText(conv)}
+                      </div>
+                      {conv.conversation.type !== 'group' && streaks[id]?.tier && (
+                        <span className="streak-mark" title={`Streak ${streaks[id].score}`}>{streaks[id].tier}</span>
+                      )}
                       {conv.unreadCount > 0 && <span className="unread-badge">{conv.unreadCount > 99 ? '99+' : conv.unreadCount}</span>}
                     </div>
                   </div>
                   <button
+                    type="button"
                     className="conv-menu-btn"
                     onClick={(e) => { e.stopPropagation(); setMenuFor(menuFor === id ? null : id); }}
                   >⋯</button>
-                  <AnimatePresence>
-                    {menuFor === id && (
-                      <motion.div className="conv-menu glass" initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }}
-                        onClick={(e) => e.stopPropagation()}>
-                        <button onClick={() => togglePin(id)}>{pinnedIds.has(id) ? 'Unpin' : '📌 Pin'}</button>
-                        <button onClick={() => toggleLock(id)}>{lockedIds.has(id) ? '🔓 Unlock' : '🔒 Lock'}</button>
-                        <button onClick={() => toggleMute(id)}>{mutedIds.has(id) ? '🔔 Unmute' : '🔕 Mute'}</button>
-                        {otherId(conv) && (
-                          <button onClick={() => reportConv(conv)}>🚩 Report</button>
-                        )}
-                        {otherId(conv) && (
-                          <button className="danger" onClick={() => toggleBlock(conv)}>
-                            {blockedIds.has(otherId(conv)!) ? 'Unblock' : '🚫 Block'}
-                          </button>
-                        )}
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </motion.div>
+                  {menuFor === id && (
+                    <div className="conv-menu glass" onClick={(e) => e.stopPropagation()}>
+                      <button type="button" onClick={() => togglePin(id)}>{pinnedIds.has(id) ? 'Unpin chat' : '📌 Pin chat'}</button>
+                      <button type="button" onClick={() => toggleFavorite(id)}>{favIds.has(id) ? '★ Remove from favourites' : '⭐ Add to favourites'}</button>
+                      <button type="button" onClick={() => toggleLock(id)}>{lockedIds.has(id) ? '🔓 Unlock' : '🔒 Lock'}</button>
+                      <button type="button" onClick={() => toggleMute(id)}>{mutedIds.has(id) ? '🔔 Unmute' : '🔕 Mute'}</button>
+                      {otherId(conv) && (
+                        <button type="button" onClick={() => reportConv(conv)}>🚩 Report</button>
+                      )}
+                      {otherId(conv) && (
+                        <button type="button" className="danger" onClick={() => toggleBlock(conv)}>
+                          {blockedIds.has(otherId(conv)!) ? 'Unblock' : '🚫 Block'}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
               );
-            })}
-          </AnimatePresence>
-          {visibleConvs.length === 0 && <div className="empty-state">No conversations yet. Start a new chat!</div>}
+            })
+          )}
+          {!listHydrating && visibleConvs.length === 0 && (
+            <div className="empty-state">
+              <div className="empty-state-mascot" aria-hidden>
+                <LumixoCat mood={filterQ ? 'confused' : 'wave'} size="md" decorative />
+              </div>
+              <div className="empty-state-title">
+                {filterQ
+                  ? 'No matching chats'
+                  : listFilter !== 'all'
+                  ? `No ${listFilter} chats`
+                  : 'No conversations yet'}
+              </div>
+              <p className="empty-state-sub">
+                {filterQ
+                  ? 'Try a different search.'
+                  : listFilter !== 'all'
+                  ? 'Try another filter, or start a new chat.'
+                  : 'Find someone you know and say hello.'}
+              </p>
+              <div className="empty-state-actions">
+                <button type="button" className="empty-cta-primary" onClick={() => setShowSearch(true)}>
+                  Start a chat
+                </button>
+                {listFilter === 'all' && !filterQ && (
+                  <button type="button" className="empty-cta-secondary" onClick={() => setShowGroup(true)}>
+                    Create a group
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
       <div className="main-content">
-        <AnimatePresence mode="wait">
-          {selectedConv ? (
-            <motion.div key={selectedConv.conversation.id} style={{ height: '100%' }}
-              initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} transition={spring}>
-              <ChatView
-                conversation={selectedConv}
-                isOtherPremium={otherIsPremium(selectedConv)}
-                onBack={() => setSelectedConvId(null)}
-              />
-            </motion.div>
-          ) : (
-            <motion.div key="empty" className="empty-chat" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-              <motion.div className="empty-chat-icon" animate={{ y: [0, -8, 0] }} transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}>💬</motion.div>
-              <h3>Welcome to FUTUREHAT</h3>
-              <p>Select a conversation or start a new chat</p>
-            </motion.div>
-          )}
-        </AnimatePresence>
+        {selectedConv ? (
+          <div
+            key={selectedConv.conversation.id}
+            className="chat-pane-enter main-content-pane"
+          >
+            <ErrorBoundary fallbackLabel="This chat hit an error. Try again or pick another conversation.">
+              <Suspense fallback={<ChatSkeleton />}>
+                <ChatView
+                  conversation={selectedConv}
+                  isOtherPremium={otherIsPremium(selectedConv)}
+                  onBack={() => setSelectedConvId(null)}
+                  onConversationGone={() => {
+                    setSelectedConvId(null);
+                    void loadConversations();
+                  }}
+                />
+              </Suspense>
+            </ErrorBoundary>
+          </div>
+        ) : (
+          <div key="empty" className="empty-chat">
+            <div className="empty-chat-mascot" aria-hidden>
+              <LumixoCat mood="wave" size="lg" decorative />
+            </div>
+            <h3>Welcome to Lumixo</h3>
+            <p>Select a conversation or start a new chat</p>
+            <button type="button" className="empty-cta-primary" onClick={() => setShowSearch(true)}>
+              Start a chat
+            </button>
+          </div>
+        )}
       </div>
 
       <Suspense fallback={null}>
-        <AnimatePresence>
           {showProfile && <ProfileModal onClose={() => setShowProfile(false)} />}
           {showSettings && <SettingsModal onClose={() => setShowSettings(false)} onEditProfile={() => setShowProfile(true)} onHelp={() => setShowHelp(true)} onAdmin={() => setShowAdmin(true)} onModerator={() => setShowModerator(true)} onMailbox={() => setShowMailbox(true)} />}
           {showHelp && <HelpSupportModal onClose={() => setShowHelp(false)} />}
@@ -619,13 +1009,43 @@ function AppInner() {
               onOpenChannel={async (cid) => { await loadConversations(); setSelectedConvId(cid); }}
             />
           )}
-        </AnimatePresence>
-        {showGroup && <GroupModal onClose={() => setShowGroup(false)} onCreated={() => { loadConversations(); setShowGroup(false); }} />}
+        {showGroup && (
+          <GroupModal
+            onClose={() => setShowGroup(false)}
+            onCreated={(cid) => {
+              loadConversations();
+              setShowGroup(false);
+              if (cid) setSelectedConvId(cid);
+            }}
+          />
+        )}
+        {groupInviteToken && (
+          <JoinGroupInvite
+            token={groupInviteToken}
+            onClose={() => {
+              setGroupInviteToken(null);
+              try {
+                window.history.replaceState({}, '', '/');
+              } catch { /* ignore */ }
+            }}
+            onNeedAuth={() => {
+              /* user must sign in; keep token in URL */
+            }}
+            onJoined={(cid) => {
+              setGroupInviteToken(null);
+              try {
+                window.history.replaceState({}, '', '/');
+              } catch { /* ignore */ }
+              loadConversations();
+              setSelectedConvId(cid);
+            }}
+          />
+        )}
       </Suspense>
 
       <WebNotifications conversations={conversations} selectedConvId={selectedConvId} onOpenChat={(id) => setSelectedConvId(id)} />
 
-      <div className="app-credit">Developed by LAKSHMESHWAR PANDEY</div>
+      {/* Credit lives in Settings / About — not over the chat UI. */}
     </div>
   );
 }

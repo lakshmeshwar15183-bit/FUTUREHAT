@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — shared status helpers used by the strip, viewer and composer.
+// Lumixo mobile — shared status helpers used by the strip, viewer and composer.
 // Groups active statuses by author (WhatsApp-style), resolves author profiles,
 // and marks each group seen/unseen for the current user. Kept framework-free so
 // both the horizontal strip and the full-screen viewer share one source of truth.

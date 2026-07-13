@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — Expo config plugin that makes `expo prebuild` regenerate a
+// Lumixo mobile — Expo config plugin that makes `expo prebuild` regenerate a
 // release signing config in android/app/build.gradle. Credentials are read from
 // Gradle properties (FUTUREHAT_UPLOAD_*), which live in the user-global
 // ~/.gradle/gradle.properties — never in the repo. If those props are absent the

@@ -1,4 +1,4 @@
--- FUTUREHAT — recent contacts / previously-chatted-users history
+-- Lumixo — recent contacts / previously-chatted-users history
 -- ---------------------------------------------------------------------------
 -- Problem this solves: the "New Chat" screen only ever showed users returned by
 -- a live search. Anyone you had already chatted with vanished the moment you

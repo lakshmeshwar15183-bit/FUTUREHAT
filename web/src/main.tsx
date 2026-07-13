@@ -1,71 +1,94 @@
-import { StrictMode } from 'react';
+/**
+ * Lumixo web — tiny entry (critical path).
+ *
+ * Goals:
+ *  1. HTML boot shell already painted (index.html).
+ *  2. This file stays small: React + boot glue only.
+ *  3. Supabase SDK, App, ChatView, CallEngine load as async chunks.
+ *  4. #root NEVER paints empty after boot shell is removed (stability P0).
+ */
+import { StrictMode, useEffect, useState, type ComponentType } from 'react';
 import { createRoot } from 'react-dom/client';
-import { AnimatePresence, motion } from 'framer-motion';
-import { AuthProvider, useAuth } from './AuthContext';
-import { PremiumProvider } from './PremiumContext';
-import { PresenceProvider } from './PresenceContext';
-import { CallProvider } from './calls/CallContext';
-import { AppLockGate } from './premium/AppLockGate';
-import { AuthScreen } from './Auth';
-import { App } from './App';
-import { pageVariants } from './motion';
-import { registerServiceWorker } from './pwa/usePwaInstall';
-import { initDiagnostics } from './diagnostics/logBuffer';
+import { ErrorBoundary } from './lib/ErrorBoundary';
+import { afterFirstPaint, mark } from './lib/startupCache';
+import { installViewportStability } from './lib/viewportStability';
 import './index.css';
 import './theme/premium.css';
+import {
+  applyAppearanceMode,
+  watchSystemAppearance,
+} from './theme/appearanceMode';
 
-// PWA install support + diagnostic log capture (best-effort, no-op on failure).
-initDiagnostics();
-registerServiceWorker();
+// Follow System by default — apply before React paint to avoid dark→light flash.
+applyAppearanceMode();
+watchSystemAppearance(() => applyAppearanceMode());
 
-function Splash() {
+mark('js-exec');
+
+/** Minimal in-#root shell so we never show a pure blank frame after fh-boot is gone. */
+function BootFallback() {
   return (
-    <div className="fh-splash">
-      <motion.div
-        className="fh-splash-logo"
-        initial={{ scale: 0.6, opacity: 0, rotate: -12 }}
-        animate={{ scale: 1, opacity: 1, rotate: 0 }}
-        transition={{ type: 'spring', stiffness: 260, damping: 18 }}
-      >
-        🎩
-      </motion.div>
-      <div className="fh-spinner" />
+    <div className="fh-boot-fallback" role="status" aria-label="Loading Lumixo">
+      <div className="fh-boot-fallback-brand">Lumixo</div>
     </div>
   );
 }
 
-function Root() {
-  const { user, loading } = useAuth();
+function Boot() {
+  const [Tree, setTree] = useState<ComponentType | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  if (loading) return <Splash />;
+  useEffect(() => installViewportStability(), []);
 
-  return (
-    <AnimatePresence mode="wait">
-      {user ? (
-        <motion.div key="app" variants={pageVariants} initial="initial" animate="animate" exit="exit" style={{ height: '100%' }}>
-          <AppLockGate>
-            <App />
-          </AppLockGate>
-        </motion.div>
-      ) : (
-        <motion.div key="auth" variants={pageVariants} initial="initial" animate="animate" exit="exit" style={{ height: '100%' }}>
-          <AuthScreen />
-        </motion.div>
-      )}
-    </AnimatePresence>
-  );
+  useEffect(() => {
+    mark('app-import-start');
+    let cancelled = false;
+    // Dynamic import → separate chunk including supabase + App shell.
+    void import('./appTree')
+      .then((m) => {
+        if (cancelled) return;
+        mark('app-import-done');
+        setTree(() => m.AppTree);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        console.error('[Lumixo] appTree load failed', e);
+        setLoadError(e?.message || 'Failed to load application');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Diagnostics + SW only after paint (and after tree if slow).
+  useEffect(() => {
+    afterFirstPaint(() => {
+      void import('./diagnostics/logBuffer').then((m) => m.initDiagnostics());
+      void import('./pwa/usePwaInstall').then((m) => m.registerServiceWorker());
+    });
+  }, []);
+
+  if (loadError) {
+    return (
+      <div className="fh-boot-fallback" role="alert">
+        <div className="fh-boot-fallback-brand">Lumixo</div>
+        <p style={{ color: '#8696a0', fontSize: 14, marginTop: 12 }}>{loadError}</p>
+        <button type="button" className="fh-error-btn" onClick={() => window.location.reload()}>
+          Reload
+        </button>
+      </div>
+    );
+  }
+
+  // Keep a painted fallback until Tree mounts — never return bare null after shell removal.
+  if (!Tree) return <BootFallback />;
+  return <Tree />;
 }
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <AuthProvider>
-      <PremiumProvider>
-        <PresenceProvider>
-          <CallProvider>
-            <Root />
-          </CallProvider>
-        </PresenceProvider>
-      </PremiumProvider>
-    </AuthProvider>
+    <ErrorBoundary>
+      <Boot />
+    </ErrorBoundary>
   </StrictMode>,
 );

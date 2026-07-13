@@ -1,6 +1,6 @@
 {
-  "name": "FUTUREHAT",
-  "short_name": "FUTUREHAT",
+  "name": "Lumixo",
+  "short_name": "Lumixo",
   "description": "Real-time messaging, reimagined. Developed by LAKSHMESHWAR PANDEY.",
   "start_url": "/",
   "scope": "/",
@@ -10,7 +10,9 @@
   "theme_color": "#0b141a",
   "categories": ["social", "communication"],
   "icons": [
-    { "src": "/hat.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
-    { "src": "/hat.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+    { "src": "/lumixo.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/lumixo.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" },
+    { "src": "/lumixo-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/lumixo-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
   ]
 }

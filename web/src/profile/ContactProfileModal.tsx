@@ -1,4 +1,4 @@
-// FUTUREHAT — contact / user profile screen (Telegram-style): big avatar, name,
+// Lumixo — contact / user profile screen (Telegram-style): big avatar, name,
 // @username, about, last seen, phone, and Message / Mute / Call / Video actions,
 // plus an overflow with Share contact, Block and Report. Self-contained — block/
 // report/mute are handled internally via supportApi; Message/Call/Video are
@@ -10,15 +10,17 @@
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { supabase } from '../supabase';
-import { safeHref } from '../util/safeUrl';
+import { safeHref, safeCssUrl, safeMediaSrc } from '../util/safeUrl';
 import {
   blockUser, unblockUser, getBlockedIds, submitReport,
   muteConversation, unmuteConversation, getMutedIds,
 } from '@shared/supportApi';
-import { getSharedMedia, getDisappearing, setConversationDisappearing } from '@shared/api';
+import { getSharedMedia, getDisappearing, setConversationDisappearing, isVideoMessage, resolveDisplayName, resolveUsernameHandle } from '@shared/api';
 import { getLockedIds, lockConversation, unlockConversation } from '@shared/chatLockApi';
 import { deviceAuth } from '../lib/deviceAuth';
 import type { Profile, Message } from '@shared/types';
+import { getNickname, setNickname } from '../lib/nicknames';
+import { useAuth } from '../AuthContext';
 import { MediaLightbox, type MediaItem } from '../media/MediaLightbox';
 import '../media/MediaLightbox.css';
 import { formatDistanceToNow } from 'date-fns';
@@ -38,16 +40,20 @@ interface Props {
 }
 
 export function ContactProfileModal({ profile, online, isPremium, conversationId, onClose, onMessage, onCall, onVideo }: Props) {
+  const { profile: me } = useAuth();
   const [blocked, setBlocked] = useState(false);
   const [muted, setMuted] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [nickname, setNickState] = useState<string | null>(() =>
+    me?.id ? getNickname(me.id, profile.id) : null,
+  );
   const [media, setMedia] = useState<Message[]>([]);
   const [lightbox, setLightbox] = useState<string | null>(null);
   // Disappearing messages (0022): per-chat timer, 0 = off else 3600..28800 (1–8h).
   const [disappearSecs, setDisappearSecs] = useState(0);
   // Chat Lock (0027): this chat locked behind the device's own auth (fingerprint /
-  // face / PIN). No secret is stored by FUTUREHAT.
+  // face / PIN). No secret is stored by Lumixo.
   const [locked, setLocked] = useState(false);
   const [lockAvailable, setLockAvailable] = useState(false);
   // Moderator badge (0023): profiles.role is world-readable; fetch it lightly.
@@ -98,9 +104,17 @@ export function ContactProfileModal({ profile, online, isPremium, conversationId
     else flash(secs > 0 ? 'Disappearing messages on' : 'Disappearing messages off');
   }
 
-  const photos = media.filter((m) => m.type === 'image');
-  const docs = media.filter((m) => m.type === 'file');
-  const galleryItems: MediaItem[] = photos.map((m) => ({ id: m.id, url: m.media_url!, kind: 'image' as const, caption: m.content || undefined }));
+  // Photos + videos in shared media; docs exclude first-class and legacy videos.
+  const photos = media.filter((m) => m.type === 'image' || isVideoMessage(m));
+  const docs = media.filter((m) => m.type === 'file' && !isVideoMessage(m));
+  const galleryItems: MediaItem[] = photos
+    .filter((m) => !!m.media_url)
+    .map((m) => ({
+      id: m.id,
+      url: m.media_url!,
+      kind: m.type === 'image' ? ('image' as const) : ('video' as const),
+      caption: m.content || undefined,
+    }));
   const lightboxIndex = lightbox ? galleryItems.findIndex((g) => g.url === lightbox) : -1;
 
   useEffect(() => {
@@ -113,10 +127,28 @@ export function ContactProfileModal({ profile, online, isPremium, conversationId
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose, lightbox]);
 
+  const displayName = resolveDisplayName(profile, {
+    nickname,
+    fallback: 'Contact',
+  });
+  const handle = resolveUsernameHandle(profile);
+
+  function editNickname() {
+    if (!me?.id) return;
+    const next = prompt(
+      nickname ? 'Edit nickname (empty to remove)' : 'Add nickname — only you will see this',
+      nickname ?? '',
+    );
+    if (next === null) return; // cancelled
+    const map = setNickname(me.id, profile.id, next);
+    setNickState(map[profile.id] ?? null);
+    flash(map[profile.id] ? 'Nickname saved' : 'Nickname removed');
+  }
+
   async function toggleBlock() {
     setMenuOpen(false);
     const was = blocked;
-    if (!was && !confirm(`Block ${profile.display_name || 'this user'}?`)) return;
+    if (!was && !confirm(`Block ${displayName}?`)) return;
     setBlocked(!was);
     const { error } = was ? await unblockUser(supabase, profile.id) : await blockUser(supabase, profile.id);
     if (error) { setBlocked(was); flash('Could not update block.'); }
@@ -141,9 +173,9 @@ export function ContactProfileModal({ profile, online, isPremium, conversationId
 
   function shareContact() {
     setMenuOpen(false);
-    const handle = profile.username ? `@${profile.username}` : profile.id.slice(0, 8);
-    const text = `${profile.display_name || 'FUTUREHAT user'} (${handle}) on FUTUREHAT`;
-    if (navigator.share) navigator.share({ title: 'FUTUREHAT contact', text }).catch(() => {});
+    const h = handle || profile.id.slice(0, 8);
+    const text = `${displayName} (${h}) on Lumixo`;
+    if (navigator.share) navigator.share({ title: 'Lumixo contact', text }).catch(() => {});
     else { navigator.clipboard?.writeText(text).then(() => flash('Contact copied')).catch(() => flash('Copy failed')); }
   }
 
@@ -167,16 +199,22 @@ export function ContactProfileModal({ profile, online, isPremium, conversationId
         </div>
 
         <div className="contact-hero">
-          <div className="contact-avatar" style={profile.avatar_url ? { backgroundImage: `url(${profile.avatar_url})` } : undefined}>
-            {!profile.avatar_url && (profile.display_name?.[0]?.toUpperCase() || '?')}
+          <div className="contact-avatar" style={safeCssUrl(profile.avatar_url) ? { backgroundImage: safeCssUrl(profile.avatar_url) } : undefined}>
+            {!safeMediaSrc(profile.avatar_url) && (displayName[0]?.toUpperCase() || '?')}
             {online && <span className="contact-online-dot" />}
             {disappearSecs > 0 && <span className="contact-disappear-badge" title="Disappearing messages on">⏳</span>}
           </div>
           <div className="contact-name">
-            {profile.display_name || 'FUTUREHAT user'}
-            {isPremium && <span className="contact-badge" title="FUTUREHAT+">✦</span>}
-            {isModerator && <span className="mod-badge" title="FUTUREHAT Moderator">🛡 MOD</span>}
+            {displayName}
+            {isPremium && <span className="contact-badge" title="Lumixo+">✦</span>}
+            {isModerator && <span className="mod-badge" title="Lumixo Moderator">🛡 MOD</span>}
           </div>
+          {nickname && (
+            <div className="contact-presence" style={{ opacity: 0.85 }}>
+              {resolveDisplayName(profile, { fallback: handle || 'Contact' })}
+              {handle ? ` · ${handle}` : ''}
+            </div>
+          )}
           <div className="contact-presence">{presence}</div>
         </div>
 
@@ -188,8 +226,19 @@ export function ContactProfileModal({ profile, online, isPremium, conversationId
         </div>
 
         <div className="contact-fields">
-          {profile.username && (
-            <div className="contact-field"><div className="contact-field-val">@{profile.username}</div><div className="contact-field-label">Username</div></div>
+          <button
+            type="button"
+            className="contact-field"
+            onClick={editNickname}
+            style={{ width: '100%', textAlign: 'left', cursor: 'pointer', border: 'none', background: 'inherit', font: 'inherit', color: 'inherit' }}
+          >
+            <div className="contact-field-val">{nickname || 'Add nickname'}</div>
+            <div className="contact-field-label">
+              {nickname ? 'Nickname · only you see this' : 'Nickname · private to you'}
+            </div>
+          </button>
+          {handle && (
+            <div className="contact-field"><div className="contact-field-val">{handle}</div><div className="contact-field-label">Username</div></div>
           )}
           {profile.about && (
             <div className="contact-field"><div className="contact-field-val">{profile.about}</div><div className="contact-field-label">About</div></div>
@@ -256,25 +305,33 @@ export function ContactProfileModal({ profile, online, isPremium, conversationId
             </div>
             {photos.length > 0 && (
               <div className="contact-media-grid">
-                {photos.slice(0, 12).map((m) => (
-                  <button
-                    key={m.id}
-                    className="contact-media-thumb"
-                    style={{ backgroundImage: `url(${m.media_url})` }}
-                    onClick={() => setLightbox(m.media_url!)}
-                    aria-label="View photo"
-                  />
-                ))}
+                {photos.slice(0, 12).map((m) => {
+                  const href = safeHref(m.media_url);
+                  if (!href) return null;
+                  return (
+                    <button
+                      key={m.id}
+                      className="contact-media-thumb"
+                      style={{ backgroundImage: safeCssUrl(href) }}
+                      onClick={() => setLightbox(href)}
+                      aria-label="View photo"
+                    />
+                  );
+                })}
               </div>
             )}
             {docs.length > 0 && (
               <div className="contact-doc-list">
-                {docs.slice(0, 8).map((m) => (
-                  <a key={m.id} href={safeHref(m.media_url)} target="_blank" rel="noreferrer" className="contact-doc">
-                    <span className="contact-doc-icon">📎</span>
-                    <span className="contact-doc-name">{m.content || 'Attachment'}</span>
-                  </a>
-                ))}
+                {docs.slice(0, 8).map((m) => {
+                  const href = safeHref(m.media_url);
+                  if (!href) return null;
+                  return (
+                    <a key={m.id} href={href} target="_blank" rel="noreferrer" className="contact-doc">
+                      <span className="contact-doc-icon">📎</span>
+                      <span className="contact-doc-name">{m.content || 'Attachment'}</span>
+                    </a>
+                  );
+                })}
               </div>
             )}
           </div>

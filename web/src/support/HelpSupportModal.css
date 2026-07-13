@@ -1,4 +1,4 @@
-/* FUTUREHAT — Help & Support modal. Self-contained styling (theme-aware via
+/* Lumixo — Help & Support modal. Self-contained styling (theme-aware via
    --fh-* vars) so it renders correctly no matter which CSS chunks have loaded. */
 
 .modal-backdrop {
@@ -41,7 +41,13 @@
 }
 .help-modal .modal-close:hover { background: rgba(127, 127, 127, 0.28); }
 
-.help-title { margin: 0 0 16px; font-size: 22px; }
+.help-title { margin: 0 0 6px; font-size: 22px; letter-spacing: -0.02em; }
+.help-lead { margin: 0 0 16px; font-size: 13px; color: var(--fh-muted); line-height: 1.4; }
+.help-subh { margin: 16px 0 10px; font-size: 13px; color: var(--fh-muted); text-transform: uppercase; letter-spacing: .04em; }
+.help-back {
+  border: none; background: none; color: var(--fh-accent); font-weight: 700; font-size: 14px;
+  cursor: pointer; padding: 0 0 12px; display: block;
+}
 
 .help-tabs {
   display: flex;
@@ -129,9 +135,63 @@
 .help-empty { text-align: center; color: var(--fh-muted); padding: 40px 0; font-size: 14px; }
 
 .ticket-list { display: flex; flex-direction: column; gap: 10px; }
-.ticket-card { border: 1px solid var(--fh-border); border-radius: 12px; padding: 14px; background: var(--fh-elevated); }
-.ticket-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
-.ticket-kind { font-size: 13px; font-weight: 700; }
+.ticket-card {
+  border: 1px solid var(--fh-border); border-radius: 14px; padding: 14px;
+  background: var(--fh-elevated); text-align: left; width: 100%; color: inherit; font: inherit;
+}
+.ticket-card.clickable { cursor: pointer; transition: border-color .15s, transform .12s; }
+.ticket-card.clickable:hover { border-color: var(--fh-accent); }
+.ticket-card.detail { margin-bottom: 8px; }
+.ticket-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; gap: 8px; }
+.ticket-id { font-size: 12.5px; font-weight: 800; color: var(--fh-accent); letter-spacing: .04em; }
+.ticket-kind { font-size: 12.5px; font-weight: 700; color: var(--fh-muted); margin-bottom: 4px; }
+
+.help-email-card {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 14px 16px; border-radius: 14px; border: 1px solid var(--fh-border);
+  background: var(--fh-elevated); text-decoration: none; color: inherit;
+  transition: border-color .15s;
+}
+.help-email-card:hover { border-color: var(--fh-accent); }
+.help-email-label { font-size: 11px; font-weight: 700; color: var(--fh-muted); text-transform: uppercase; letter-spacing: .04em; }
+.help-email-addr { font-size: 15px; font-weight: 700; color: var(--fh-accent); }
+.help-email-hint { font-size: 12px; color: var(--fh-muted); margin-top: 2px; }
+
+.grievance { border: 1px solid var(--fh-border); border-radius: 14px; padding: 16px; background: var(--fh-elevated); }
+.grievance-team { font-weight: 700; color: var(--fh-accent); margin: 0 0 8px; font-size: 13.5px; }
+.grievance-text { margin: 0 0 8px; font-size: 13px; color: var(--fh-muted); line-height: 1.5; }
+.grievance-text a { color: var(--fh-accent); font-weight: 600; }
+
+.ticket-thread { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.t-bubble { border-radius: 12px; padding: 10px 12px; font-size: 13.5px; line-height: 1.45; max-width: 92%; }
+.t-bubble.user { align-self: flex-end; background: var(--fh-bubble-mine); color: var(--fh-text); }
+.t-bubble.staff { align-self: flex-start; background: var(--fh-elevated); border: 1px solid var(--fh-border); }
+.t-meta { font-size: 11px; color: var(--fh-muted); margin-bottom: 4px; font-weight: 600; }
+.thread-hint { text-align: center; color: var(--fh-muted); font-size: 13px; }
+
+.help-success-overlay {
+  position: absolute; inset: 0; background: rgba(0,0,0,.45);
+  display: flex; align-items: center; justify-content: center; z-index: 10; padding: 20px;
+  border-radius: inherit;
+}
+.help-success-card {
+  background: var(--fh-panel); border: 1px solid var(--fh-border); border-radius: 16px;
+  padding: 24px; max-width: 360px; width: 100%; text-align: center;
+  box-shadow: var(--fh-shadow);
+}
+.help-success-icon {
+  width: 48px; height: 48px; border-radius: 50%; background: var(--fh-accent); color: #fff;
+  display: flex; align-items: center; justify-content: center; font-size: 22px; font-weight: 800;
+  margin: 0 auto 12px;
+}
+.help-success-card h3 { margin: 0 0 8px; font-size: 18px; }
+.help-success-id { font-weight: 800; color: var(--fh-accent); letter-spacing: .04em; margin: 0 0 10px; }
+.help-success-card p { font-size: 13.5px; color: var(--fh-muted); line-height: 1.45; margin: 0 0 16px; }
+.help-success-actions { display: flex; flex-direction: column; gap: 8px; }
+.help-submit.secondary {
+  background: transparent; color: var(--fh-accent); border: 1px solid var(--fh-accent);
+  text-decoration: none; display: block; text-align: center; box-sizing: border-box;
+}
 .ticket-status {
   font-size: 11px;
   text-transform: capitalize;

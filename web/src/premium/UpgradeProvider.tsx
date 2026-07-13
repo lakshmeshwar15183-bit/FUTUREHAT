@@ -1,9 +1,8 @@
-// FUTUREHAT+ — lets any component open the upgrade page. Mounts the modal once.
+// Lumixo+ — lets any component open the upgrade page. Mounts the modal once.
+// No framer-motion on the provider path (modal brings its own when opened).
 
 import { createContext, useContext, useState, useCallback, lazy, Suspense, type ReactNode } from 'react';
-import { AnimatePresence } from 'framer-motion';
 
-// Lazy: the upgrade page (feature grid + payment code) loads only when opened.
 const UpgradeModal = lazy(() => import('./UpgradeModal').then((m) => ({ default: m.UpgradeModal })));
 
 interface UpgradeCtx {
@@ -20,7 +19,7 @@ export function UpgradeProvider({ children }: { children: ReactNode }) {
     <Ctx.Provider value={{ open }}>
       {children}
       <Suspense fallback={null}>
-        <AnimatePresence>{show && <UpgradeModal onClose={() => setShow(false)} />}</AnimatePresence>
+        {show && <UpgradeModal onClose={() => setShow(false)} />}
       </Suspense>
     </Ctx.Provider>
   );

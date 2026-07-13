@@ -1,4 +1,4 @@
-// FUTUREHAT — Settings: appearance, privacy, subscription, and app info.
+// Lumixo — Settings: appearance, privacy, subscription, and app info.
 // Premium-only options are gated inline; selecting one while free opens upgrade.
 
 import { useState, useCallback, useEffect, lazy, Suspense } from 'react';
@@ -10,10 +10,18 @@ import { PremiumBadge } from './PremiumBadge';
 import { supabase } from '../supabase';
 import { getServerModerator, getMailboxUnseenCount } from '@shared/adminApi';
 import '../moderator/ModeratorDashboard.css';
-import { THEMES, FONTS, BUBBLES, WALLPAPERS, APP_ICONS } from '../theme/themes';
+import { THEMES, FONTS, BUBBLES, WALLPAPERS, APP_ICONS, applyPreferences } from '../theme/themes';
+import {
+  APPEARANCE_OPTIONS,
+  getStoredAppearanceMode,
+  setStoredAppearanceMode,
+  type AppearanceMode,
+} from '../theme/appearanceMode';
 import { modalBackdrop, modalPanel } from '../motion';
-import { APP_VERSION, OWNER } from '../branding';
+import { APP_VERSION, CREDIT, SUPPORT_EMAIL } from '../branding';
+import { LumixoCat } from '../mascot/LumixoCat';
 import { useEscapeToClose } from '../useEscapeToClose';
+import { safeCssUrl } from '../util/safeUrl';
 import './SettingsModal.css';
 
 // Settings sub-panels are lazy-loaded and rendered from within Settings itself.
@@ -27,8 +35,9 @@ const LegalModal = lazy(() => import('../legal/LegalModal').then((m) => ({ defau
 const DiagnosticsModal = lazy(() => import('../diagnostics/DiagnosticsModal').then((m) => ({ default: m.DiagnosticsModal })));
 const DataExportModal = lazy(() => import('../account/DataExportModal').then((m) => ({ default: m.DataExportModal })));
 const InviteModal = lazy(() => import('../invite/InviteModal').then((m) => ({ default: m.InviteModal })));
+const StreaksPanel = lazy(() => import('../settings/StreaksPanel').then((m) => ({ default: m.StreaksPanel })));
 
-type SubPanel = 'privacy' | 'chats' | 'account' | 'notifications' | 'storage' | 'archived' | 'legal' | 'diagnostics' | 'export' | 'invite';
+type SubPanel = 'privacy' | 'chats' | 'account' | 'notifications' | 'storage' | 'archived' | 'legal' | 'diagnostics' | 'export' | 'invite' | 'streaks';
 
 export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin, onModerator, onMailbox }: {
   onClose: () => void;
@@ -44,11 +53,28 @@ export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin, onModer
   const [sub, setSub] = useState<SubPanel | null>(null);
   const [isModerator, setIsModerator] = useState(false);
   const [unseenMail, setUnseenMail] = useState(0);
+  const [appearanceMode, setAppearanceMode] = useState<AppearanceMode>(() => getStoredAppearanceMode());
 
   useEffect(() => {
     getServerModerator(supabase).then(setIsModerator).catch(() => {});
     getMailboxUnseenCount(supabase).then(setUnseenMail).catch(() => {});
   }, []);
+
+  function chooseAppearance(mode: AppearanceMode) {
+    setAppearanceMode(mode);
+    setStoredAppearanceMode(mode);
+    // Re-apply prefs so Classic chrome picks up light/dark immediately.
+    applyPreferences(
+      {
+        theme: preferences.theme,
+        font: preferences.font,
+        bubble_style: preferences.bubble_style,
+        wallpaper: preferences.wallpaper,
+        app_icon: preferences.app_icon,
+      },
+      isPremium,
+    );
+  }
   // Escape closes the open sub-panel first, then the Settings modal itself.
   useEscapeToClose(useCallback(() => (sub ? setSub(null) : onClose()), [sub, onClose]));
 
@@ -77,20 +103,20 @@ export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin, onModer
           <div className="settings-profile">
             <div
               className="avatar avatar-wrap settings-avatar"
-              style={profile?.avatar_url ? { backgroundImage: `url(${profile.avatar_url})`, backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
+              style={safeCssUrl(profile?.avatar_url) ? { backgroundImage: safeCssUrl(profile?.avatar_url), backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
             >
               {!profile?.avatar_url && (profile?.display_name?.[0]?.toUpperCase() || '?')}
             </div>
             <div className="settings-profile-meta">
               <div className="settings-profile-name">
-                {profile?.display_name || 'FUTUREHAT user'}
+                {profile?.display_name || 'Lumixo user'}
                 {isPremium && <PremiumBadge compact />}
-                {isModerator && !isAdmin && <span className="mod-badge" title="FUTUREHAT Moderator">🛡 MOD</span>}
+                {isModerator && !isAdmin && <span className="mod-badge" title="Lumixo Moderator">🛡 MOD</span>}
                 {isAdmin && <span className="dev-badge">DEV</span>}
               </div>
               {profile?.username && <div className="settings-profile-handle">@{profile.username}</div>}
               <div className="membership-sub">
-                {isAdmin ? 'FUTUREHAT+ · Lifetime membership' : isPremium ? 'FUTUREHAT+ member' : 'Free plan'}
+                {isAdmin ? 'Lumixo+ · Lifetime membership' : isPremium ? 'Lumixo+ member' : 'Free plan'}
               </div>
             </div>
           </div>
@@ -103,10 +129,10 @@ export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin, onModer
               <div className="membership-label">
                 Membership {isPremium && <PremiumBadge compact />}
                 {isAdmin && <span className="dev-badge">DEV</span>}
-                {!isPremium && !isAdmin && <span className="soon-tag">FUTUREHAT+ · Available soon</span>}
+                {!isPremium && !isAdmin && <span className="soon-tag">Lumixo+ · Available soon</span>}
               </div>
               <div className="membership-sub">
-                {isAdmin ? 'Developer · lifetime FUTUREHAT+ + Admin' : isPremium ? 'FUTUREHAT+ active' : 'Free plan · premium launching soon'}
+                {isAdmin ? 'Developer · lifetime Lumixo+ + Admin' : isPremium ? 'Lumixo+ active' : 'Free plan · premium launching soon'}
               </div>
             </div>
             <button className="settings-cta" onClick={openUpgrade}>
@@ -120,9 +146,27 @@ export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin, onModer
 
         {/* Appearance */}
         <section className="settings-section">
-          <h3>🎨 Appearance {!isPremium && <span className="lock-hint">premium</span>}</h3>
+          <h3>🎨 Appearance</h3>
 
-          <label className="setting-label">Theme</label>
+          <label className="setting-label">Display mode</label>
+          <div className="chip-row">
+            {APPEARANCE_OPTIONS.map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                className={`pill ${appearanceMode === opt.id ? 'active' : ''}`}
+                onClick={() => chooseAppearance(opt.id)}
+                title={opt.sub}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <p className="setting-hint" style={{ marginTop: 6, opacity: 0.75, fontSize: 12 }}>
+            Default is Follow System (like WhatsApp). Light and Dark are optional overrides you choose here.
+          </p>
+
+          <label className="setting-label">Color theme {!isPremium && <span className="lock-hint">premium</span>}</label>
           <div className="chip-row">
             {themeList.map((t) => (
               <button key={t.id}
@@ -175,14 +219,16 @@ export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin, onModer
           </div>
 
           <label className="setting-label">App icon</label>
+          <p className="hint" style={{ marginTop: 0 }}>Current: {APP_ICONS.find((x) => x.id === preferences.app_icon)?.label ?? 'Icon 1'}. App name stays Lumixo.</p>
           <div className="chip-row">
             {APP_ICONS.map((a) => (
               <button key={a.id}
-                className={`icon-swatch ${preferences.app_icon === a.id ? 'active' : ''} ${a.premium && !isPremium ? 'locked' : ''}`}
-                onClick={() => choose('app_icon', a.id, a.premium)}
-                title={a.label}>
+                className={`icon-swatch ${preferences.app_icon === a.id ? 'active' : ''}`}
+                onClick={() => choose('app_icon', a.id, false)}
+                title={a.label}
+                style={{ background: a.color, color: '#fff', minWidth: 64 }}>
                 <span className="icon-glyph">{a.glyph}</span>
-                {a.premium && !isPremium && <span className="swatch-lock">🔒</span>}
+                <span style={{ fontSize: 10, display: 'block' }}>{a.label}</span>
               </button>
             ))}
           </div>
@@ -201,7 +247,7 @@ export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin, onModer
           <div className="toggle-row" onClick={() => toggle('app_lock')}>
             <div>
               <div className="toggle-name">🔐 App lock</div>
-              <div className="toggle-sub">Require a PIN / Face ID when opening FUTUREHAT</div>
+              <div className="toggle-sub">Require a PIN / Face ID when opening Lumixo</div>
             </div>
             <span className={`switch ${isPremium && preferences.app_lock ? 'on' : ''}`}><i /></span>
           </div>
@@ -220,6 +266,7 @@ export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin, onModer
         <section className="settings-section">
           <h3>💬 Chats &amp; data</h3>
           <button className="settings-link" onClick={() => setSub('chats')}>Chat settings →</button>
+          <button className="settings-link" onClick={() => setSub('streaks')}>🎏 Streaks →</button>
           <button className="settings-link" onClick={() => setSub('archived')}>Archived chats →</button>
           <button className="settings-link" onClick={() => setSub('storage')}>Storage &amp; data →</button>
           <button className="settings-link" onClick={() => setSub('export')}>Export my data →</button>
@@ -257,10 +304,14 @@ export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin, onModer
         {/* About */}
         <section className="settings-section about">
           <h3>ℹ️ About</h3>
-          <div className="about-row"><span>App</span><span>FUTUREHAT</span></div>
+          <div className="about-mascot" aria-hidden>
+            <LumixoCat mood="wave" size="sm" decorative />
+          </div>
+          <div className="about-row"><span>App</span><span>Lumixo</span></div>
+          <div className="about-row"><span>Mascot</span><span>Lumi</span></div>
           <div className="about-row"><span>Version</span><span>{APP_VERSION}</span></div>
-          <div className="about-row"><span>Developer</span><span>{OWNER}</span></div>
-          <div className="about-credit">Developed by {OWNER}</div>
+          <div className="about-row"><span>Support</span><span><a href={`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent('Lumixo Support Request')}`}>{SUPPORT_EMAIL}</a></span></div>
+          <div className="about-credit">{CREDIT}</div>
         </section>
       </motion.div>
     </motion.div>
@@ -273,6 +324,7 @@ export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin, onModer
         {sub === 'notifications' && <NotificationSettingsModal onClose={() => setSub(null)} />}
         {sub === 'storage' && <StorageSettingsModal onClose={() => setSub(null)} />}
         {sub === 'archived' && <ArchivedChatsModal onClose={() => setSub(null)} />}
+        {sub === 'streaks' && <StreaksPanel onClose={() => setSub(null)} />}
         {sub === 'legal' && <LegalModal onClose={() => setSub(null)} />}
         {sub === 'diagnostics' && <DiagnosticsModal onClose={() => setSub(null)} />}
         {sub === 'export' && <DataExportModal onClose={() => setSub(null)} />}
