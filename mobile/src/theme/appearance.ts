@@ -181,7 +181,13 @@ export const WALLPAPERS: Wallpaper[] = [
   { id: 'plum', label: 'Plum', premium: true, color: '#1A0F1E' },
 ];
 
-/** Resolve the palette for a color-theme id, gated by premium (web parity). */
+/**
+ * Resolve the palette for a color-theme id, gated by premium (web parity).
+ *
+ * Named premium themes ship as dark palettes. When the active mode is light,
+ * do NOT replace the whole light UI with a dark theme (that felt like the app
+ * "automatically switched to dark"). Only tint brand/primary accents.
+ */
 export function resolveThemePalette(
   themeId: string,
   base: Palette,
@@ -190,6 +196,14 @@ export function resolveThemePalette(
   const t = COLOR_THEMES[themeId];
   if (!t || !t.palette) return base;
   if (t.premium && !isPremium) return base;
+  // Light / system-light: keep light surfaces; apply brand tint only.
+  if (base.isLight) {
+    return {
+      ...base,
+      primary: t.palette.primary,
+      primaryDark: t.palette.primaryDark,
+    };
+  }
   return t.palette;
 }
 

@@ -15,6 +15,7 @@ import { palettes, type Palette, type ThemeMode } from './palettes';
 import {
   DEFAULT_THEME_PREFERENCE,
   resolveThemeMode,
+  normalizeSystemScheme,
   isValidThemePreference,
   type ThemePreference,
 } from './themeMode';
@@ -49,19 +50,29 @@ interface ThemeContextValue {
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
+function readOsScheme(
+  hookValue?: ColorSchemeName | null,
+): 'light' | 'dark' {
+  // Prefer the live hook, then Appearance. Null/undefined → light (never invent dark).
+  const raw = hookValue ?? Appearance.getColorScheme();
+  return normalizeSystemScheme(raw);
+}
+
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   // Live system scheme — updates when the user toggles OS appearance.
   const systemFromHook = useColorScheme();
-  const [systemScheme, setSystemScheme] = useState<ColorSchemeName>(() => Appearance.getColorScheme());
+  const [systemScheme, setSystemScheme] = useState<'light' | 'dark'>(() =>
+    readOsScheme(Appearance.getColorScheme()),
+  );
 
   // Keep in sync with Appearance API (belt + useColorScheme for all platforms).
   useEffect(() => {
-    setSystemScheme(systemFromHook ?? Appearance.getColorScheme());
+    setSystemScheme(readOsScheme(systemFromHook));
   }, [systemFromHook]);
 
   useEffect(() => {
     const sub = Appearance.addChangeListener(({ colorScheme }) => {
-      setSystemScheme(colorScheme);
+      setSystemScheme(readOsScheme(colorScheme));
     });
     return () => sub.remove();
   }, []);

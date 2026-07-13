@@ -20,12 +20,13 @@ describe('resolveThemeMode', () => {
     expect(resolveThemeMode('system', 'light')).toBe('light');
   });
 
-  it('follows system dark', () => {
+  it('follows system dark only when OS reports dark', () => {
     expect(resolveThemeMode('system', 'dark')).toBe('dark');
   });
 
-  it('treats null system as dark (safe OLED default)', () => {
-    expect(resolveThemeMode('system', null)).toBe('dark');
+  it('treats null/undefined system as light (OEM-safe; phone light must stay light)', () => {
+    expect(resolveThemeMode('system', null)).toBe('light');
+    expect(resolveThemeMode('system', undefined)).toBe('light');
   });
 
   it('honors forced light/dark/amoled (user Settings choice)', () => {
@@ -68,5 +69,14 @@ describe('default preference source contract', () => {
       'utf8',
     );
     expect(src).toMatch(/"userInterfaceStyle":\s*"automatic"/);
+  });
+
+  it('does not force dark premium palettes over light mode', () => {
+    const src = fs.readFileSync(
+      path.join(__dirname, '../../theme/appearance.ts'),
+      'utf8',
+    );
+    expect(src).toMatch(/base\.isLight/);
+    expect(src).toMatch(/keep light surfaces|Light \/ system-light/i);
   });
 });

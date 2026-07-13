@@ -30,6 +30,7 @@ export {
 } from './ThemeContext';
 export {
   resolveThemeMode,
+  normalizeSystemScheme,
   isValidThemePreference,
   type ThemePreference,
 } from './themeMode';
