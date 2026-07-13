@@ -15,10 +15,12 @@ import {
   blockUser, unblockUser, getBlockedIds, submitReport,
   muteConversation, unmuteConversation, getMutedIds,
 } from '@shared/supportApi';
-import { getSharedMedia, getDisappearing, setConversationDisappearing, isVideoMessage } from '@shared/api';
+import { getSharedMedia, getDisappearing, setConversationDisappearing, isVideoMessage, resolveDisplayName, resolveUsernameHandle } from '@shared/api';
 import { getLockedIds, lockConversation, unlockConversation } from '@shared/chatLockApi';
 import { deviceAuth } from '../lib/deviceAuth';
 import type { Profile, Message } from '@shared/types';
+import { getNickname, setNickname } from '../lib/nicknames';
+import { useAuth } from '../AuthContext';
 import { MediaLightbox, type MediaItem } from '../media/MediaLightbox';
 import '../media/MediaLightbox.css';
 import { formatDistanceToNow } from 'date-fns';
@@ -38,10 +40,14 @@ interface Props {
 }
 
 export function ContactProfileModal({ profile, online, isPremium, conversationId, onClose, onMessage, onCall, onVideo }: Props) {
+  const { profile: me } = useAuth();
   const [blocked, setBlocked] = useState(false);
   const [muted, setMuted] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [nickname, setNickState] = useState<string | null>(() =>
+    me?.id ? getNickname(me.id, profile.id) : null,
+  );
   const [media, setMedia] = useState<Message[]>([]);
   const [lightbox, setLightbox] = useState<string | null>(null);
   // Disappearing messages (0022): per-chat timer, 0 = off else 3600..28800 (1–8h).
@@ -121,10 +127,28 @@ export function ContactProfileModal({ profile, online, isPremium, conversationId
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose, lightbox]);
 
+  const displayName = resolveDisplayName(profile, {
+    nickname,
+    fallback: 'Contact',
+  });
+  const handle = resolveUsernameHandle(profile);
+
+  function editNickname() {
+    if (!me?.id) return;
+    const next = prompt(
+      nickname ? 'Edit nickname (empty to remove)' : 'Add nickname — only you will see this',
+      nickname ?? '',
+    );
+    if (next === null) return; // cancelled
+    const map = setNickname(me.id, profile.id, next);
+    setNickState(map[profile.id] ?? null);
+    flash(map[profile.id] ? 'Nickname saved' : 'Nickname removed');
+  }
+
   async function toggleBlock() {
     setMenuOpen(false);
     const was = blocked;
-    if (!was && !confirm(`Block ${profile.display_name || 'this user'}?`)) return;
+    if (!was && !confirm(`Block ${displayName}?`)) return;
     setBlocked(!was);
     const { error } = was ? await unblockUser(supabase, profile.id) : await blockUser(supabase, profile.id);
     if (error) { setBlocked(was); flash('Could not update block.'); }
@@ -149,8 +173,8 @@ export function ContactProfileModal({ profile, online, isPremium, conversationId
 
   function shareContact() {
     setMenuOpen(false);
-    const handle = profile.username ? `@${profile.username}` : profile.id.slice(0, 8);
-    const text = `${profile.display_name || 'Lumixo user'} (${handle}) on Lumixo`;
+    const h = handle || profile.id.slice(0, 8);
+    const text = `${displayName} (${h}) on Lumixo`;
     if (navigator.share) navigator.share({ title: 'Lumixo contact', text }).catch(() => {});
     else { navigator.clipboard?.writeText(text).then(() => flash('Contact copied')).catch(() => flash('Copy failed')); }
   }
@@ -176,15 +200,21 @@ export function ContactProfileModal({ profile, online, isPremium, conversationId
 
         <div className="contact-hero">
           <div className="contact-avatar" style={safeCssUrl(profile.avatar_url) ? { backgroundImage: safeCssUrl(profile.avatar_url) } : undefined}>
-            {!safeMediaSrc(profile.avatar_url) && (profile.display_name?.[0]?.toUpperCase() || '?')}
+            {!safeMediaSrc(profile.avatar_url) && (displayName[0]?.toUpperCase() || '?')}
             {online && <span className="contact-online-dot" />}
             {disappearSecs > 0 && <span className="contact-disappear-badge" title="Disappearing messages on">⏳</span>}
           </div>
           <div className="contact-name">
-            {profile.display_name || 'Lumixo user'}
+            {displayName}
             {isPremium && <span className="contact-badge" title="Lumixo+">✦</span>}
             {isModerator && <span className="mod-badge" title="Lumixo Moderator">🛡 MOD</span>}
           </div>
+          {nickname && (
+            <div className="contact-presence" style={{ opacity: 0.85 }}>
+              {resolveDisplayName(profile, { fallback: handle || 'Contact' })}
+              {handle ? ` · ${handle}` : ''}
+            </div>
+          )}
           <div className="contact-presence">{presence}</div>
         </div>
 
@@ -196,8 +226,19 @@ export function ContactProfileModal({ profile, online, isPremium, conversationId
         </div>
 
         <div className="contact-fields">
-          {profile.username && (
-            <div className="contact-field"><div className="contact-field-val">@{profile.username}</div><div className="contact-field-label">Username</div></div>
+          <button
+            type="button"
+            className="contact-field"
+            onClick={editNickname}
+            style={{ width: '100%', textAlign: 'left', cursor: 'pointer', border: 'none', background: 'inherit', font: 'inherit', color: 'inherit' }}
+          >
+            <div className="contact-field-val">{nickname || 'Add nickname'}</div>
+            <div className="contact-field-label">
+              {nickname ? 'Nickname · only you see this' : 'Nickname · private to you'}
+            </div>
+          </button>
+          {handle && (
+            <div className="contact-field"><div className="contact-field-val">{handle}</div><div className="contact-field-label">Username</div></div>
           )}
           {profile.about && (
             <div className="contact-field"><div className="contact-field-val">{profile.about}</div><div className="contact-field-label">About</div></div>

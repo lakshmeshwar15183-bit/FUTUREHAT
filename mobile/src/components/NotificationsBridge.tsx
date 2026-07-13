@@ -19,6 +19,7 @@ import {
   getProfile,
   sendMessage,
   markConversationRead,
+  markMessageAsDelivered,
   getNotificationSettings,
   muteConversation,
   archiveConversation,
@@ -482,6 +483,14 @@ export default function NotificationsBridge({
           sentAt: data.sentAt,
           messageId: data.messageId,
         });
+      }
+      // Device received the push → mark delivered (sender gets grey ✓✓).
+      // Works for background/killed; open-chat still upgrades to read separately.
+      if (
+        data.messageId &&
+        (data.type === 'message' || data.type === 'mention' || data.kind === 'message' || data.kind === 'group' || data.kind === 'mention')
+      ) {
+        markMessageAsDelivered(supabase, data.messageId).catch(() => {});
       }
       if (data.sentAt && (data.type === 'call' || data.kind === 'call')) {
         void recordDelivery({ kind: 'call', sentAt: data.sentAt, callId: data.callId });

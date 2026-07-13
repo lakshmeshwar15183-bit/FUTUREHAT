@@ -29,6 +29,7 @@ import { supabase } from '../lib/supabase';
 import {
   getCurrentUser,
   getProfile,
+  resolveDisplayName,
   createCall,
   updateCallStatus,
   subscribeToIncomingCalls,
@@ -131,7 +132,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
         void presentCallNotification({
           callId: call.id,
           conversationId: call.conversation_id,
-          title: peer?.display_name ?? 'Lumixo',
+          title: resolveDisplayName(peer, { fallback: 'Lumixo' }),
           video: call.type === 'video',
           avatarUrl: peer?.avatar_url ?? undefined,
         });
@@ -156,7 +157,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
           void presentMissedCallNotification({
             callId: call.id,
             conversationId: call.conversation_id,
-            title: peer?.display_name ?? 'Someone',
+            title: resolveDisplayName(peer, { fallback: 'Someone' }),
             isVideo: call.type === 'video',
           });
           setIncoming((cur) => (cur?.call.id === call.id ? null : cur));
@@ -289,7 +290,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
         void sendPush(supabase, {
           conversationId,
           kind: 'call',
-          title: meProfile?.display_name ?? 'Lumixo',
+          title: resolveDisplayName(meProfile, { fallback: 'Lumixo' }),
           body: type === 'video' ? 'Incoming video call' : 'Incoming voice call',
           data: {
             callId: call.id,
@@ -517,9 +518,9 @@ function IncomingCallView({
         Incoming {type === 'video' ? 'video' : 'voice'} call
       </Text>
       <Animated.View style={{ transform: [{ scale: pulse }] }}>
-        <Avatar uri={peer?.avatar_url} name={peer?.display_name} size={128} />
+        <Avatar uri={peer?.avatar_url} name={resolveDisplayName(peer, { fallback: 'Contact' })} size={128} />
       </Animated.View>
-      <Text style={styles.peerName}>{peer?.display_name ?? 'Lumixo user'}</Text>
+      <Text style={styles.peerName}>{resolveDisplayName(peer, { fallback: 'Contact' })}</Text>
       <Text style={styles.incomingHint}>Lumixo · end-to-end media (DTLS/SRTP)</Text>
       <View style={styles.ringActions}>
         <CircleButton icon="call" color="#2BD167" label="Accept" onPress={onAccept} />
@@ -597,7 +598,7 @@ function ActiveCallView({
         void presentOngoingCallNotification({
           callId: call.callId,
           conversationId: call.conversationId,
-          title: call.peer?.display_name ?? 'Call',
+          title: resolveDisplayName(call.peer, { fallback: 'Call' }),
           video: call.type === 'video',
           connected: true,
         });
@@ -613,7 +614,7 @@ function ActiveCallView({
     void presentOngoingCallNotification({
       callId: call.callId,
       conversationId: call.conversationId,
-      title: call.peer?.display_name ?? 'Call',
+      title: resolveDisplayName(call.peer, { fallback: 'Call' }),
       video: call.type === 'video',
       connected: false,
     });
@@ -840,7 +841,7 @@ function ActiveCallView({
               />
             ) : (
               <View style={styles.bubbleVideoPlaceholder}>
-                <Avatar uri={call.peer?.avatar_url} name={call.peer?.display_name} size={44} />
+                <Avatar uri={call.peer?.avatar_url} name={resolveDisplayName(call.peer, { fallback: 'Contact' })} size={44} />
               </View>
             )}
             <View style={styles.bubbleOverlayBar}>
@@ -864,10 +865,10 @@ function ActiveCallView({
           </Pressable>
         ) : (
           <Pressable style={styles.bubblePill} onPress={() => setMinimized(false)}>
-            <Avatar uri={call.peer?.avatar_url} name={call.peer?.display_name} size={36} />
+            <Avatar uri={call.peer?.avatar_url} name={resolveDisplayName(call.peer, { fallback: 'Contact' })} size={36} />
             <View style={{ flex: 1 }}>
               <Text style={styles.bubblePeer} numberOfLines={1}>
-                {call.peer?.display_name ?? 'Call'}
+                {resolveDisplayName(call.peer, { fallback: 'Call' })}
               </Text>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                 {connected && <NetBars q={netQuality} size={3} />}
@@ -910,7 +911,7 @@ function ActiveCallView({
           />
         ) : (
           <View style={styles.audioBg}>
-            <Avatar uri={call.peer?.avatar_url} name={call.peer?.display_name} size={140} />
+            <Avatar uri={call.peer?.avatar_url} name={resolveDisplayName(call.peer, { fallback: 'Contact' })} size={140} />
             {showVideo && connected && !remoteHasVideo && (
               <Text style={styles.waitingVideo}>Waiting for video…</Text>
             )}
@@ -955,7 +956,7 @@ function ActiveCallView({
       </View>
 
       <View style={[styles.callHeader, { top: insets.top + 16 }]} pointerEvents="none">
-        <Text style={styles.callPeer}>{call.peer?.display_name ?? 'Lumixo user'}</Text>
+        <Text style={styles.callPeer}>{resolveDisplayName(call.peer, { fallback: 'Contact' })}</Text>
         <Text style={styles.callStatus}>{status}</Text>
         {!!pathLabel && connected && !reconnecting && (
           <Text style={styles.pathLabel}>{pathLabel}</Text>

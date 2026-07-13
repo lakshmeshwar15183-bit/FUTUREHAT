@@ -179,6 +179,13 @@ export interface ConversationSummary {
   unreadCount: number;
   title: string;
   avatarUrl: string | null;
+  /**
+   * Outbound tick for `lastMessage` when the current user sent it.
+   * Derived from message_receipts via shared/messageStatus (single source of truth).
+   * Null/undefined when last message is not mine / missing / system. Defaults to
+   * 'sent' when mine and no recipient receipts yet — never invent 'delivered'.
+   */
+  lastMessageTick?: 'sending' | 'sent' | 'delivered' | 'read' | 'failed' | null;
 }
 
 // ── Premium (Lumixo+) ──────────────────────────────────────────────────────
@@ -495,8 +502,28 @@ export interface AdminGlobalSearch {
   users: AdminUserSummary[];
   communities: Array<{ id: UUID; name: string; description: string | null; owner_id: UUID; created_at: string }>;
   channels: Array<{ id: UUID; name: string; kind: string; community_id: UUID }>;
-  messages: Array<{ id: UUID; conversation_id: UUID; sender_id: UUID; type: string; content: string | null; created_at: string }>;
-  reports: Array<{ id: UUID; target_type: string; target_id: UUID; reason: string; status: string; created_at: string }>;
+  messages: Array<{
+    id: UUID;
+    conversation_id: UUID;
+    sender_id: UUID;
+    type: string;
+    content: string | null;
+    created_at: string;
+    is_deleted?: boolean;
+  }>;
+  reports: Array<{
+    id: UUID;
+    target_type: string;
+    target_id: UUID;
+    reason: string;
+    status: string;
+    created_at: string;
+    message_id?: UUID | null;
+    conversation_id?: UUID | null;
+    reported_user_id?: UUID | null;
+  }>;
+  /** Chat / conversation hits (by id or name). */
+  conversations?: Array<{ id: UUID; type: string; name: string | null; created_at: string }>;
 }
 
 // ── Message reporting (0017) ────────────────────────────────────────────────
@@ -519,6 +546,8 @@ export interface AdminReport {
   target_id: UUID;
   message_id: UUID | null;
   conversation_id: UUID | null;
+  /** Alias of conversation_id for dashboard labels ("Chat ID"). */
+  chat_id?: UUID | null;
   reporter_id: UUID;
   reported_user_id: UUID | null;
   reason: ReportReason;
@@ -532,6 +561,10 @@ export interface AdminReport {
   reviewed_by: UUID | null;
   message_content: string | null;
   message_exists: boolean;
+  /** text | image | video | audio | file | system … */
+  message_type?: string | null;
+  message_created_at?: string | null;
+  message_media_url?: string | null;
   reporter_username: string | null;
   reporter_name: string | null;
   reporter_avatar: string | null;
@@ -540,6 +573,25 @@ export interface AdminReport {
   reported_avatar: string | null;
   conversation_type: string | null;
   conversation_name: string | null;
+  /** Human label: group name or DM peer(s) — "Receiver / Group". */
+  conversation_label?: string | null;
+}
+
+/** One row from admin_list_deleted_messages() — admin-deleted content trail. */
+export interface AdminDeletedMessage {
+  message_id: string;
+  deleted_by: UUID | null;
+  deleted_by_name: string | null;
+  deleted_by_username: string | null;
+  deleted_at: string;
+  reason: string | null;
+  report_id: string | null;
+  message_type: string | null;
+  conversation_id: string | null;
+  sender_id: string | null;
+  restorable: boolean;
+  message_row_exists: boolean;
+  still_deleted: boolean;
 }
 
 // ── Moderator system (0023) ─────────────────────────────────────────────────

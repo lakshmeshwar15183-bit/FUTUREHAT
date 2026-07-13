@@ -11,12 +11,17 @@ import { useCall } from './calls/CallContext';
 import { PremiumBadge } from './premium/PremiumBadge';
 import { supabase } from './supabase';
 import {
-  getMessages, sendMessage, subscribeToMessages, markMessageAsRead, uploadMedia,
+  getMessages, sendMessage, subscribeToMessages, markMessageAsRead, markMessageAsDelivered,
+  markMessagesAsDelivered, uploadMedia,
   getReceipts, subscribeToReceipts, getReactions, toggleReaction, subscribeToReactions,
   createTypingChannel, editMessage, deleteMessage, forwardMessage, getMyConversations,
   messageMatchesKind, messageExpired, nextMessageExpiry, purgeExpiredMessages, getDisappearing, type SearchKind,
   markViewOnceSeen, getViewOnceState,
+  buildTickMap, applyReceiptToTickMap, computeOutboundTick, tickGlyph, tickIsRead,
+  resolveDisplayName,
+  type TickStatus,
 } from '@shared/api';
+import { getNickname } from './lib/nicknames';
 import { sendPush } from '@shared/pushApi';
 import { scheduleMessage, getScheduledMessages, dispatchDueMessages } from '@shared/premiumApi';
 import { createPoll, getPolls } from '@shared/communitiesApi';
@@ -38,7 +43,7 @@ import {
   LockIcon,
 } from './Icons';
 import { FREE_LIMITS, PREMIUM_LIMITS } from '@shared/premium/features';
-import type { ConversationSummary, Message, MessageReceipt, MessageReaction, ParticipantRole } from '@shared/types';
+import type { ConversationSummary, Message, MessageReaction, ParticipantRole } from '@shared/types';
 import { formatDistanceToNow, format, isToday, isYesterday, isSameDay } from 'date-fns';
 import { spring } from './motion';
 import { STICKERS } from './premium/stickers';
@@ -94,13 +99,23 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
   const isGroup = conversation.conversation.type === 'group';
   const ghost = isPremium && preferences.ghost_mode;
   const otherUser = conversation.participants.find((p) => p.id !== profile?.id);
+  const peerNick = profile?.id && otherUser?.id && !isGroup
+    ? getNickname(profile.id, otherUser.id)
+    : null;
+  const chatTitle = isGroup
+    ? (conversation.title || 'Group')
+    : resolveDisplayName(otherUser, {
+        nickname: peerNick,
+        fallback: conversation.title,
+      });
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [lightboxId, setLightboxId] = useState<string | null>(null);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [receipts, setReceipts] = useState<MessageReceipt[]>([]);
+  /** messageId → outbound TickStatus (shared messageStatus engine). */
+  const [tickMap, setTickMap] = useState<Map<string, TickStatus>>(() => new Map());
   const [reactions, setReactions] = useState<MessageReaction[]>([]);
   const [typingUsers, setTypingUsers] = useState<Record<string, string>>({});
   const [pickerFor, setPickerFor] = useState<string | null>(null);
@@ -204,7 +219,7 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
 
   useEffect(() => {
     let active = true;
-    setMessages([]); setReceipts([]); setReactions([]); setTypingUsers({});
+    setMessages([]); setTickMap(new Map()); setReactions([]); setTypingUsers({});
     setSuggestions([]); setSummary(null); setReplyTo(null); setEditing(null);
     setPolls([]); setPollComposerOpen(false);
     setSearchOpen(false); setSearchTerm('');
@@ -224,9 +239,17 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
       );
       setMessages(merged);
       const ids = msgs.map((m) => m.id);
-      setReceipts(await getReceipts(supabase, ids));
+      const rc = await getReceipts(supabase, ids);
+      const mineIds = msgs.filter((m) => m.sender_id === profile?.id).map((m) => m.id);
+      setTickMap(buildTickMap(rc, profile?.id, mineIds));
       setReactions(await getReactions(supabase, ids));
-      if (!ghostRef.current) msgs.forEach((m) => { if (m.sender_id !== profile?.id) void markMessageAsRead(supabase, m.id).catch(() => {}); });
+      const incomingIds = msgs.filter((m) => m.sender_id !== profile?.id).map((m) => m.id);
+      if (incomingIds.length) {
+        void markMessagesAsDelivered(supabase, incomingIds).catch(() => {});
+        if (!ghostRef.current) {
+          incomingIds.forEach((id) => { void markMessageAsRead(supabase, id).catch(() => {}); });
+        }
+      }
       void flushOutbox();
     })().catch(() => {});
 
@@ -263,15 +286,15 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
         setMessages((prev) => (prev.some((m) => m.id === newMsg.id) ? prev : [...prev, newMsg]));
         // A 'system' notice means the disappearing timer was just changed — refresh it.
         if (newMsg.type === 'system') getDisappearing(supabase, convId).then((s) => { if (active) setDisappearSecs(s); }).catch(() => {});
-        if (!ghostRef.current && newMsg.sender_id !== profile?.id) void markMessageAsRead(supabase, newMsg.id).catch(() => {});
+        if (newMsg.sender_id !== profile?.id) {
+          void markMessageAsDelivered(supabase, newMsg.id).catch(() => {});
+          if (!ghostRef.current) void markMessageAsRead(supabase, newMsg.id).catch(() => {});
+        }
       },
       (updated) => setMessages((prev) => prev.map((m) => (m.id === updated.id ? updated : m))),
     );
     const receiptChannel = subscribeToReceipts(supabase, convId, (r) => {
-      setReceipts((prev) => {
-        const rest = prev.filter((p) => !(p.message_id === r.message_id && p.user_id === r.user_id));
-        return [...rest, r];
-      });
+      setTickMap((prev) => applyReceiptToTickMap(prev, r, profile?.id));
     });
     const reactionChannel = subscribeToReactions(supabase, convId, () => {
       getReactions(supabase, messagesRef.current.map((m) => m.id)).then((rs) => { if (active) setReactions(rs); }).catch(() => {});
@@ -311,11 +334,16 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
   }, [messages, typingUsers]);
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), 2600); return () => clearTimeout(t); }, [toast]);
 
-  const readMessageIds = useMemo(() => {
-    const set = new Set<string>();
-    for (const r of receipts) if (r.status === 'read' && r.user_id !== profile?.id) set.add(r.message_id);
-    return set;
-  }, [receipts, profile?.id]);
+  /** Outbound tick for a message I sent — shared with chat-list previews. */
+  function outboundTick(msg: Message): TickStatus {
+    return computeOutboundTick({
+      messageId: msg.id,
+      pending: msg.pending,
+      failed: !!(msg as { failed?: boolean }).failed,
+      senderId: profile?.id,
+      tickMap,
+    });
+  }
 
   const reactionsByMessage = useMemo(() => {
     const map: Record<string, { emoji: string; count: number; mine: boolean }[]> = {};
@@ -563,7 +591,12 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
   // ── AI ───────────────────────────────────────────────────────────────────────
   function transcript(): string {
     return messages.slice(-20).filter((m) => !m.is_deleted).map((m) => {
-      const who = m.sender_id === profile?.id ? 'Me' : (conversation.participants.find((p) => p.id === m.sender_id)?.display_name || 'Them');
+      const who = m.sender_id === profile?.id
+        ? 'Me'
+        : resolveDisplayName(
+            conversation.participants.find((p) => p.id === m.sender_id),
+            { fallback: 'Contact' },
+          );
       return `${who}: ${m.content ?? '[media]'}`;
     }).join('\n');
   }
@@ -747,7 +780,12 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
       url: m.media_url!,
       kind: m.type === 'image' ? ('image' as const) : ('video' as const),
       caption: m.content || undefined,
-      sender: m.sender_id === profile?.id ? 'You' : (conversation.participants.find((p) => p.id === m.sender_id)?.display_name || undefined),
+      sender: m.sender_id === profile?.id
+        ? 'You'
+        : resolveDisplayName(
+            conversation.participants.find((p) => p.id === m.sender_id),
+            { fallback: 'Contact' },
+          ),
       time: clockTime(m.created_at),
     })), [messages, profile?.id, conversation.participants]);
   const lightboxIndex = lightboxId ? mediaItems.findIndex((x) => x.id === lightboxId) : -1;
@@ -787,7 +825,7 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
           }}
         >
           <div className="chat-title">
-            {isGroup ? groupTitle : conversation.title}{isOtherPremium && <PremiumBadge compact />}
+            {isGroup ? groupTitle : chatTitle}{isOtherPremium && <PremiumBadge compact />}
             {disappearSecs > 0 && <span className="chat-disappear-mark" title="Disappearing messages on">⏳</span>}
           </div>
           <div className={`chat-subtitle ${typingNames.length ? 'typing' : ''}`}>{subtitle}</div>
@@ -795,9 +833,9 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
         {!isGroup && (
           <>
             <button className="header-icon-btn call" title="Voice call" aria-label="Start voice call" disabled={callBusy}
-              onClick={() => startCall(convId, 'audio', otherUser?.display_name || conversation.title)}><PhoneIcon size={20} /></button>
+              onClick={() => startCall(convId, 'audio', chatTitle)}><PhoneIcon size={20} /></button>
             <button className="header-icon-btn call" title="Video call" aria-label="Start video call" disabled={callBusy}
-              onClick={() => startCall(convId, 'video', otherUser?.display_name || conversation.title)}><VideoIcon size={20} /></button>
+              onClick={() => startCall(convId, 'video', chatTitle)}><VideoIcon size={20} /></button>
           </>
         )}
         {isGroup && (
@@ -928,7 +966,11 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
                 id={`m-${msg.id}`}
                 className={`message ${isMine ? 'mine' : 'theirs'} ${grouped ? 'grouped' : ''} ${isMatch ? 'search-match' : ''} ${isActiveMatch ? 'search-match-active' : ''}`}
               >
-                {!isMine && isGroup && !msg.is_deleted && !grouped && <div className="message-sender">{sender?.display_name || 'Unknown'}</div>}
+                {!isMine && isGroup && !msg.is_deleted && !grouped && (
+                  <div className="message-sender">
+                    {resolveDisplayName(sender, { fallback: 'Contact' })}
+                  </div>
+                )}
                 <div className="message-row">
                   <div className={`message-bubble ${msg.is_deleted ? 'deleted' : ''}`} {...bubbleHoldHandlers(msg.id, !!msg.is_deleted)}>
                     {msg.is_deleted ? (
@@ -939,7 +981,12 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
                         {replied && (
                           <div className="reply-quote">
                             <span className="reply-quote-name">
-                              {replied.sender_id === profile?.id ? 'You' : (conversation.participants.find((p) => p.id === replied.sender_id)?.display_name || 'Unknown')}
+                              {replied.sender_id === profile?.id
+                                ? 'You'
+                                : resolveDisplayName(
+                                    conversation.participants.find((p) => p.id === replied.sender_id),
+                                    { fallback: 'Contact' },
+                                  )}
                             </span>
                             <span className="reply-quote-text">{replied.content || '[media]'}</span>
                           </div>
@@ -969,11 +1016,14 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
                           {starredIds.has(msg.id) && <StarIcon size={11} filled className="msg-star" />}
                           {msg.edited_at && <span className="edited-tag">edited</span>}
                           {clockTime(msg.created_at)}
-                          {isMine && (
-                            <span className={`read-receipt ${readMessageIds.has(msg.id) ? 'read' : ''}`}>
-                              {readMessageIds.has(msg.id) ? '✓✓' : '✓'}
-                            </span>
-                          )}
+                          {isMine && (() => {
+                            const t = outboundTick(msg);
+                            return (
+                              <span className={`read-receipt${tickIsRead(t) ? ' read' : ''}`} aria-label={t}>
+                                {tickGlyph(t)}
+                              </span>
+                            );
+                          })()}
                         </div>
                         {msgReactions.length > 0 && (
                           <div className="reaction-pills">

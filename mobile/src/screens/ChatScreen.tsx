@@ -45,6 +45,8 @@ import {
   deleteMessage,
   forwardMessage,
   markMessageAsRead,
+  markMessageAsDelivered,
+  markMessagesAsDelivered,
   getReceipts,
   subscribeToMessages,
   subscribeToReceipts,
@@ -57,6 +59,10 @@ import {
   getCurrentUser,
   getMyProfile,
   getMyConversations,
+  buildTickMap,
+  applyReceiptToTickMap,
+  computeOutboundTick,
+  tickLabel,
   createPoll,
   getPolls,
   getPollVotes,
@@ -101,6 +107,9 @@ import {
   blockUser,
   submitReport as submitSafetyReport,
   type ParticipantRole,
+  resolveDisplayName,
+  resolveAvatarUrl,
+  mergeProfileIdentity,
 } from '../lib/shared';
 import type { Message, MessageReaction, Profile, ConversationSummary, Poll, PollVote, SearchKind, ChatSettings, ReportReason } from '../lib/shared';
 import {
@@ -113,6 +122,10 @@ import {
   getDraft,
   setDraft,
   uuidv4,
+  getNickname,
+  getCachedProfile,
+  cacheProfile,
+  cacheProfiles,
 } from '../lib/localCache';
 import { flushOutbox, onOutboxSent, onOutboxDeadLetter, queueAction } from '../lib/sync';
 import { guessMime } from '../lib/media';
@@ -452,14 +465,27 @@ function ChatScreenInner() {
       }
 
       // 2) INSTANT: header peers from the cached conversation list (no network).
+      // Never paint "Unknown" — prefer cached conversation title + profile rows.
       if (myId) {
         const cachedConvs = await getCachedConversations(myId);
         const cs = cachedConvs.find((s) => s.conversation.id === conversationId);
         if (cs && active) {
           const group = cs.conversation.type === 'group';
           setIsGroup(group);
-          setPeers(cs.participants.filter((p) => p.id !== myId));
-          setChatAvatarUrl(cs.avatarUrl ?? null);
+          const peerList = cs.participants.filter((p) => p.id !== myId);
+          // Enrich each peer from per-profile cache (stronger offline identity).
+          const enriched = await Promise.all(
+            peerList.map(async (p) => {
+              const cachedP = await getCachedProfile(p.id).catch(() => null);
+              return (mergeProfileIdentity(cachedP, p) as Profile) ?? p;
+            }),
+          );
+          setPeers(enriched);
+          setChatAvatarUrl(cs.avatarUrl ?? enriched[0]?.avatar_url ?? null);
+          if (cs.title && !/^unknown$/i.test(cs.title)) {
+            setHeaderTitle(cs.title);
+          }
+          cacheProfiles(enriched).catch(() => {});
           if (group) {
             Promise.all([
               getMyGroupRole(supabase, conversationId),
@@ -508,7 +534,17 @@ function ChatScreenInner() {
         const [rx, rc] = await Promise.all([getReactions(supabase, ids), getReceipts(supabase, ids)]);
         if (!active) return;
         setReactions(rx);
-        applyReceipts(rc);
+        // Single source of truth: rebuild ticks from receipts. Preserve local
+        // sending/failed states for optimistic outbox rows still in flight.
+        const mineIds = msgs.filter((m) => m.sender_id === myId).map((m) => m.id);
+        const built = buildTickMap(rc, myId, mineIds);
+        setReceipts((prev) => {
+          const next = new Map(built);
+          for (const [id, t] of prev) {
+            if (t === 'sending' || t === 'failed') next.set(id, t);
+          }
+          return next;
+        });
         loadPolls().catch(() => {});
 
         // Per-user message extras (star + delete-for-me). Degrade to empty if the
@@ -521,11 +557,13 @@ function ChatScreenInner() {
           })
           .catch(() => {});
 
-        // mark unread incoming as read (unless ghost mode suppresses receipts)
-        if (!ghostRef.current) {
-          msgs
-            .filter((m) => m.sender_id !== myId)
-            .forEach((m) => markMessageAsRead(supabase, m.id).catch(() => {}));
+        // Pipeline: delivered first (device has the message), then read unless ghost.
+        const incomingIds = msgs.filter((m) => m.sender_id !== myId).map((m) => m.id);
+        if (incomingIds.length) {
+          markMessagesAsDelivered(supabase, incomingIds).catch(() => {});
+          if (!ghostRef.current) {
+            incomingIds.forEach((id) => markMessageAsRead(supabase, id).catch(() => {}));
+          }
         }
       } catch {
         // Offline / transient error: keep the cached view already on screen.
@@ -540,8 +578,26 @@ function ChatScreenInner() {
           const summary = summaries.find((s) => s.conversation.id === conversationId);
           if (summary && active) {
             setIsGroup(summary.conversation.type === 'group');
-            setPeers(summary.participants.filter((p) => p.id !== myId));
-            setChatAvatarUrl(summary.avatarUrl ?? null);
+            const peerList = summary.participants.filter((p) => p.id !== myId);
+            const enriched = await Promise.all(
+              peerList.map(async (p) => {
+                const cachedP = await getCachedProfile(p.id).catch(() => null);
+                return (mergeProfileIdentity(cachedP, p) as Profile) ?? p;
+              }),
+            );
+            setPeers((prev) => {
+              // Monotonic: never replace a peer that already has a real name with empty.
+              if (!prev.length) return enriched;
+              return enriched.map((p) => {
+                const old = prev.find((x) => x.id === p.id);
+                return (mergeProfileIdentity(old, p) as Profile) ?? p;
+              });
+            });
+            setChatAvatarUrl(summary.avatarUrl ?? enriched[0]?.avatar_url ?? null);
+            if (summary.title && !/^unknown$/i.test(summary.title)) {
+              setHeaderTitle((t) => (/^unknown$/i.test(t) ? summary.title : t));
+            }
+            cacheProfiles(enriched).catch(() => {});
           }
         } catch { /* offline */ }
       }
@@ -551,18 +607,16 @@ function ChatScreenInner() {
     };
   }, [conversationId, setMsgs]);
 
-  const applyReceipts = useCallback((rows: { message_id: string; status: string }[]) => {
+  // Monotonic receipt merge via shared messageStatus (never downgrade ticks).
+  const applyReceipts = useCallback((rows: { message_id: string; user_id: string; status: string }[]) => {
     setReceipts((prev) => {
-      const next = new Map(prev);
+      let next = prev;
       for (const r of rows) {
-        const cur = next.get(r.message_id);
-        if (r.status === 'read' || cur !== 'read') {
-          next.set(r.message_id, r.status as TickStatus);
-        }
+        next = applyReceiptToTickMap(next, r, uid);
       }
-      return next;
+      return next === prev ? prev : next;
     });
-  }, []);
+  }, [uid]);
 
   // ── Realtime subscriptions ────────────────────────────────────────────────
   useEffect(() => {
@@ -583,8 +637,12 @@ function ChatScreenInner() {
         if (incoming.type === 'system') {
           getDisappearing(supabase, conversationId).then(setDisappearSecs).catch(() => {});
         }
-        if (incoming.sender_id !== uid && !ghostRef.current) {
-          markMessageAsRead(supabase, incoming.id).catch(() => {});
+        if (incoming.sender_id !== uid) {
+          // Always mark delivered on device receipt; read only when not in ghost mode.
+          markMessageAsDelivered(supabase, incoming.id).catch(() => {});
+          if (!ghostRef.current) {
+            markMessageAsRead(supabase, incoming.id).catch(() => {});
+          }
         }
         requestAnimationFrame(() => listRef.current?.scrollToOffset({ offset: 0, animated: true }));
       },
@@ -603,7 +661,7 @@ function ChatScreenInner() {
     });
 
     const rcChannel = subscribeToReceipts(supabase, conversationId, (r) =>
-      applyReceipts([r as any]),
+      applyReceipts([r]),
     );
 
     const presenceChannel = joinPresence(supabase, uid, (ids) => {
@@ -689,10 +747,38 @@ function ChatScreenInner() {
         ? 'online'
         : formatLastSeen(peers[0]?.last_seen);
   // Direct chats prefer the peer avatar; groups use conversation avatar.
+  const [peerNickname, setPeerNickname] = useState<string | null>(null);
+  const [headerTitle, setHeaderTitle] = useState(params.title);
+
+  // Load local nickname + never let a weak network peer wipe the nav title.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      if (isGroup || !uid || !peers[0]?.id) {
+        if (alive) {
+          setPeerNickname(null);
+          if (params.title && !/^unknown$/i.test(params.title)) setHeaderTitle(params.title);
+        }
+        return;
+      }
+      const nick = await getNickname(uid, peers[0].id).catch(() => null);
+      if (!alive) return;
+      setPeerNickname(nick);
+      const name = resolveDisplayName(peers[0], {
+        nickname: nick,
+        fallback: params.title,
+      });
+      setHeaderTitle(name);
+    })();
+    return () => { alive = false; };
+  }, [uid, peers, isGroup, params.title]);
+
   const headerAvatarUri = isGroup
     ? chatAvatarUrl
-    : (peers[0]?.avatar_url ?? chatAvatarUrl);
-  const headerAvatarName = isGroup ? params.title : (peers[0]?.display_name ?? params.title);
+    : (resolveAvatarUrl(peers[0], chatAvatarUrl));
+  const headerAvatarName = isGroup
+    ? (headerTitle || params.title)
+    : resolveDisplayName(peers[0], { nickname: peerNickname, fallback: headerTitle || params.title });
 
   function openHeaderProfile() {
     if (isGroup) {
@@ -735,7 +821,7 @@ function ChatScreenInner() {
           <View style={styles.headerTextCol}>
             <View style={styles.headerTitleRow}>
               <Text style={styles.headerTitle} numberOfLines={1}>
-                {params.title}
+                {headerTitle || params.title}
               </Text>
               {/* Disappearing-messages indicator (WhatsApp parity). */}
               {disappearSecs > 0 && (
@@ -787,7 +873,7 @@ function ChatScreenInner() {
         </View>
       ),
     });
-  }, [navigation, params.title, subtitle, peers, colors, styles, selectionMode, selectedIds, isGroup, ghost, disappearSecs, conversationId, headerAvatarUri, headerAvatarName, typingName, chatMuted, chatLock, starredIds]);
+  }, [navigation, params.title, headerTitle, headerAvatarName, subtitle, peers, colors, styles, selectionMode, selectedIds, isGroup, ghost, disappearSecs, conversationId, headerAvatarUri, typingName, chatMuted, chatLock, starredIds, peerNickname]);
 
   function placeCall(kind: 'audio' | 'video') {
     // Only reachable from direct chats (call buttons are hidden in groups).
@@ -1521,6 +1607,15 @@ function ChatScreenInner() {
           icon: isGroup ? 'group' : 'person',
           onPress: openHeaderProfile,
         },
+        ...(!isGroup && peer
+          ? [{
+              text: peerNickname ? 'Edit nickname' : 'Add nickname',
+              icon: 'edit' as const,
+              onPress: () => {
+                if (peer) navigation.navigate('Profile', { userId: peer.id, conversationId });
+              },
+            }]
+          : []),
         {
           text: 'Search',
           icon: 'search',
@@ -1689,10 +1784,18 @@ function ChatScreenInner() {
         .eq('is_deleted', false)
         .order('created_at', { ascending: true })
         .limit(500);
-      const nameById = new Map(peers.map((p) => [p.id, p.display_name || 'User']));
+      const nameById = new Map(
+        peers.map((p) => [
+          p.id,
+          resolveDisplayName(p, {
+            nickname: !isGroup && p.id === peers[0]?.id ? peerNickname : null,
+            fallback: 'Contact',
+          }),
+        ]),
+      );
       if (uid) nameById.set(uid, 'You');
       const lines = (data || []).map((m: any) => {
-        const who = nameById.get(m.sender_id) || 'User';
+        const who = nameById.get(m.sender_id) || 'Contact';
         const body =
           m.type === 'system'
             ? m.content
@@ -1701,7 +1804,7 @@ function ChatScreenInner() {
               : `[${m.type}] ${m.content || ''}`.trim();
         return `[${new Date(m.created_at).toLocaleString()}] ${who}: ${body || ''}`;
       });
-      const title = params.title || (isGroup ? 'Group' : 'Chat');
+      const title = headerTitle || params.title || (isGroup ? 'Group' : 'Chat');
       await Share.share({ message: `Lumixo — ${title}\n\n${lines.join('\n')}` });
     } catch (e: any) {
       Alert.alert('Export failed', e?.message || 'Could not export chat');
@@ -1727,8 +1830,14 @@ function ChatScreenInner() {
     const target = selected;
     afterMessageSheetClosed(() => {
       const mine = target.sender_id === uid;
-      const rc = receipts.get(target.id);
-      const status = target.pending ? 'Sending…' : rc === 'read' ? 'Read' : rc === 'delivered' ? 'Delivered' : 'Sent';
+      const tick = computeOutboundTick({
+        messageId: target.id,
+        pending: target.pending,
+        failed: !!(target as { failed?: boolean }).failed,
+        senderId: uid,
+        tickMap: receipts,
+      });
+      const status = tickLabel(tick);
       const lines = [
         `Sent: ${new Date(target.created_at).toLocaleString()}`,
         target.edited_at ? `Edited: ${new Date(target.edited_at).toLocaleString()}` : null,
@@ -1983,18 +2092,26 @@ function ChatScreenInner() {
   }, [messages]);
   const peerNameById = useMemo(() => {
     const m = new Map<string, string | null>();
-    for (const p of peers) m.set(p.id, p.display_name);
+    for (const p of peers) {
+      const nick = !isGroup && p.id === peers[0]?.id ? peerNickname : null;
+      m.set(p.id, resolveDisplayName(p, { nickname: nick, fallback: null }));
+    }
     return m;
-  }, [peers]);
+  }, [peers, peerNickname, isGroup]);
 
   // Image/video messages — backs the swipeable full-screen viewer (web MediaLightbox parity).
   const viewerItems = useMemo<ViewerItem[]>(() => messages
     .filter((m) => !m.is_deleted && m.media_url && (m.type === 'image' || isVideoMessage(m)))
     .map((m) => {
       const mine = m.sender_id === uid;
-      const rc = receipts.get(m.id);
       const status = mine
-        ? (m.pending ? 'Sending…' : rc === 'read' ? 'Read' : rc === 'delivered' ? 'Delivered' : 'Sent')
+        ? tickLabel(computeOutboundTick({
+            messageId: m.id,
+            pending: m.pending,
+            failed: !!(m as { failed?: boolean }).failed,
+            senderId: uid,
+            tickMap: receipts,
+          }))
         : null;
       return {
         id: m.id,
@@ -2110,7 +2227,15 @@ function ChatScreenInner() {
           reactions={reactionsByMsg.get(msg.id)}
           onReactionPress={(emoji) => react(emoji, msg)}
           starred={starredIds.has(msg.id)}
-          tick={mine ? (msg.pending ? 'sending' : receipts.get(msg.id) ?? 'sent') : undefined}
+          tick={mine
+            ? computeOutboundTick({
+                messageId: msg.id,
+                pending: msg.pending,
+                failed: !!(msg as { failed?: boolean }).failed,
+                senderId: uid,
+                tickMap: receipts,
+              })
+            : undefined}
           selected={selectionMode && selectedIds.has(msg.id)}
           selectionMode={selectionMode}
           onPress={selectionMode ? () => toggleSelect(msg) : undefined}

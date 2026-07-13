@@ -635,7 +635,7 @@ export function GroupInfoModal({ conversationId, onClose, onLeft, onUpdated }: P
                   >
                     <div className="avatar">{u.display_name?.[0] || '?'}</div>
                     <div className="user-info">
-                      <div className="user-name">{u.display_name || 'Unknown'}</div>
+                      <div className="user-name">{u.display_name || (u.username ? `@${u.username}` : 'Contact')}</div>
                       <div className="user-username">@{u.username || u.id.slice(0, 8)}</div>
                     </div>
                     {on && <div className="check-mark">✓</div>}

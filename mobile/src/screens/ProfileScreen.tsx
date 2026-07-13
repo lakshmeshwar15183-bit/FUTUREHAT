@@ -13,9 +13,10 @@ import {
   getMutedIds, muteConversation, unmuteConversation,
   getPremiumUserIds, joinPresence, leavePresence,
   getDisappearing, setConversationDisappearing, isVideoMessage,
+  resolveDisplayName, resolveUsernameHandle, mergeProfileIdentity,
 } from '../lib/shared';
 import type { Profile, CallType, Message } from '../lib/shared';
-import { getCachedProfile, cacheProfile } from '../lib/localCache';
+import { getCachedProfile, cacheProfile, getNickname, setNickname } from '../lib/localCache';
 import { queueAction } from '../lib/sync';
 import { formatLastSeen } from '../lib/time';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
@@ -65,6 +66,8 @@ export default function ProfileScreen() {
   }
 
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [nickname, setNicknameState] = useState<string | null>(null);
+  const [myUid, setMyUid] = useState<string | null>(null);
   const [isMe, setIsMe] = useState(false);
   const [loading, setLoading] = useState(true);
   const [blocked, setBlocked] = useState(false);
@@ -95,13 +98,22 @@ export default function ProfileScreen() {
   useEffect(() => {
     (async () => {
       // Instant: show the cached profile first (offline included, no spinner),
-      // then refresh from the network below.
+      // then refresh from the network below. Never clear a good cache to null.
       const cached = await getCachedProfile(params.userId);
       if (cached) { setProfile(cached); setLoading(false); }
       const me = await getCurrentUser(supabase);
       setIsMe(me?.id === params.userId);
+      setMyUid(me?.id ?? null);
+      if (me?.id && me.id !== params.userId) {
+        const nick = await getNickname(me.id, params.userId).catch(() => null);
+        setNicknameState(nick);
+      }
       const p = await getProfile(supabase, params.userId).catch(() => null);
-      if (p) { setProfile(p); cacheProfile(p); }
+      if (p) {
+        setProfile((prev) => (mergeProfileIdentity(prev, p) as Profile) ?? p);
+        cacheProfile(p);
+      }
+      // Network failed / empty: keep cached profile — never replace with blank.
       const ids = await getBlockedIds(supabase).catch(() => [] as string[]);
       setBlocked(ids.includes(params.userId));
       const premiumIds = await getPremiumUserIds(supabase).catch(() => [] as string[]);
@@ -141,10 +153,29 @@ export default function ProfileScreen() {
   }, [isMe, params.userId]);
 
   const presence = online ? 'online' : formatLastSeen(profile?.last_seen) || 'offline';
+  const displayName = resolveDisplayName(profile, {
+    nickname: isMe ? null : nickname,
+    fallback: 'Contact',
+  });
+  const handle = resolveUsernameHandle(profile);
+
+  async function editNickname() {
+    if (!myUid || isMe) return;
+    Alert.prompt(
+      nickname ? 'Edit nickname' : 'Add nickname',
+      'Only you will see this name. Leave empty to remove. Does not change their account.',
+      async (value: string) => {
+        const next = await setNickname(myUid, params.userId, value);
+        setNicknameState(next[params.userId] ?? null);
+      },
+      'plain-text',
+      nickname ?? '',
+    );
+  }
 
   async function toggleBlock() {
     const was = blocked;
-    if (!was && !(await confirmAsync('Block user', `Block ${profile?.display_name ?? 'this user'}?`))) return;
+    if (!was && !(await confirmAsync('Block user', `Block ${displayName}?`))) return;
     setBlocked(!was); // instant; syncs in the background (auto-retries offline)
     queueAction(was ? 'unblock' : 'block', { userId: params.userId });
   }
@@ -177,8 +208,8 @@ export default function ProfileScreen() {
   }
 
   function shareContact() {
-    const handle = profile?.username ? `@${profile.username}` : params.userId.slice(0, 8);
-    Share.share({ message: `${profile?.display_name ?? 'Lumixo user'} (${handle}) on Lumixo` });
+    const h = handle || params.userId.slice(0, 8);
+    Share.share({ message: `${displayName} (${h}) on Lumixo` });
   }
 
   async function message() {
@@ -186,7 +217,7 @@ export default function ProfileScreen() {
     if (conversationId) {
       navigation.replace('Chat', {
         conversationId,
-        title: profile?.display_name ?? 'Chat',
+        title: displayName,
       });
     }
   }
@@ -209,7 +240,7 @@ export default function ProfileScreen() {
     <ScrollView style={styles.container}>
       <View style={styles.header}>
         <View>
-          <Avatar uri={profile?.avatar_url} name={profile?.display_name} size={120} />
+          <Avatar uri={profile?.avatar_url} name={displayName} size={120} />
           {!!convId && disappearSecs > 0 && (
             <View style={styles.avatarDisappearBadge}>
               <Ionicons name="timer-outline" size={16} color="#fff" />
@@ -217,7 +248,7 @@ export default function ProfileScreen() {
           )}
         </View>
         <View style={styles.nameRow}>
-          <Text style={styles.name}>{profile?.display_name ?? 'Lumixo user'}</Text>
+          <Text style={styles.name}>{displayName}</Text>
           {isPremium && (
             <Ionicons name="star" size={18} color={colors.primary} style={styles.premiumBadge} />
           )}
@@ -225,9 +256,30 @@ export default function ProfileScreen() {
             <Ionicons name="shield-checkmark" size={18} color="#3b82f6" style={styles.premiumBadge} />
           )}
         </View>
-        {!!profile?.username && <Text style={styles.username}>@{profile.username}</Text>}
+        {!!nickname && !isMe && (
+          <Text style={styles.username}>
+            {resolveDisplayName(profile, { fallback: handle || 'Contact' })}
+            {handle ? ` · ${handle}` : ''}
+          </Text>
+        )}
+        {!nickname && !!handle && <Text style={styles.username}>{handle}</Text>}
         {!isMe && <Text style={styles.presence}>{presence}</Text>}
       </View>
+
+      {!isMe && (
+        <Pressable style={styles.nickRow} onPress={editNickname}>
+          <Ionicons name="pencil-outline" size={18} color={colors.primary} />
+          <View style={{ flex: 1, marginLeft: 12 }}>
+            <Text style={styles.nickTitle}>{nickname ? 'Nickname' : 'Add nickname'}</Text>
+            <Text style={styles.nickSub}>
+              {nickname
+                ? `${nickname} · only you see this`
+                : 'Only you will see this name'}
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
+        </Pressable>
+      )}
 
       {!isMe && (
         <View style={styles.actions}>
@@ -350,7 +402,7 @@ export default function ProfileScreen() {
           <Pressable style={styles.actionRow} onPress={toggleBlock}>
             <Ionicons name={blocked ? 'checkmark-circle-outline' : 'ban-outline'} size={20} color={colors.danger} />
             <Text style={[styles.actionRowText, { color: colors.danger }]}>
-              {blocked ? 'Unblock' : 'Block'} {profile?.display_name ?? 'user'}
+              {blocked ? 'Unblock' : 'Block'} {displayName}
             </Text>
           </Pressable>
         </View>
@@ -423,6 +475,17 @@ const makeStyles = (colors: Palette) =>
     header: { alignItems: 'center', paddingVertical: spacing(8), backgroundColor: colors.surface },
     nameRow: { flexDirection: 'row', alignItems: 'center', marginTop: spacing(3) },
     name: { color: colors.text, fontSize: font.title, fontWeight: '700' },
+    nickRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginHorizontal: spacing(4),
+      marginTop: spacing(3),
+      padding: spacing(3.5),
+      borderRadius: radius.md,
+      backgroundColor: colors.surface,
+    },
+    nickTitle: { color: colors.text, fontSize: font.body, fontWeight: '600' },
+    nickSub: { color: colors.textMuted, fontSize: font.tiny, marginTop: 2 },
     premiumBadge: { marginLeft: 6 },
     avatarDisappearBadge: {
       position: 'absolute', right: 2, bottom: 2,

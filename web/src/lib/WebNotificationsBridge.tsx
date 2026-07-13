@@ -44,6 +44,10 @@ export function WebNotifications({
         const m = payload.new as Message;
         const me = meRef.current;
         if (!m || m.sender_id === me || m.is_deleted) return;
+        // Device received the message → mark delivered (grey ✓✓ for sender).
+        // Read still requires opening the chat (ChatView).
+        const { markMessageAsDelivered } = await import('@shared/api');
+        void markMessageAsDelivered(supabase, m.id).catch(() => {});
         // Only notify for MY conversations (the realtime stream is app-wide).
         const conv = convRef.current.find((c) => c.conversation.id === m.conversation_id);
         if (!conv) return;

@@ -8,7 +8,25 @@ import { usePresence } from './PresenceContext';
 import { UpgradeProvider, useUpgrade } from './premium/UpgradeProvider';
 import { PremiumBadge } from './premium/PremiumBadge';
 import { supabase } from './supabase';
-import { signOut, getMyConversations, searchProfiles, startDirectConversation, searchAllMessages, isVideoMessage, type MessageSearchHit } from '@shared/api';
+import {
+  signOut,
+  getMyConversations,
+  searchProfiles,
+  startDirectConversation,
+  searchAllMessages,
+  isVideoMessage,
+  markMessageAsDelivered,
+  applyReceiptToTickMap,
+  computeOutboundTick,
+  tickGlyph,
+  tickIsRead,
+  stabilizeConversationList,
+  resolveDisplayName,
+  type MessageSearchHit,
+  type TickStatus,
+} from '@shared/api';
+import type { MessageReceipt } from '@shared/types';
+import { readNicknames } from './lib/nicknames';
 import { listRecentContacts, removeRecentContact, type RecentContact } from '@shared/recentContactsApi';
 import {
   getPinnedIds, pinConversation, unpinConversation,
@@ -168,10 +186,14 @@ function AppInner() {
     try {
       const convs = await getMyConversations(supabase);
       if (!mountedRef.current) return;
-      setConversations(convs);
+      // Never clobber good cached names with weak network results; apply nicknames.
+      const cached = uid ? readCachedConversations(uid) : [];
+      const nicks = uid ? readNicknames(uid) : {};
+      const stabilized = stabilizeConversationList(convs, cached, nicks, uid);
+      setConversations(stabilized);
       setListHydrating(false);
       mark('convs-fetch-done');
-      if (uid) writeCachedConversations(uid, convs);
+      if (uid) writeCachedConversations(uid, stabilized);
     } catch {
       /* transient network — keep cache */
       if (mountedRef.current) setListHydrating(false);
@@ -192,9 +214,54 @@ function AppInner() {
     if (!uid) return;
     const cached = readCachedConversations(uid);
     if (cached.length) {
-      setConversations((prev) => (prev.length ? prev : cached));
+      const nicks = readNicknames(uid);
+      const withNicks = stabilizeConversationList(cached, cached, nicks, uid);
+      setConversations((prev) => (prev.length ? prev : withNicks));
       setListHydrating(false);
     }
+  }, [uid]);
+
+  // Realtime receipts keep list preview ticks identical to the open chat.
+  useEffect(() => {
+    if (!uid) return;
+    const ch = supabase
+      .channel(`web-list-receipts:${uid}`)
+      .on('postgres_changes' as any, { event: '*', schema: 'public', table: 'message_receipts' }, (payload: any) => {
+        const r = payload?.new as MessageReceipt | undefined;
+        if (!r?.message_id || r.user_id === uid) return;
+        setConversations((prev) => {
+          let changed = false;
+          const next = prev.map((item) => {
+            const m = item.lastMessage;
+            if (!m || m.id !== r.message_id || m.sender_id !== uid) return item;
+            const map = new Map<string, TickStatus>();
+            if (item.lastMessageTick) map.set(m.id, item.lastMessageTick);
+            const updated = applyReceiptToTickMap(map, r, uid);
+            const tick = updated.get(m.id) ?? item.lastMessageTick ?? 'sent';
+            if (tick === item.lastMessageTick) return item;
+            changed = true;
+            return { ...item, lastMessageTick: tick };
+          });
+          if (changed) writeCachedConversations(uid, next);
+          return changed ? next : prev;
+        });
+      })
+      .subscribe();
+    return () => { void supabase.removeChannel(ch); };
+  }, [uid]);
+
+  // Mark inbound messages delivered even when the chat is not open.
+  useEffect(() => {
+    if (!uid) return;
+    const ch = supabase
+      .channel(`web-list-deliver:${uid}`)
+      .on('postgres_changes' as any, { event: 'INSERT', schema: 'public', table: 'messages' }, (payload: any) => {
+        const m = payload?.new as { id?: string; sender_id?: string; type?: string } | undefined;
+        if (!m?.id || m.sender_id === uid || m.type === 'system') return;
+        void markMessageAsDelivered(supabase, m.id).catch(() => {});
+      })
+      .subscribe();
+    return () => { void supabase.removeChannel(ch); };
   }, [uid]);
 
   // Critical path: conversation list only. Everything else after first paint.
@@ -550,6 +617,17 @@ function AppInner() {
     const m = conv.lastMessage;
     return !!m && !m.is_deleted && m.type !== 'system' && m.sender_id === profile?.id;
   }
+  /** Same outbound tick rules as ChatView bubbles (single source of truth). */
+  function previewTick(conv: ConversationSummary): TickStatus | null {
+    if (!previewMine(conv) || !conv.lastMessage || !profile?.id) return null;
+    if (conv.lastMessage.pending) return 'sending';
+    if (conv.lastMessageTick) return conv.lastMessageTick;
+    return computeOutboundTick({
+      messageId: conv.lastMessage.id,
+      senderId: profile.id,
+      receipts: [],
+    });
+  }
   function previewText(conv: ConversationSummary): string {
     const m = conv.lastMessage;
     const body = previewBody(conv);
@@ -621,7 +699,7 @@ function AppInner() {
                       <div className="avatar">{u.display_name?.[0] || '?'}</div>
                       <div className="result-info">
                         <div className="result-name">
-                          {u.display_name || 'Unknown'}
+                          {resolveDisplayName(u, { fallback: u.username ? `@${u.username}` : 'Contact' })}
                           {premiumUserIds.has(u.id) && <PremiumBadge compact />}
                         </div>
                         <div className="result-username">@{u.username || u.id.slice(0, 8)}</div>
@@ -802,7 +880,18 @@ function AppInner() {
                     </div>
                     <div className="conversation-bottom">
                       <div className="conversation-preview">
-                        {previewMine(conv) && <span className="preview-ticks" aria-hidden>✓</span>}
+                        {(() => {
+                          const t = previewTick(conv);
+                          if (!t) return null;
+                          return (
+                            <span
+                              className={`preview-ticks${tickIsRead(t) ? ' read' : ''}`}
+                              aria-label={t}
+                            >
+                              {tickGlyph(t)}
+                            </span>
+                          );
+                        })()}
                         {previewText(conv)}
                       </div>
                       {conv.conversation.type !== 'group' && streaks[id]?.tier && (

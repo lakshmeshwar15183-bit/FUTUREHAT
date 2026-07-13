@@ -76,7 +76,9 @@ export async function getGroupMembers(
           id: p.user_id as UUID,
           phone: null,
           username: null,
-          display_name: 'Unknown',
+          // Never invent "Unknown" — UI resolves via resolveDisplayName → "Contact"
+          // until cache/network fills real fields.
+          display_name: null,
           about: null,
           avatar_url: null,
           last_seen: null,

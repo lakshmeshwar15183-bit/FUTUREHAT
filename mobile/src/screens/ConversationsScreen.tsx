@@ -42,6 +42,7 @@ import {
   getDeletedConversationIds,
   archiveConversation,
   markConversationRead,
+  markMessageAsDelivered,
   blockUser,
   submitReport,
   joinPresence,
@@ -55,11 +56,19 @@ import {
   subscribeStreakChanges,
   indexStreaksByConversation,
   isVideoMessage,
+  applyReceiptToTickMap,
+  computeOutboundTick,
+  tickIsDouble,
+  tickIsRead,
+  stabilizeConversationList,
+  resolveDisplayName,
+  type TickStatus,
 } from '../lib/shared';
-import type { ConversationSummary, MessageSearchHit, StreakSummary } from '../lib/shared';
+import type { ConversationSummary, MessageSearchHit, MessageReceipt, StreakSummary } from '../lib/shared';
 import {
   getCachedConversations, cacheConversations, getCache, setCache,
   pendingConversationEffects, reconcileIds, mergeEffects,
+  getNicknames, cacheProfiles,
 } from '../lib/localCache';
 import { onConnectivity, queueAction } from '../lib/sync';
 import { formatListTimestamp } from '../lib/time';
@@ -126,6 +135,23 @@ function lastPreviewMine(c: ConversationSummary, uid: string | null): boolean {
   );
 }
 
+/**
+ * Single source of truth for the list-row tick: same pure rules as chat bubbles.
+ * Prefer server-attached lastMessageTick; never invent double-ticks.
+ */
+function resolvePreviewTick(c: ConversationSummary, uid: string | null): TickStatus | null {
+  if (!lastPreviewMine(c, uid) || !c.lastMessage) return null;
+  if (c.lastMessage.pending) return 'sending';
+  if ((c.lastMessage as { failed?: boolean }).failed) return 'failed';
+  if (c.lastMessageTick) return c.lastMessageTick;
+  return computeOutboundTick({
+    messageId: c.lastMessage.id,
+    senderId: uid,
+    pending: c.lastMessage.pending,
+    receipts: [],
+  });
+}
+
 function previewLine(item: ConversationSummary, uid: string | null, isGroup: boolean): string {
   const body = lastPreviewBody(item);
   if (lastPreviewMine(item, uid)) return body;
@@ -133,8 +159,11 @@ function previewLine(item: ConversationSummary, uid: string | null, isGroup: boo
     return body;
   }
   if (isGroup) {
-    const name = item.participants.find((p) => p.id === item.lastMessage?.sender_id)?.display_name;
-    return name ? `${name.split(' ')[0]}: ${body}` : body;
+    const p = item.participants.find((x) => x.id === item.lastMessage?.sender_id);
+    const name = resolveDisplayName(p, { fallback: null });
+    // Only prefix when we have a real person label (not empty Contact for missing).
+    if (p && name && name !== 'Contact') return `${name.split(' ')[0]}: ${body}`;
+    return body;
   }
   return body;
 }
@@ -154,6 +183,8 @@ type ChatRowProps = {
   locked: boolean;
   streakEmoji: string;
   streakScore: number | string;
+  /** Outbound tick for last message when mine — same source of truth as chat bubbles. */
+  previewTick: TickStatus | null;
   colors: Palette;
   styles: ChatRowStyles;
   selectionMode: boolean;
@@ -176,6 +207,7 @@ const ChatRow = React.memo(function ChatRow({
   locked,
   streakEmoji,
   streakScore,
+  previewTick,
   colors,
   styles,
   selectionMode,
@@ -234,12 +266,27 @@ const ChatRow = React.memo(function ChatRow({
         </View>
         <View style={styles.rowBottom}>
           <View style={styles.previewWrap}>
-            {mine && (
+            {mine && previewTick && (
               <Ionicons
-                name="checkmark-done"
+                name={
+                  previewTick === 'sending'
+                    ? 'time-outline'
+                    : previewTick === 'failed'
+                      ? 'alert-circle'
+                      : tickIsDouble(previewTick)
+                        ? 'checkmark-done'
+                        : 'checkmark'
+                }
                 size={16}
-                color={colors.textFaint}
+                color={
+                  previewTick === 'failed'
+                    ? '#EF4444'
+                    : tickIsRead(previewTick)
+                      ? '#53BDEB'
+                      : colors.textFaint
+                }
                 style={styles.previewTick}
+                accessibilityLabel={previewTick}
               />
             )}
             <Text
@@ -440,7 +487,10 @@ export default function ConversationsScreen() {
             if (favs.length) setFavIds(new Set(favs));
             if (cachedStreaks.length) setStreaks(indexStreaksByConversation(cachedStreaks));
             if (cached.length) {
-              setItems(cached);
+              // Re-apply nicknames onto cached titles (nicknames live in a separate key).
+              const nicks = await getNicknames(id);
+              const withNicks = stabilizeConversationList(cached, cached, nicks, id);
+              setItems(withNicks);
               setLoading(false); // we have something to show — never block on the network
             }
           }
@@ -455,9 +505,21 @@ export default function ConversationsScreen() {
   const load = useCallback(async () => {
     try {
       const data = await getMyConversations(supabase);
-      setItems(data);
       const u = await getCurrentUser(supabase);
-      if (u?.id) cacheConversations(u.id, data).catch(() => {});
+      const myId = u?.id ?? uid;
+      // Stabilize identity: nicknames + never clobber good cached names with "Unknown"/Contact.
+      const [cached, nicks] = await Promise.all([
+        myId ? getCachedConversations(myId) : Promise.resolve([] as ConversationSummary[]),
+        myId ? getNicknames(myId) : Promise.resolve({} as Record<string, string>),
+      ]);
+      const stabilized = stabilizeConversationList(data, cached, nicks, myId);
+      setItems(stabilized);
+      if (myId) {
+        cacheConversations(myId, stabilized).catch(() => {});
+        // Persist every participant so offline / failed joins keep real names.
+        const allProfiles = stabilized.flatMap((c) => c.participants);
+        cacheProfiles(allProfiles).catch(() => {});
+      }
       // Per-user conversation flags (pin/mute/hidden) + premium wiring. Hidden
       // must be loaded here so hidden chats stay hidden across reloads (web parity).
       // Capture in-flight pin/mute/archive effects BEFORE the server reads, so an
@@ -596,6 +658,52 @@ export default function ConversationsScreen() {
     const ch = subscribeToConversationRemovals(supabase, uid, (cid) => dropConversationsLocally([cid]));
     return () => { supabase.removeChannel(ch); };
   }, [uid, dropConversationsLocally]);
+
+  // Realtime receipts → keep list preview ticks identical to the open chat
+  // (sent → delivered → read) without waiting for a full list reload.
+  useEffect(() => {
+    if (!uid) return;
+    const ch = supabase
+      .channel(`fh-list-receipts:${uid}`)
+      .on('postgres_changes' as any, { event: '*', schema: 'public', table: 'message_receipts' }, (payload: any) => {
+        const r = payload?.new as MessageReceipt | undefined;
+        if (!r?.message_id || !r.status) return;
+        if (r.user_id === uid) return; // only recipient receipts matter for my ticks
+        setItems((prev) => {
+          let changed = false;
+          const next = prev.map((item) => {
+            const m = item.lastMessage;
+            if (!m || m.id !== r.message_id || m.sender_id !== uid) return item;
+            const map = new Map<string, TickStatus>();
+            if (item.lastMessageTick) map.set(m.id, item.lastMessageTick);
+            const updated = applyReceiptToTickMap(map, r, uid);
+            const tick = updated.get(m.id) ?? item.lastMessageTick ?? 'sent';
+            if (tick === item.lastMessageTick) return item;
+            changed = true;
+            return { ...item, lastMessageTick: tick };
+          });
+          if (changed && uid) cacheConversations(uid, next).catch(() => {});
+          return changed ? next : prev;
+        });
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [uid]);
+
+  // Realtime new messages to me → mark delivered so the sender gets grey ✓✓
+  // even if we never open the chat (WhatsApp-class). Read still requires open.
+  useEffect(() => {
+    if (!uid) return;
+    const ch = supabase
+      .channel(`fh-list-deliver:${uid}`)
+      .on('postgres_changes' as any, { event: 'INSERT', schema: 'public', table: 'messages' }, (payload: any) => {
+        const m = payload?.new as { id?: string; sender_id?: string; type?: string } | undefined;
+        if (!m?.id || m.sender_id === uid || m.type === 'system') return;
+        markMessageAsDelivered(supabase, m.id).catch(() => {});
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [uid]);
 
   // Realtime: when the authoritative streak score changes (award/penalty/milestone),
   // refresh the summaries + cache so the chat-list emoji updates without a manual
@@ -1035,6 +1143,7 @@ export default function ConversationsScreen() {
           locked={chatLock.isLocked(id)}
           streakEmoji={!isGroup ? (streaks[id]?.tier ?? '') : ''}
           streakScore={!isGroup ? (streaks[id]?.score ?? '') : ''}
+          previewTick={resolvePreviewTick(item, uid)}
           colors={colors}
           styles={styles}
           onPressChat={onPressChat}

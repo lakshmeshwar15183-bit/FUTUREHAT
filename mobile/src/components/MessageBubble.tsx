@@ -4,14 +4,14 @@ import React, { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
-import type { Message, MessageReaction } from '../lib/shared';
-import { isVideoMessage } from '../lib/shared';
+import type { Message, MessageReaction, TickStatus } from '../lib/shared';
+import { isVideoMessage, tickIsDouble, tickIsRead } from '../lib/shared';
 import { formatTime } from '../lib/time';
 import { useColors, radius, font, type Palette } from '../theme';
 import AudioMessage from './AudioMessage';
 import SignedImage from './SignedImage';
 
-export type TickStatus = 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
+export type { TickStatus };
 
 // Long-press is handled ONCE, natively, by the SwipeToReply wrapper's RNGH
 // Gesture.LongPress covering the whole bubble subtree — so no child here needs
@@ -271,15 +271,15 @@ function MessageBubble({
                   ? 'alert-circle'
                   : tick === 'sending'
                     ? 'time-outline'
-                    : tick === 'sent'
-                      ? 'checkmark'
-                      : 'checkmark-done'
+                    : tickIsDouble(tick)
+                      ? 'checkmark-done'
+                      : 'checkmark'
               }
               size={15}
               color={
                 tick === 'failed'
                   ? '#EF4444'
-                  : tick === 'read'
+                  : tickIsRead(tick)
                     ? '#53BDEB'
                     : colors.bubbleOutMuted
               }

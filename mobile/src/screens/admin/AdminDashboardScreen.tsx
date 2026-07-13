@@ -23,6 +23,8 @@ import {
   getServerAdmin, getServerOwner,
   adminSearchUsers, adminStats, adminCallStats, adminMessageStats, adminDbHealth,
   adminGlobalSearch, adminAuditLog, adminDeleteMessage, adminDeleteCommunity,
+  adminListDeletedMessages, adminListReports, adminWarnUser, adminSuspendUser,
+  adminSetAccountStatus,
   getFeatureFlags, adminSetFeatureFlag, adminSetAppEnabled,
   getActiveAnnouncements, adminSendAnnouncement, adminRemoveCurrentAnnouncement,
   adminSetReportStatus, getStreakAudit,
@@ -30,6 +32,7 @@ import {
 import type {
   AdminUserSummary, AdminStats, AdminCallStats, AdminMessageStats, AdminDbHealth,
   AdminGlobalSearch, AuditEntry, FeatureFlag, Announcement, AnnouncementKind,
+  AdminReport, AdminDeletedMessage,
 } from '../../lib/shared';
 import Avatar from '../../components/Avatar';
 import { useColors, spacing, radius, font, type Palette } from '../../theme';
@@ -41,8 +44,14 @@ type Tab =
   | 'overview' | 'users' | 'reports' | 'tickets' | 'calls' | 'messages'
   | 'search' | 'health' | 'flags' | 'app' | 'audit' | 'streaks';
 
-interface ReportRow { id: string; reporter_id: string; target_type: string; target_id: string; reason: string; details: string | null; status: string; created_at: string; }
 interface TicketRow { id: string; user_id: string; kind: string; subject: string; body: string; status: string; created_at: string; device_info: string | null; }
+
+function personLabel(name: string | null | undefined, username: string | null | undefined, id: string | null | undefined): string {
+  if (name?.trim()) return name.trim();
+  if (username?.trim()) return `@${username.trim()}`;
+  if (id) return `${id.slice(0, 8)}…`;
+  return '—';
+}
 
 const STAT_CARDS: { key: keyof AdminStats; label: string; icon: string }[] = [
   { key: 'users', label: 'Total users', icon: '👤' },
@@ -70,7 +79,7 @@ export default function AdminDashboardScreen() {
   const [isOwner, setIsOwner] = useState(false);
   const [tab, setTab] = useState<Tab>('overview');
   const [stats, setStats] = useState<AdminStats | null>(null);
-  const [reports, setReports] = useState<ReportRow[]>([]);
+  const [reports, setReports] = useState<AdminReport[]>([]);
   const [tickets, setTickets] = useState<TicketRow[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -84,30 +93,56 @@ export default function AdminDashboardScreen() {
   async function loadAll() {
     try { setStats(await adminStats(supabase)); }
     catch { setError('Admin backend not provisioned yet (apply migrations 0009 + 0013).'); }
-    // Active queue only: reports still needing admin attention (open + reviewing).
-    // Resolved / dismissed reports are completed and must not sit mixed in with
-    // actionable ones, and must not resurface here after a refresh or restart.
-    const { data: rep } = await supabase.from('reports').select('*')
-      .in('status', ['open', 'reviewing'])
-      .order('created_at', { ascending: false }).limit(100);
-    setReports((rep as ReportRow[]) ?? []);
+    // Active queue: open + reviewing via enriched admin_list_reports (0053).
+    try {
+      const rows = await adminListReports(supabase, undefined, 100);
+      setReports(rows.filter((r) => r.status === 'open' || r.status === 'reviewing'));
+    } catch {
+      setReports([]);
+    }
     const { data: tic } = await supabase.from('support_tickets').select('*').order('created_at', { ascending: false }).limit(100);
     setTickets((tic as TicketRow[]) ?? []);
   }
 
-  async function setReportStatus(id: string, status: string) {
+  async function setReportStatus(reportId: string, status: string) {
     const snapshot = reports;
-    // Resolve / Dismiss complete the report → remove it from the active queue
-    // immediately. Reviewing keeps it (still being worked) but updates the label.
     setReports((rs) =>
       status === 'resolved' || status === 'dismissed'
-        ? rs.filter((r) => r.id !== id)
-        : rs.map((r) => (r.id === id ? { ...r, status } : r)),
+        ? rs.filter((r) => r.report_id !== reportId)
+        : rs.map((r) => (r.report_id === reportId ? { ...r, status: status as AdminReport['status'] } : r)),
     );
-    // Route through the audited RPC (0017) rather than a direct table write, so
-    // every status change stamps reviewer + time and lands in the audit log.
-    try { await adminSetReportStatus(supabase, id, status as any); }
-    catch { setReports(snapshot); /* rollback the optimistic removal on failure */ }
+    try { await adminSetReportStatus(supabase, reportId, status as any); }
+    catch { setReports(snapshot); }
+  }
+
+  async function deleteReportedMessage(r: AdminReport) {
+    if (!r.message_id) {
+      Alert.alert('No message', 'This report has no linked message UUID.');
+      return;
+    }
+    Alert.alert(
+      'Delete message?',
+      'Deletes for everyone using the report’s message UUID (no manual entry).',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await adminDeleteMessage(supabase, r.message_id!, {
+                reason: `report:${r.reason}`,
+                reportId: r.report_id,
+              });
+              await setReportStatus(r.report_id, 'resolved');
+              Alert.alert('Deleted', 'Message deleted and report resolved.');
+            } catch (e: any) {
+              Alert.alert('Error', e.message);
+            }
+          },
+        },
+      ],
+    );
   }
   async function setTicketStatus(id: string, status: string) {
     setTickets((ts) => ts.map((t) => (t.id === id ? { ...t, status } : t)));
@@ -172,22 +207,108 @@ export default function AdminDashboardScreen() {
       {tab === 'reports' && (
         <FlatList
           data={reports}
-          keyExtractor={(r) => r.id}
-          ListEmptyComponent={<Text style={styles.empty}>No reports.</Text>}
+          keyExtractor={(r) => r.report_id}
+          ListEmptyComponent={<Text style={styles.empty}>No reports in queue.</Text>}
           contentContainerStyle={styles.listPad}
+          ListHeaderComponent={
+            <Text style={styles.hint}>
+              Delete / warn / ban use the report’s bound UUIDs — never type a message ID.
+            </Text>
+          }
           renderItem={({ item: r }) => (
             <View style={styles.row}>
               <View style={styles.rowHead}>
-                <Text style={styles.tag}>{r.target_type}</Text>
+                <Text style={styles.tag}>{r.reason}</Text>
+                <Text style={styles.tag}>{r.message_type || 'message'}</Text>
                 <Text style={styles.rowStatus}>{r.status}</Text>
               </View>
-              <Text style={styles.rowTitle}>{r.reason}</Text>
-              {r.details ? <Text style={styles.rowBody}>{r.details}</Text> : null}
-              <Text style={styles.rowMeta}>target {r.target_id.slice(0, 8)} · {new Date(r.created_at).toLocaleString()}</Text>
+              <Text style={styles.rowBody}>
+                <Text style={{ fontWeight: '700' }}>Reporter: </Text>
+                {personLabel(r.reporter_name, r.reporter_username, r.reporter_id)}
+              </Text>
+              <Text style={styles.rowBody}>
+                <Text style={{ fontWeight: '700' }}>Sender: </Text>
+                {personLabel(r.reported_name, r.reported_username, r.reported_user_id)}
+              </Text>
+              <Text style={styles.rowBody}>
+                <Text style={{ fontWeight: '700' }}>Chat: </Text>
+                {r.conversation_label || r.conversation_name || r.conversation_type || '—'}
+              </Text>
+              {r.message_content ? (
+                <Text style={styles.rowTitle}>“{r.message_content}”</Text>
+              ) : (
+                <Text style={styles.rowMeta}>({r.message_type || 'media'}{!r.message_exists ? ' · deleted' : ''})</Text>
+              )}
+              {r.message_id ? (
+                <Text style={styles.rowMeta} selectable>
+                  Message UUID: {r.message_id}
+                </Text>
+              ) : null}
+              {r.conversation_id ? (
+                <Text style={styles.rowMeta} selectable>
+                  Chat ID: {r.conversation_id}
+                </Text>
+              ) : null}
+              <Text style={styles.rowMeta}>{new Date(r.created_at).toLocaleString()}</Text>
               <View style={styles.rowActions}>
-                <MiniBtn label="Reviewing" onPress={() => setReportStatus(r.id, 'reviewing')} colors={colors} />
-                <MiniBtn label="Resolve" onPress={() => setReportStatus(r.id, 'resolved')} colors={colors} />
-                <MiniBtn label="Dismiss" onPress={() => setReportStatus(r.id, 'dismissed')} colors={colors} />
+                <MiniBtn
+                  label="Delete msg"
+                  onPress={() => deleteReportedMessage(r)}
+                  colors={colors}
+                />
+                <MiniBtn
+                  label="Warn"
+                  onPress={() => {
+                    if (!r.reported_user_id) return;
+                    Alert.prompt(
+                      'Warn user',
+                      'Official warning message',
+                      async (msg: string) => {
+                        if (!msg?.trim()) return;
+                        try {
+                          await adminWarnUser(supabase, r.reported_user_id!, msg.trim(), r.report_id);
+                          Alert.alert('Sent', 'Warning delivered.');
+                        } catch (e: any) {
+                          Alert.alert('Error', e.message);
+                        }
+                      },
+                      'plain-text',
+                      'Your message was reported for violating our community guidelines.',
+                    );
+                  }}
+                  colors={colors}
+                />
+                <MiniBtn
+                  label="Suspend"
+                  onPress={async () => {
+                    if (!r.reported_user_id) return;
+                    const until = new Date(Date.now() + 7 * 86400000).toISOString();
+                    try {
+                      await adminSuspendUser(supabase, r.reported_user_id, until, `report ${r.report_id}`);
+                      await setReportStatus(r.report_id, 'resolved');
+                      Alert.alert('Suspended', 'User suspended for 7 days.');
+                    } catch (e: any) {
+                      Alert.alert('Error', e.message);
+                    }
+                  }}
+                  colors={colors}
+                />
+                <MiniBtn
+                  label="Ban"
+                  onPress={async () => {
+                    if (!r.reported_user_id) return;
+                    try {
+                      await adminSetAccountStatus(supabase, r.reported_user_id, 'banned', `report ${r.report_id}`);
+                      await setReportStatus(r.report_id, 'resolved');
+                      Alert.alert('Banned', 'User banned.');
+                    } catch (e: any) {
+                      Alert.alert('Error', e.message);
+                    }
+                  }}
+                  colors={colors}
+                />
+                <MiniBtn label="Ignore" onPress={() => setReportStatus(r.report_id, 'dismissed')} colors={colors} />
+                <MiniBtn label="Resolve" onPress={() => setReportStatus(r.report_id, 'resolved')} colors={colors} />
               </View>
             </View>
           )}
@@ -321,7 +442,13 @@ function MessagesTab({ colors, styles }: { colors: Palette; styles: Styles }) {
   const [s, setS] = useState<AdminMessageStats | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [delId, setDelId] = useState('');
-  useEffect(() => { adminMessageStats(supabase).then(setS).catch((e) => setErr(e.message)); }, []);
+  const [delReason, setDelReason] = useState('');
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [deleted, setDeleted] = useState<AdminDeletedMessage[]>([]);
+  useEffect(() => {
+    adminMessageStats(supabase).then(setS).catch((e) => setErr(e.message));
+    adminListDeletedMessages(supabase, 50).then(setDeleted).catch(() => setDeleted([]));
+  }, []);
   if (err) return <Text style={styles.warn}>{err}</Text>;
   if (!s) return <View style={styles.center}><ActivityIndicator color={colors.primary} /></View>;
   const cards: [string, number][] = [
@@ -329,21 +456,80 @@ function MessagesTab({ colors, styles }: { colors: Palette; styles: Styles }) {
     ['Read', s.read], ['Undelivered', s.undelivered], ['Scheduled', s.scheduled_pending],
   ];
   async function del() {
-    try { await adminDeleteMessage(supabase, delId.trim()); setDelId(''); Alert.alert('Deleted', 'Message deleted.'); }
-    catch (e: any) { Alert.alert('Error', e.message); }
+    try {
+      await adminDeleteMessage(supabase, delId.trim(), {
+        reason: delReason.trim() || 'advanced_uuid_tool',
+      });
+      setDelId('');
+      setDelReason('');
+      Alert.alert('Deleted', 'Message deleted (audited). Prefer Reports for normal moderation.');
+      adminListDeletedMessages(supabase, 50).then(setDeleted).catch(() => {});
+    } catch (e: any) {
+      Alert.alert('Error', e.message);
+    }
   }
   return (
     <ScrollView contentContainerStyle={{ paddingBottom: spacing(8) }}>
       <View style={styles.grid}>
-        {cards.map(([l, v]) => <View key={l} style={styles.stat}><Text style={styles.statNum}>{String(v)}</Text><Text style={styles.statLabel}>{l}</Text></View>)}
+        {cards.map(([l, v]) => (
+          <View key={l} style={styles.stat}>
+            <Text style={styles.statNum}>{String(v)}</Text>
+            <Text style={styles.statLabel}>{l}</Text>
+          </View>
+        ))}
       </View>
-      <Text style={styles.subhead}>Delete a message by ID</Text>
-      <View style={styles.searchBar}>
-        <TextInput style={styles.searchInput} value={delId} onChangeText={setDelId} placeholder="message UUID" placeholderTextColor={colors.textFaint} autoCapitalize="none" />
-        <Pressable style={[styles.searchBtn, { backgroundColor: colors.danger }]} onPress={del} disabled={!delId}>
-          <Text style={styles.searchBtnText}>Delete</Text>
-        </Pressable>
-      </View>
+      <Text style={styles.hint}>
+        Prefer Reports for day-to-day moderation — Delete message uses the report’s UUID automatically.
+      </Text>
+      <Text style={styles.subhead}>Recent deleted messages</Text>
+      {deleted.length === 0 && <Text style={styles.empty}>No admin-deleted messages yet.</Text>}
+      {deleted.map((d) => (
+        <View key={`${d.message_id}-${d.deleted_at}`} style={styles.compactRow}>
+          <Text style={styles.tag}>{d.message_type || 'message'}</Text>
+          <Text style={styles.rowMeta} selectable>{d.message_id}</Text>
+          <Text style={styles.rowMeta}>
+            by {d.deleted_by_name || d.deleted_by_username || '—'} · {new Date(d.deleted_at).toLocaleString()}
+          </Text>
+          {d.reason ? <Text style={styles.rowMeta}>reason: {d.reason}</Text> : null}
+          <Text style={styles.rowStatus}>{d.still_deleted ? (d.restorable ? 'restorable' : 'deleted') : 'restored'}</Text>
+        </View>
+      ))}
+      <Pressable onPress={() => setShowAdvanced((v) => !v)} style={{ marginTop: spacing(3) }}>
+        <Text style={[styles.subhead, { color: colors.danger }]}>
+          {showAdvanced ? '▾' : '▸'} Advanced — emergency UUID delete
+        </Text>
+      </Pressable>
+      {showAdvanced && (
+        <>
+          <Text style={styles.hint}>Emergency only. Every delete is audit-logged.</Text>
+          <View style={styles.searchBar}>
+            <TextInput
+              style={styles.searchInput}
+              value={delId}
+              onChangeText={setDelId}
+              placeholder="message UUID"
+              placeholderTextColor={colors.textFaint}
+              autoCapitalize="none"
+            />
+          </View>
+          <View style={styles.searchBar}>
+            <TextInput
+              style={styles.searchInput}
+              value={delReason}
+              onChangeText={setDelReason}
+              placeholder="reason (optional)"
+              placeholderTextColor={colors.textFaint}
+            />
+            <Pressable
+              style={[styles.searchBtn, { backgroundColor: colors.danger }]}
+              onPress={del}
+              disabled={!delId}
+            >
+              <Text style={styles.searchBtnText}>Delete</Text>
+            </Pressable>
+          </View>
+        </>
+      )}
     </ScrollView>
   );
 }

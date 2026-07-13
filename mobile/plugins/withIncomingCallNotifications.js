@@ -12,6 +12,7 @@ const path = require('path');
 const {
   withAndroidManifest,
   withMainApplication,
+  withAppBuildGradle,
   withDangerousMod,
 } = require('@expo/config-plugins');
 
@@ -134,9 +135,9 @@ object IncomingCallNotifier {
       putExtra("call_video", video)
       data = android.net.Uri.parse("futurehat://call/\$callId")
     }
-    val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-    val fullScreenPi = PendingIntent.getActivity(ctx, notifId(callId), openIntent, flags)
-    val contentPi = PendingIntent.getActivity(ctx, notifId(callId) + 1, openIntent, flags)
+    val piFlags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    val fullScreenPi = PendingIntent.getActivity(ctx, notifId(callId), openIntent, piFlags)
+    val contentPi = PendingIntent.getActivity(ctx, notifId(callId) + 1, openIntent, piFlags)
 
     val acceptIntent = Intent(ctx, MainActivity::class.java).apply {
       action = "dev.lakshmeshwar.futurehat.CALL_ACCEPT"
@@ -153,8 +154,8 @@ object IncomingCallNotifier {
       putExtra("conversation_id", conversationId)
       putExtra("call_action", "decline")
     }
-    val acceptPi = PendingIntent.getActivity(ctx, notifId(callId) + 2, acceptIntent, flags)
-    val declinePi = PendingIntent.getActivity(ctx, notifId(callId) + 3, declineIntent, flags)
+    val acceptPi = PendingIntent.getActivity(ctx, notifId(callId) + 2, acceptIntent, piFlags)
+    val declinePi = PendingIntent.getActivity(ctx, notifId(callId) + 3, declineIntent, piFlags)
 
     val builder = NotificationCompat.Builder(ctx, CHANNEL_ID)
       .setSmallIcon(ctx.resources.getIdentifier("notification_icon", "drawable", ctx.packageName).let {
@@ -270,6 +271,21 @@ function withIncomingCallNotifications(config) {
       return cfg;
     },
   ]);
+
+  // App module must depend on firebase-messaging so LumixoFirebaseMessagingService
+  // can resolve RemoteMessage / FirebaseMessagingService (expo-notifications uses
+  // implementation scope, so it is not on the app compile classpath).
+  config = withAppBuildGradle(config, (cfg) => {
+    let src = cfg.modResults.contents;
+    if (!src.includes('com.google.firebase:firebase-messaging')) {
+      src = src.replace(
+        /dependencies\s*\{\s*\n/,
+        `dependencies {\n    // Required by LumixoFirebaseMessagingService (extends Expo FCM service).\n    implementation("com.google.firebase:firebase-messaging:24.0.1")\n`,
+      );
+    }
+    cfg.modResults.contents = src;
+    return cfg;
+  });
 
   config = withMainApplication(config, (cfg) => {
     let src = cfg.modResults.contents;

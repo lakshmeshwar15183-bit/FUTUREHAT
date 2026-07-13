@@ -10,6 +10,13 @@
 // crash — the network path still works.
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { ConversationSummary, Message, Profile, MessageType, UUID, RecentContact } from './shared';
+import {
+  mergeProfileIdentity,
+  nicknameStorageKey,
+  normalizeNickname,
+  setNicknameInMap,
+  type NicknameMap,
+} from './shared';
 
 const K = {
   convs: (uid: string) => `fh:cache:convs:${uid}`,
@@ -171,8 +178,42 @@ export async function getCachedProfile(id: string): Promise<Profile | null> {
   return readJSON<Profile | null>(K.profile(id), null);
 }
 
+/**
+ * Persist a profile without wiping stronger fields with null/empty network data.
+ * Always merges with any prior cache entry.
+ */
 export async function cacheProfile(profile: Profile): Promise<void> {
-  await writeJSON(K.profile(profile.id), profile);
+  const prev = await getCachedProfile(profile.id);
+  const merged = mergeProfileIdentity(prev, profile) ?? profile;
+  await writeJSON(K.profile(merged.id), merged as Profile);
+}
+
+/** Batch-cache participants from a conversation list (offline identity). */
+export async function cacheProfiles(profiles: Profile[]): Promise<void> {
+  await Promise.all(profiles.map((p) => cacheProfile(p)));
+}
+
+// ── Nicknames (local-only, Instagram-class) ───────────────────────────────────
+
+export async function getNicknames(myUserId: string): Promise<NicknameMap> {
+  if (!myUserId) return {};
+  return readJSON<NicknameMap>(nicknameStorageKey(myUserId), {});
+}
+
+export async function setNickname(
+  myUserId: string,
+  peerUserId: string,
+  nickname: string | null,
+): Promise<NicknameMap> {
+  const prev = await getNicknames(myUserId);
+  const next = setNicknameInMap(prev, peerUserId, nickname);
+  await writeJSON(nicknameStorageKey(myUserId), next);
+  return next;
+}
+
+export async function getNickname(myUserId: string, peerUserId: string): Promise<string | null> {
+  const map = await getNicknames(myUserId);
+  return normalizeNickname(map[peerUserId] ?? null);
 }
 
 // ── Recent contacts (persistent "previously chatted users" for New Chat) ───────

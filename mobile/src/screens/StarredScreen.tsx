@@ -97,7 +97,9 @@ export default function StarredScreen() {
               <Text style={styles.chat} numberOfLines={1}>{item.conversation_title ?? item.sender_name ?? 'Conversation'}</Text>
               <Text style={styles.when}>{whenLabel(item.starred_at)}</Text>
             </View>
-            <Text style={styles.sender} numberOfLines={1}>{item.sender_name ?? 'Unknown'}</Text>
+            <Text style={styles.sender} numberOfLines={1}>
+              {item.sender_name && item.sender_name !== 'Unknown' ? item.sender_name : 'Contact'}
+            </Text>
             <Text style={styles.preview} numberOfLines={2}>{preview(item)}</Text>
           </View>
           <Ionicons name="star" size={15} color={colors.accentPlus} style={{ marginLeft: spacing(2) }} />

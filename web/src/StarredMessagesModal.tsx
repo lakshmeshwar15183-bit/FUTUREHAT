@@ -71,7 +71,7 @@ export function StarredMessagesModal({
                   <span className="starred-chat">{m.conversation_title ?? 'Conversation'}</span>
                   <span className="starred-when">{whenLabel(m.starred_at)}</span>
                 </div>
-                <div className="starred-sender">{m.sender_name ?? 'Unknown'}</div>
+                <div className="starred-sender">{m.sender_name && m.sender_name !== 'Unknown' ? m.sender_name : 'Contact'}</div>
                 <div className="starred-body">{preview(m)}</div>
               </button>
             ))}

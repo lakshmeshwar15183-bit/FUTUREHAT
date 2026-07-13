@@ -425,7 +425,9 @@ export default function GroupInfoScreen() {
         .eq('is_deleted', false)
         .order('created_at', { ascending: true })
         .limit(500);
-      const nameById = new Map(members.map((m) => [m.userId, m.profile.display_name || 'User']));
+      const nameById = new Map(
+        members.map((m) => [m.userId, m.profile.display_name || m.profile.username || 'Contact']),
+      );
       const lines = (data || []).map((m: any) => {
         const who = nameById.get(m.sender_id) || 'System';
         const body =
@@ -664,12 +666,12 @@ export default function GroupInfoScreen() {
             >
               <Avatar
                 uri={m.profile.avatar_url}
-                name={m.profile.display_name}
+                name={m.profile.display_name || m.profile.username || 'Contact'}
                 size={44}
               />
               <View style={styles.memberInfo}>
                 <Text style={styles.memberName}>
-                  {m.userId === myId ? 'You' : m.profile.display_name || 'User'}
+                  {m.userId === myId ? 'You' : (m.profile.display_name || m.profile.username || 'Contact')}
                 </Text>
                 {m.role === 'super_admin' && (
                   <Text style={styles.memberRole}>Group owner</Text>

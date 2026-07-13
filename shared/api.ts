@@ -23,6 +23,57 @@ import type {
   MediaMeta,
   ViewOnceState,
 } from './types.js';
+import {
+  aggregateRecipientTick,
+  type TickStatus,
+} from './messageStatus.js';
+import {
+  resolveConversationTitle,
+  resolveConversationAvatar,
+  resolveDisplayName,
+  mergeProfileIdentity,
+} from './identity.js';
+
+// Re-export tick helpers so web/mobile can import from the shared API barrel.
+export {
+  type TickStatus,
+  type ReceiptLike,
+  tickRank,
+  maxTick,
+  mergeTick,
+  receiptStatusToTick,
+  aggregateRecipientTick,
+  buildTickMap,
+  applyReceiptToTickMap,
+  computeOutboundTick,
+  tickIsDouble,
+  tickIsRead,
+  tickLabel,
+  tickGlyph,
+} from './messageStatus.js';
+
+export {
+  type IdentityLike,
+  resolveDisplayName,
+  resolveUsernameHandle,
+  resolveAvatarUrl,
+  mergeProfileIdentity,
+  resolveConversationTitle,
+  resolveConversationAvatar,
+  isWeakLabel,
+  isWeakTitle,
+  cleanLabel,
+  mergeConversationIdentityFields,
+  stabilizeConversationList,
+} from './identity.js';
+
+export {
+  type NicknameMap,
+  normalizeNickname,
+  nicknameStorageKey,
+  setNicknameInMap,
+  getNicknameFromMap,
+} from './nicknames.js';
 
 // ── Auth ────────────────────────────────────────────────────────────────────
 
@@ -89,6 +140,9 @@ const PROFILE_SELF_COLS =
 /**
  * Batch-load peer profiles without phone. Uses public_profiles (0050/0051);
  * falls back to column-limited profiles select if the view is missing.
+ *
+ * Chunked `.in()` queries — large participant graphs were silently truncating /
+ * failing PostgREST URL limits, leaving holes that became "Unknown" titles.
  */
 export async function getProfilesPublic(
   client: SupabaseClient,
@@ -97,20 +151,25 @@ export async function getProfilesPublic(
   const map = new Map<UUID, Profile>();
   const ids = [...new Set(userIds.filter(Boolean))];
   if (!ids.length) return map;
-  const { data, error } = await client
-    .from('public_profiles')
-    .select(PROFILE_PUBLIC_COLS)
-    .in('id', ids);
-  if (!error && data) {
-    for (const p of data as Profile[]) map.set(p.id, { ...p, phone: null });
-    return map;
+
+  const CHUNK = 80;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const slice = ids.slice(i, i + CHUNK);
+    const { data, error } = await client
+      .from('public_profiles')
+      .select(PROFILE_PUBLIC_COLS)
+      .in('id', slice);
+    if (!error && data) {
+      for (const p of data as Profile[]) map.set(p.id, { ...p, phone: null });
+      continue;
+    }
+    // Fallback: never select * or phone.
+    const { data: rows } = await client
+      .from('profiles')
+      .select(PROFILE_PUBLIC_COLS)
+      .in('id', slice);
+    for (const p of (rows as Profile[]) ?? []) map.set(p.id, { ...p, phone: null });
   }
-  // Fallback: never select * or phone.
-  const { data: rows } = await client
-    .from('profiles')
-    .select(PROFILE_PUBLIC_COLS)
-    .in('id', ids);
-  for (const p of (rows as Profile[]) ?? []) map.set(p.id, { ...p, phone: null });
   return map;
 }
 
@@ -297,11 +356,12 @@ export async function getMyConversations(
         .maybeSingle();
 
       const otherProfiles = profiles.filter((p) => p.id !== user.id);
-      const title =
-        conv.type === 'group'
-          ? conv.name || 'Group'
-          : otherProfiles[0]?.display_name || 'Unknown';
-      const avatarUrl = conv.type === 'group' ? conv.avatar_url : otherProfiles[0]?.avatar_url;
+      // Identity: never fall back to the string "Unknown" when a profile exists
+      // but display_name is empty — use username / Contact via resolveConversationTitle.
+      // Missing profile rows (chunk/RLS race) → "Contact", not "Unknown"; list merge
+      // with local cache restores the previous good name.
+      const title = resolveConversationTitle(conv, otherProfiles);
+      const avatarUrl = resolveConversationAvatar(conv, otherProfiles);
 
       // Unread = messages from others in this conversation that I haven't read.
       // Best-effort + clamped: any error or over-count falls back to 0 (never wrong-high).
@@ -335,9 +395,30 @@ export async function getMyConversations(
         unreadCount,
         title,
         avatarUrl,
+        // Filled below from a batched receipts query (single source of truth).
+        lastMessageTick: null,
       };
     }),
   );
+
+  // Attach outbound ticks for last messages I sent so chat list + chat thread
+  // always agree (never hardcode double-ticks in the list UI).
+  const myLastIds = summaries
+    .map((s) => s.lastMessage)
+    .filter((m): m is Message => !!m && m.sender_id === user.id && !m.is_deleted && m.type !== 'system')
+    .map((m) => m.id);
+
+  if (myLastIds.length > 0) {
+    const receipts = await getReceipts(client, myLastIds);
+    for (const s of summaries) {
+      const m = s.lastMessage;
+      if (!m || m.sender_id !== user.id || m.is_deleted || m.type === 'system') {
+        s.lastMessageTick = null;
+        continue;
+      }
+      s.lastMessageTick = aggregateRecipientTick(receipts, m.id, user.id);
+    }
+  }
 
   return summaries.sort((a, b) => {
     const aTime = a.lastMessage?.created_at || a.conversation.created_at;
@@ -639,6 +720,47 @@ export async function forwardMessage(
   return res;
 }
 
+/**
+ * Mark a message as delivered to THIS device (grey double-tick for the sender).
+ * Insert-only on conflict: never downgrades an existing `read` receipt.
+ * Call when the recipient's client first receives the message (realtime, push,
+ * or history load) — not only when they open the chat.
+ */
+export async function markMessageAsDelivered(
+  client: SupabaseClient,
+  messageId: UUID,
+): Promise<{ error: Error | null }> {
+  const user = await getCurrentUser(client);
+  if (!user) return { error: new Error('not authenticated') };
+
+  const { error } = await client.from('message_receipts').upsert(
+    { message_id: messageId, user_id: user.id, status: 'delivered' },
+    { onConflict: 'message_id,user_id', ignoreDuplicates: true },
+  );
+  return { error };
+}
+
+/** Mark many messages delivered (batch). Same non-downgrade semantics. */
+export async function markMessagesAsDelivered(
+  client: SupabaseClient,
+  messageIds: UUID[],
+): Promise<{ error: Error | null }> {
+  const user = await getCurrentUser(client);
+  if (!user) return { error: new Error('not authenticated') };
+  const ids = [...new Set(messageIds.filter(Boolean))];
+  if (!ids.length) return { error: null };
+
+  const rows = ids.map((message_id) => ({
+    message_id,
+    user_id: user.id,
+    status: 'delivered' as const,
+  }));
+  const { error } = await client
+    .from('message_receipts')
+    .upsert(rows, { onConflict: 'message_id,user_id', ignoreDuplicates: true });
+  return { error };
+}
+
 export async function markMessageAsRead(
   client: SupabaseClient,
   messageId: UUID,
@@ -650,6 +772,20 @@ export async function markMessageAsRead(
     .from('message_receipts')
     .upsert({ message_id: messageId, user_id: user.id, status: 'read' });
   return { error };
+}
+
+/**
+ * Resolve the outbound tick for a single message id (list preview / deep link).
+ * Uses the same aggregate as getMyConversations / chat bubbles.
+ */
+export async function getMessageTick(
+  client: SupabaseClient,
+  messageId: UUID,
+  senderId?: string | null,
+): Promise<TickStatus> {
+  const receipts = await getReceipts(client, [messageId]);
+  const me = senderId ?? (await getCurrentUser(client))?.id ?? null;
+  return aggregateRecipientTick(receipts, messageId, me);
 }
 
 // Mark an ENTIRE conversation as read (WhatsApp "Mark as read"). Upserts a 'read'

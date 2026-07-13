@@ -10,10 +10,12 @@ import {
   getFeatureFlags, adminSetFeatureFlag, adminSetAppEnabled,
   getActiveAnnouncements, adminSendAnnouncement, adminRemoveCurrentAnnouncement,
   adminAuditLog, adminGlobalSearch, adminDeleteMessage, adminDeleteCommunity,
+  adminListDeletedMessages, adminRestoreMessage, adminGetConversation,
 } from '@shared/adminApi';
 import type {
   AdminCallStats, AdminMessageStats, AdminDbHealth, FeatureFlag,
   Announcement, AuditEntry, AdminGlobalSearch as AdminGlobalSearchResult, AnnouncementKind,
+  AdminDeletedMessage,
 } from '@shared/types';
 
 // ── Calls ────────────────────────────────────────────────────────────────────
@@ -60,27 +62,152 @@ export function AdminMessages() {
   const [s, setS] = useState<AdminMessageStats | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [delId, setDelId] = useState('');
-  useEffect(() => { adminMessageStats(supabase).then(setS).catch((e) => setErr(e.message)); }, []);
+  const [delReason, setDelReason] = useState('');
+  const [deleted, setDeleted] = useState<AdminDeletedMessage[]>([]);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const loadDeleted = () =>
+    adminListDeletedMessages(supabase, 80).then(setDeleted).catch(() => setDeleted([]));
+
+  useEffect(() => {
+    adminMessageStats(supabase).then(setS).catch((e) => setErr(e.message));
+    loadDeleted();
+  }, []);
+
   if (err) return <div className="admin-warn">{err}</div>;
   if (!s) return <div className="admin-empty">Loading message metrics…</div>;
   const cards = [
     ['Total', s.total], ['Deleted', s.deleted], ['Delivered', s.delivered], ['Read', s.read],
     ['Undelivered', s.undelivered], ['Scheduled pending', s.scheduled_pending],
   ] as const;
+
   return (
     <div>
       <div className="admin-grid">
-        {cards.map(([l, v]) => <div key={l} className="admin-stat"><div className="admin-stat-num">{v}</div><div className="admin-stat-label">{l}</div></div>)}
+        {cards.map(([l, v]) => (
+          <div key={l} className="admin-stat">
+            <div className="admin-stat-num">{v}</div>
+            <div className="admin-stat-label">{l}</div>
+          </div>
+        ))}
       </div>
-      <h4 className="admin-subhead">Delete a message by ID</h4>
-      <div className="admin-inline-form">
-        <input placeholder="message UUID" value={delId} onChange={(e) => setDelId(e.target.value)} />
-        <button className="danger" disabled={!delId} onClick={async () => {
-          try { await adminDeleteMessage(supabase, delId.trim()); setDelId(''); alert('Message deleted.'); }
-          catch (e: any) { alert(e.message); }
-        }}>Delete message</button>
+
+      <p className="admin-hint">
+        Prefer <strong>Reports</strong> for day-to-day moderation — delete/view/warn from the report card
+        (message UUID is automatic). This page is metrics + deleted history.
+      </p>
+
+      <h4 className="admin-subhead">Recent deleted messages</h4>
+      <div className="admin-list">
+        {deleted.length === 0 && (
+          <div className="admin-empty">No admin-deleted messages in the audit trail yet.</div>
+        )}
+        {deleted.map((d) => (
+          <div key={`${d.message_id}-${d.deleted_at}`} className="admin-row compact">
+            <div className="admin-row-head">
+              <span className="admin-tag">{d.message_type || 'message'}</span>
+              <span className={`admin-status ${d.still_deleted ? 'open' : 'resolved'}`}>
+                {d.still_deleted ? 'deleted' : 'restored'}
+              </span>
+            </div>
+            <div className="admin-id-chip">
+              <span className="admin-id-label">UUID</span>
+              <code className="admin-id-value">{d.message_id}</code>
+              <button
+                type="button"
+                className="admin-copy-btn"
+                onClick={() => void navigator.clipboard?.writeText(d.message_id)}
+              >
+                Copy
+              </button>
+            </div>
+            <div className="admin-row-meta">
+              Deleted by {d.deleted_by_name || d.deleted_by_username || (d.deleted_by ? d.deleted_by.slice(0, 8) : '—')}
+              {' · '}{new Date(d.deleted_at).toLocaleString()}
+              {d.reason && <> · reason: {d.reason}</>}
+              {d.report_id && <> · report {d.report_id.slice(0, 8)}…</>}
+            </div>
+            <div className="admin-actions">
+              {d.restorable && d.still_deleted && (
+                <button
+                  type="button"
+                  disabled={busy === d.message_id}
+                  onClick={async () => {
+                    if (!confirm('Restore this message from the audit snapshot?')) return;
+                    setBusy(d.message_id);
+                    try {
+                      const res = await adminRestoreMessage(supabase, d.message_id);
+                      alert(res.content_restored ? 'Restored (content recovered).' : 'Marked not deleted (content snapshot empty).');
+                      await loadDeleted();
+                    } catch (e: any) {
+                      alert(e.message);
+                    } finally {
+                      setBusy(null);
+                    }
+                  }}
+                >
+                  Restore
+                </button>
+              )}
+              {!d.restorable && d.still_deleted && (
+                <span className="admin-hint" style={{ margin: 0 }}>Not restorable (no content snapshot)</span>
+              )}
+            </div>
+          </div>
+        ))}
       </div>
-      <p className="admin-hint">Offline queue / retry state lives on each device (local outbox) and isn’t visible server-side; these are the server-authoritative delivery counts.</p>
+
+      <details
+        className="admin-advanced"
+        open={advancedOpen}
+        onToggle={(e) => setAdvancedOpen((e.target as HTMLDetailsElement).open)}
+      >
+        <summary>Advanced — emergency delete by UUID</summary>
+        <p className="admin-hint">
+          Emergency only. Normal workflow: Reports → Delete message (auto-bound UUID).
+          Every delete is written to the audit log.
+        </p>
+        <div className="admin-inline-form">
+          <input
+            placeholder="message UUID"
+            value={delId}
+            onChange={(e) => setDelId(e.target.value)}
+            autoComplete="off"
+          />
+          <input
+            placeholder="reason (optional)"
+            value={delReason}
+            onChange={(e) => setDelReason(e.target.value)}
+          />
+          <button
+            type="button"
+            className="danger"
+            disabled={!delId.trim()}
+            onClick={async () => {
+              if (!confirm('Permanently soft-delete this message for everyone?')) return;
+              try {
+                await adminDeleteMessage(supabase, delId.trim(), {
+                  reason: delReason.trim() || 'advanced_uuid_tool',
+                });
+                setDelId('');
+                setDelReason('');
+                alert('Message deleted (audited).');
+                await loadDeleted();
+              } catch (e: any) {
+                alert(e.message);
+              }
+            }}
+          >
+            Delete message
+          </button>
+        </div>
+      </details>
+
+      <p className="admin-hint">
+        Offline queue / retry state lives on each device (local outbox) and isn’t visible server-side;
+        metrics above are server-authoritative delivery counts.
+      </p>
     </div>
   );
 }
@@ -265,17 +392,128 @@ export function AdminSearch() {
   return (
     <div className="admin-gsearch">
       <form className="admin-search-bar" onSubmit={run}>
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search users, communities, channels, messages, reports…" />
-        <button disabled={busy}>{busy ? '…' : 'Search'}</button>
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Message UUID · User ID · username · email · phone · Chat ID…"
+        />
+        <button type="submit" disabled={busy}>{busy ? '…' : 'Search'}</button>
       </form>
+      <p className="admin-hint">
+        Exact UUID match finds messages, chats, reports, and users. Text search covers
+        username/email/phone (users), message content, report reasons.
+      </p>
       {err && <div className="admin-warn">{err}</div>}
       {res && (
         <div className="admin-gsearch-results">
-          <Section title={`Users (${res.users.length})`}>{res.users.map((u) => <div key={u.id} className="admin-row compact"><b>{u.display_name || u.username}</b><span>{u.email}</span><span className={`admin-status ${u.account_status}`}>{u.account_status}</span></div>)}</Section>
-          <Section title={`Communities (${res.communities.length})`}>{res.communities.map((c) => <div key={c.id} className="admin-row compact"><b>{c.name}</b><button className="danger sm" onClick={async () => { if (confirm(`Delete community "${c.name}"?`)) { try { await adminDeleteCommunity(supabase, c.id); alert('Deleted'); } catch (e: any) { alert(e.message); } } }}>Delete</button></div>)}</Section>
-          <Section title={`Channels (${res.channels.length})`}>{res.channels.map((c) => <div key={c.id} className="admin-row compact"><b>{c.name}</b><span className="admin-tag">{c.kind}</span></div>)}</Section>
-          <Section title={`Messages (${res.messages.length})`}>{res.messages.map((m) => <div key={m.id} className="admin-row compact"><span className="admin-tag">{m.type}</span><span>{m.content?.slice(0, 60)}</span><button className="danger sm" onClick={async () => { try { await adminDeleteMessage(supabase, m.id); alert('Deleted'); } catch (e: any) { alert(e.message); } }}>Delete</button></div>)}</Section>
-          <Section title={`Reports (${res.reports.length})`}>{res.reports.map((r) => <div key={r.id} className="admin-row compact"><span className="admin-tag">{r.target_type}</span><span>{r.reason}</span><span className={`admin-status ${r.status}`}>{r.status}</span></div>)}</Section>
+          <Section title={`Users (${res.users.length})`}>
+            {res.users.map((u) => (
+              <div key={u.id} className="admin-row compact">
+                <b>{u.display_name || u.username || u.id.slice(0, 8)}</b>
+                <span>{u.email}</span>
+                <code title={u.id}>{u.id.slice(0, 8)}…</code>
+                <span className={`admin-status ${u.account_status}`}>{u.account_status}</span>
+              </div>
+            ))}
+          </Section>
+          <Section title={`Conversations / chats (${res.conversations?.length ?? 0})`}>
+            {(res.conversations ?? []).map((c) => (
+              <div key={c.id} className="admin-row compact">
+                <span className="admin-tag">{c.type}</span>
+                <b>{c.name || 'Unnamed'}</b>
+                <code>{c.id}</code>
+                <button
+                  type="button"
+                  className="sm"
+                  onClick={async () => {
+                    try {
+                      await adminGetConversation(supabase, c.id);
+                      alert(`Conversation ${c.id} loaded (${c.type}). Open Reports → View conversation for a full thread UI, or copy this Chat ID.`);
+                    } catch (e: any) {
+                      alert(e.message);
+                    }
+                  }}
+                >
+                  Load
+                </button>
+              </div>
+            ))}
+          </Section>
+          <Section title={`Messages (${res.messages.length})`}>
+            {res.messages.map((m) => (
+              <div key={m.id} className="admin-row compact">
+                <span className="admin-tag">{m.type}</span>
+                {m.is_deleted && <span className="admin-status open">deleted</span>}
+                <span>{m.content?.slice(0, 60) || <em>(no text)</em>}</span>
+                <code title={m.id}>{m.id.slice(0, 8)}…</code>
+                <button
+                  type="button"
+                  className="sm"
+                  onClick={() => void navigator.clipboard?.writeText(m.id)}
+                >
+                  Copy UUID
+                </button>
+                {!m.is_deleted && (
+                  <button
+                    type="button"
+                    className="danger sm"
+                    onClick={async () => {
+                      if (!confirm('Delete this message? Prefer Reports when available.')) return;
+                      try {
+                        await adminDeleteMessage(supabase, m.id, { reason: 'global_search' });
+                        alert('Deleted');
+                        await run();
+                      } catch (e: any) {
+                        alert(e.message);
+                      }
+                    }}
+                  >
+                    Delete
+                  </button>
+                )}
+              </div>
+            ))}
+          </Section>
+          <Section title={`Reports (${res.reports.length})`}>
+            {res.reports.map((r) => (
+              <div key={r.id} className="admin-row compact">
+                <span className="admin-tag">{r.target_type}</span>
+                <span>{r.reason}</span>
+                <span className={`admin-status ${r.status}`}>{r.status}</span>
+                {r.message_id && <code title={r.message_id}>msg {r.message_id.slice(0, 8)}…</code>}
+              </div>
+            ))}
+          </Section>
+          <Section title={`Communities (${res.communities.length})`}>
+            {res.communities.map((c) => (
+              <div key={c.id} className="admin-row compact">
+                <b>{c.name}</b>
+                <button
+                  type="button"
+                  className="danger sm"
+                  onClick={async () => {
+                    if (!confirm(`Delete community "${c.name}"?`)) return;
+                    try {
+                      await adminDeleteCommunity(supabase, c.id);
+                      alert('Deleted');
+                    } catch (e: any) {
+                      alert(e.message);
+                    }
+                  }}
+                >
+                  Delete
+                </button>
+              </div>
+            ))}
+          </Section>
+          <Section title={`Channels (${res.channels.length})`}>
+            {res.channels.map((c) => (
+              <div key={c.id} className="admin-row compact">
+                <b>{c.name}</b>
+                <span className="admin-tag">{c.kind}</span>
+              </div>
+            ))}
+          </Section>
         </div>
       )}
     </div>

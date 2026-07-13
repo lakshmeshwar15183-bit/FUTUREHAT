@@ -448,6 +448,9 @@
   font-size: 13px;
   letter-spacing: -1px;
 }
+.preview-ticks.read {
+  color: #53bdeb;
+}
 
 /* WhatsApp-class list filter chips under search */
 .filter-chips {

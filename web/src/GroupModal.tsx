@@ -146,7 +146,7 @@ export function GroupModal({ onClose, onCreated }: Props) {
               <div className="selected-users">
                 {selectedUsers.map((u) => (
                   <div key={u.id} className="selected-user">
-                    {u.display_name || 'Unknown'}
+                    {u.display_name || (u.username ? `@${u.username}` : 'Contact')}
                     <button
                       type="button"
                       onClick={() => toggleUser(u)}
@@ -170,7 +170,7 @@ export function GroupModal({ onClose, onCreated }: Props) {
                   >
                     <div className="avatar">{u.display_name?.[0] || '?'}</div>
                     <div className="user-info">
-                      <div className="user-name">{u.display_name || 'Unknown'}</div>
+                      <div className="user-name">{u.display_name || (u.username ? `@${u.username}` : 'Contact')}</div>
                       <div className="user-username">@{u.username || u.id.slice(0, 8)}</div>
                     </div>
                     {isSelected && <div className="check-mark">✓</div>}

@@ -90,6 +90,7 @@ export function writeCachedConversations(uid: string, list: ConversationSummary[
       unreadCount: c.unreadCount,
       title: c.title,
       avatarUrl: c.avatarUrl,
+      lastMessageTick: c.lastMessageTick ?? null,
     }));
     localStorage.setItem(convCacheKey(uid), JSON.stringify(slim));
   } catch {
