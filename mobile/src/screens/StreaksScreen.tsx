@@ -108,7 +108,8 @@ export default function StreaksScreen() {
           <LumixoCat mood="sleeping" size="md" decorative />
           <Text style={styles.emptyTitle}>No streaks yet</Text>
           <Text style={styles.emptySub}>
-            Message a friend every day — when you BOTH qualify, your streak starts climbing.
+            Message a friend every day — when you both show up, your streak grows. Open a chat and
+            say hello to start.
           </Text>
         </View>
       ) : (

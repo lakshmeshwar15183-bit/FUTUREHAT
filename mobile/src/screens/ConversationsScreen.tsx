@@ -79,8 +79,11 @@ import StatusStrip from '../components/status/StatusStrip';
 import { useChatLock } from '../security/ChatLock';
 import type { RootStackParamList } from '../navigation/types';
 import { Alert, showSheet } from '../ui/dialog';
+import { STREAK_PITCH } from '../branding';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
+
+const STREAK_TIP_KEY = 'fh:ui:streakTipDismissed';
 
 // Enable smooth height/opacity transitions for the contextual selection bar on
 // Android (LayoutAnimation is opt-in there). No-op if already enabled.
@@ -390,6 +393,23 @@ export default function ConversationsScreen() {
   const [filter, setFilter] = useState<ChatFilter>('all');
   const [moreFilters, setMoreFilters] = useState(false);
   const [favIds, setFavIds] = useState<Set<string>>(new Set());
+  // Soft product tip (pre-launch identity) — dismissible, never blocks chats.
+  const [showStreakTip, setShowStreakTip] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    getCache<boolean>(STREAK_TIP_KEY, false).then((dismissed) => {
+      if (alive && !dismissed) setShowStreakTip(true);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const dismissStreakTip = useCallback(() => {
+    setShowStreakTip(false);
+    void setCache(STREAK_TIP_KEY, true);
+  }, []);
 
   const q = query.trim().toLowerCase();
   const convById = useMemo(() => {
@@ -1399,6 +1419,25 @@ export default function ConversationsScreen() {
                 })}
               </View>
             )}
+            {/* Soft identity tip — dismissible, never blocks chat. */}
+            {showStreakTip && q === '' && !selectionMode && (
+              <View style={styles.streakTip}>
+                <Text style={styles.streakTipEmoji} allowFontScaling={false}>🔥</Text>
+                <View style={styles.streakTipBody}>
+                  <Text style={styles.streakTipTitle}>Friendship streaks</Text>
+                  <Text style={styles.streakTipSub}>{STREAK_PITCH}</Text>
+                </View>
+                <Pressable
+                  onPress={dismissStreakTip}
+                  hitSlop={10}
+                  accessibilityRole="button"
+                  accessibilityLabel="Dismiss tip"
+                  style={styles.streakTipClose}
+                >
+                  <Ionicons name="close" size={18} color={colors.textFaint} />
+                </Pressable>
+              </View>
+            )}
           </View>
         )}
         refreshControl={
@@ -1418,6 +1457,8 @@ export default function ConversationsScreen() {
               <Text style={styles.emptyTitle}>
                 {q
                   ? 'No matching chats'
+                  : filter === 'streaks'
+                  ? 'No streaks yet'
                   : filter !== 'all'
                   ? `No ${ALL_CHIP_LABELS[filter].toLowerCase()} chats`
                   : 'No conversations yet'}
@@ -1425,9 +1466,11 @@ export default function ConversationsScreen() {
               <Text style={styles.emptySub}>
                 {q
                   ? 'Try a different search.'
+                  : filter === 'streaks'
+                  ? 'Message a friend every day — when you both show up, your streak grows.'
                   : filter !== 'all'
                   ? 'Try a different filter, or start a new chat.'
-                  : 'Find someone you know and say hello.'}
+                  : 'Find someone you know and say hello. Message daily to build a friendship streak.'}
               </Text>
               {!q && (
                 <View style={styles.emptyActions}>
@@ -1444,6 +1487,14 @@ export default function ConversationsScreen() {
                       onPress={() => navigation.navigate('NewGroup')}
                     >
                       <Text style={styles.emptyBtnSecondaryText}>Create a group</Text>
+                    </Pressable>
+                  )}
+                  {filter === 'all' && (
+                    <Pressable
+                      style={({ pressed }) => [styles.emptyBtnSecondary, pressed && { opacity: 0.88 }]}
+                      onPress={() => navigation.navigate('Invite')}
+                    >
+                      <Text style={styles.emptyBtnSecondaryText}>Invite a friend</Text>
                     </Pressable>
                   )}
                 </View>
@@ -1637,6 +1688,40 @@ const makeStyles = (colors: Palette) =>
       paddingHorizontal: spacing(4), paddingVertical: spacing(2),
     },
     emptyBtnSecondaryText: { color: colors.primary, fontSize: font.body, fontWeight: '600' },
+    streakTip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginHorizontal: spacing(3),
+      marginTop: spacing(2),
+      marginBottom: spacing(1),
+      paddingHorizontal: spacing(3),
+      paddingVertical: spacing(2.5),
+      borderRadius: radius.md,
+      backgroundColor: colors.isLight ? colors.primary + '12' : colors.primary + '22',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.primary + '33',
+      gap: spacing(2),
+    },
+    streakTipEmoji: { fontSize: 22, lineHeight: 26 },
+    streakTipBody: { flex: 1, minWidth: 0 },
+    streakTipTitle: {
+      color: colors.text,
+      fontSize: font.small,
+      fontWeight: '700',
+      letterSpacing: -0.1,
+    },
+    streakTipSub: {
+      color: colors.textMuted,
+      fontSize: font.tiny,
+      marginTop: 2,
+      lineHeight: 16,
+    },
+    streakTipClose: {
+      width: 32,
+      height: 32,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
     fab: {
       position: 'absolute',
       right: spacing(4),

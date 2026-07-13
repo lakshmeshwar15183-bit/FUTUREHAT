@@ -29,7 +29,7 @@ import {
 } from '../lib/shared';
 import { resetPasswordRedirectUrl } from '../lib/authLinks';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
-import { APP_NAME } from '../branding';
+import { APP_NAME, TAGLINE } from '../branding';
 import { LumixoCat } from '../components/LumixoCat';
 
 type Mode = 'signin' | 'signup' | 'forgot';
@@ -186,6 +186,9 @@ export default function AuthScreen() {
       >
         <Text style={styles.brand}>{APP_NAME}</Text>
         <Text style={styles.tagline}>{tagline}</Text>
+        {!isForgot && (
+          <Text style={styles.productLine}>{TAGLINE}</Text>
+        )}
 
         <View style={styles.cardWrap}>
           <View style={styles.mascot}>
@@ -324,8 +327,16 @@ const makeStyles = (colors: Palette) =>
       color: colors.textMuted,
       fontSize: font.small,
       marginTop: spacing(2),
-      marginBottom: spacing(2),
+      marginBottom: spacing(1),
       letterSpacing: -0.1,
+    },
+    productLine: {
+      color: colors.textMuted,
+      fontSize: font.tiny,
+      marginBottom: spacing(2),
+      textAlign: 'center',
+      opacity: 0.9,
+      letterSpacing: -0.05,
     },
     cardWrap: {
       width: '100%',
