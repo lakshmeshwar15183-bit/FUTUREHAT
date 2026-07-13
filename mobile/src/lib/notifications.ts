@@ -69,10 +69,27 @@ Notifications.setNotificationHandler({
 
     const isCall = type === 'call' || kind === 'call';
     if (isCall) {
+      // Foreground ring UI already owns the experience — no second system banner.
+      // Native CallStyle still shows when backgrounded (FCM path).
+      if (inAppCallRinging || activeCallId) {
+        return {
+          shouldShowAlert: false,
+          shouldPlaySound: false,
+          shouldSetBadge: false,
+        };
+      }
       return {
         shouldShowAlert: true,
-        shouldPlaySound: false,
+        shouldPlaySound: false, // InCallManager / native channel owns ringtone
         shouldSetBadge: false,
+      };
+    }
+
+    if (type === 'missed_call') {
+      return {
+        shouldShowAlert: true,
+        shouldPlaySound: true,
+        shouldSetBadge: true,
       };
     }
 
@@ -82,10 +99,12 @@ Notifications.setNotificationHandler({
       kind === 'message' ||
       kind === 'group' ||
       kind === 'mention';
-    const suppress = isMsg && convId != null && convId === openConversationId;
+    const suppressChat = isMsg && convId != null && convId === openConversationId;
+    // During an active call, still show the tray entry but no sound (WhatsApp-class).
+    const silentDuringCall = isMsg && !!activeCallId;
     return {
-      shouldShowAlert: !suppress,
-      shouldPlaySound: !suppress,
+      shouldShowAlert: !suppressChat,
+      shouldPlaySound: !suppressChat && !silentDuringCall,
       shouldSetBadge: true,
     };
   },
@@ -95,6 +114,24 @@ let initialized = false;
 let pushActive = false;
 let lastToken: string | null = null;
 let openConversationId: string | null = null;
+/** When true, in-app IncomingCallView owns the ring UI — suppress tray duplicates. */
+let inAppCallRinging = false;
+/** When set, an active WebRTC call is live — silence message notif sound. */
+let activeCallId: string | null = null;
+
+/** CallProvider: full-screen ring UI is visible (foreground). */
+export function setInAppCallRinging(ringing: boolean): void {
+  inAppCallRinging = ringing;
+}
+
+/** CallProvider / ActiveCallView: ongoing call id or null. */
+export function setActiveCallId(callId: string | null): void {
+  activeCallId = callId;
+}
+
+export function getActiveCallId(): string | null {
+  return activeCallId;
+}
 
 export type NotificationResponseHandler = (response: {
   type: string;
@@ -575,6 +612,9 @@ export async function presentMessageNotification(o: MessageNotifOpts): Promise<v
           `${count} new messages\n${o.body}`
         : displayBody;
 
+    // Active call: still stack tray messages, but no ringtone (WhatsApp-class).
+    const silent = !!activeCallId;
+
     await Notifications.scheduleNotificationAsync({
       // Same id as FCM android.notification.tag → collapses to one tray entry.
       identifier: `chat:${o.conversationId}`,
@@ -591,7 +631,7 @@ export async function presentMessageNotification(o: MessageNotifOpts): Promise<v
           count: String(count),
           avatarUrl: o.senderAvatar ?? '',
         },
-        sound: 'default',
+        sound: silent ? undefined : 'default',
         badge: 1,
         color: ACCENT,
         ...(Platform.OS === 'android'
@@ -603,7 +643,7 @@ export async function presentMessageNotification(o: MessageNotifOpts): Promise<v
                   : CHANNELS.messages,
               priority: Notifications.AndroidNotificationPriority.HIGH,
               sticky: false,
-              vibrate: [0, 250, 250, 250],
+              vibrate: silent ? [] : [0, 250, 250, 250],
             }
           : {}),
       },
@@ -627,6 +667,9 @@ export interface CallNotifOpts {
  */
 export async function presentCallNotification(o: CallNotifOpts): Promise<void> {
   try {
+    // Never double-post when the in-app full-screen ring is already up.
+    if (inAppCallRinging) return;
+
     await Notifications.dismissNotificationAsync(`call:${o.callId}`).catch(() => {});
     const body = o.video ? 'Incoming video call' : 'Incoming voice call';
     const nativeOk = await nativeShowIncomingCall({
@@ -637,6 +680,8 @@ export async function presentCallNotification(o: CallNotifOpts): Promise<void> {
       video: o.video,
     });
     if (nativeOk) {
+      // Collapse any Expo-fallback duplicate for the same call id.
+      await Notifications.dismissNotificationAsync(`call:${o.callId}`).catch(() => {});
       void recordDelivery({ kind: 'call', callId: o.callId, sentAt: Date.now() });
       return;
     }
@@ -752,7 +797,13 @@ export async function presentMissedCallNotification(o: MissedCallNotifOpts): Pro
       content: {
         title: `Missed ${o.isVideo ? 'video' : 'voice'} call`,
         body: o.title,
-        data: { type: 'missed_call', callId: o.callId, conversationId: o.conversationId },
+        // Tap opens the chat (not the call UI) — conversationId required.
+        data: {
+          type: 'missed_call',
+          callId: o.callId,
+          conversationId: o.conversationId,
+          kind: 'missed_call',
+        },
         ...(Platform.OS === 'android' ? { channelId: CHANNELS.missedCalls } : {}),
         sound: 'default',
         color: ACCENT,

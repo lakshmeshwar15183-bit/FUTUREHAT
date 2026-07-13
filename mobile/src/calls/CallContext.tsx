@@ -45,11 +45,12 @@ import {
   type UUID,
 } from '../lib/shared';
 import {
-  presentCallNotification,
   clearCallNotification,
   presentMissedCallNotification,
   presentOngoingCallNotification,
   clearOngoingCallNotification,
+  setActiveCallId,
+  setInAppCallRinging,
 } from '../lib/notifications';
 import { CallSession, type ConnectionPath } from './webrtc';
 import Avatar from '../components/Avatar';
@@ -69,6 +70,11 @@ interface CallContextValue {
   acceptCallById: (callId: UUID) => Promise<void>;
   /** Decline from notification action. */
   declineCallById: (callId: UUID) => Promise<void>;
+  /**
+   * Clear local ring UI + tray without writing declined.
+   * Use when caller hung up / missed / ended already (never overwrite terminal status).
+   */
+  dismissIncomingById: (callId: UUID) => Promise<void>;
 }
 
 const Ctx = createContext<CallContextValue | null>(null);
@@ -89,8 +95,15 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   // (that race was causing missed hangups + stuck ring).
   const activeRef = useRef<ActiveCall | null>(null);
   const incomingRef = useRef<{ call: Call; peer: Profile | null } | null>(null);
-  useEffect(() => { activeRef.current = active; }, [active]);
-  useEffect(() => { incomingRef.current = incoming; }, [incoming]);
+  useEffect(() => {
+    activeRef.current = active;
+    setActiveCallId(active?.callId ?? null);
+  }, [active]);
+  useEffect(() => {
+    incomingRef.current = incoming;
+    // Foreground full-screen ring owns the UI — suppress tray duplicates.
+    setInAppCallRinging(!!incoming && !active);
+  }, [incoming, active]);
 
   // Keep our user id in sync with auth. Fetching once on mount is not enough:
   // on a cold start the session is restored from storage *after* this provider
@@ -105,37 +118,28 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     return () => { alive = false; unsubscribe(); };
   }, []);
 
-  // Listen for incoming calls (stable subscription — do NOT depend on active/incoming).
-  useEffect(() => {
-    if (!uid) return;
-    const channel = subscribeToIncomingCalls(supabase, async (call) => {
-      if (call.caller_id === uid || call.status !== 'ringing') return;
+  // Promote a ringing row into the full-screen IncomingCallView (shared by
+  // realtime INSERT + cold-start hydrate). Never posts a system tray notif —
+  // foreground owns InCallManager; background owns FCM/native CallStyle.
+  const presentIncomingRing = useCallback(
+    async (call: Call, peer: Profile | null) => {
+      if (!uid || call.caller_id === uid || call.status !== 'ringing') return;
       if (activeRef.current || incomingRef.current) {
-        // Busy — decline so caller gets a terminal state (no stuck "Ringing…").
-        await updateCallStatus(supabase, call.id, 'declined').catch(() => {});
-        return;
-      }
-      const peer = await getProfile(supabase, call.caller_id);
-      if (activeRef.current || incomingRef.current) {
+        if (incomingRef.current?.call.id === call.id || activeRef.current?.callId === call.id) {
+          return;
+        }
+        // Busy on another call — decline so the caller is not stuck ringing.
         await updateCallStatus(supabase, call.id, 'declined').catch(() => {});
         return;
       }
       setIncoming({ call, peer });
       stopAllCallTones();
       if (AppState.currentState === 'active') {
+        // Drop any stale system ring tray so only the in-app UI + tone remains.
+        void clearCallNotification(call.id);
         try {
           (InCallManager as any).startRingtone('_DEFAULT_');
         } catch { /* noop */ }
-      }
-      // Foreground only — NotificationsBridge owns background tray (avoids double ring notif).
-      if (AppState.currentState === 'active') {
-        void presentCallNotification({
-          callId: call.id,
-          conversationId: call.conversation_id,
-          title: resolveDisplayName(peer, { fallback: 'Lumixo' }),
-          video: call.type === 'video',
-          avatarUrl: peer?.avatar_url ?? undefined,
-        });
       }
 
       if (ringTimeoutRef.current) clearTimeout(ringTimeoutRef.current);
@@ -163,6 +167,17 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
           setIncoming((cur) => (cur?.call.id === call.id ? null : cur));
         }
       }, 60_000);
+    },
+    [uid],
+  );
+
+  // Listen for incoming calls (stable subscription — do NOT depend on active/incoming).
+  useEffect(() => {
+    if (!uid) return;
+    const channel = subscribeToIncomingCalls(supabase, async (call) => {
+      if (call.caller_id === uid || call.status !== 'ringing') return;
+      const peer = await getProfile(supabase, call.caller_id).catch(() => null);
+      await presentIncomingRing(call, peer);
     });
     return () => {
       supabase.removeChannel(channel);
@@ -171,7 +186,52 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
         ringTimeoutRef.current = null;
       }
     };
-  }, [uid]);
+  }, [uid, presentIncomingRing]);
+
+  // Cold start / JS resume: hydrate any still-ringing call the user can see
+  // (RLS limits to their conversations) so Accept after app open still works.
+  useEffect(() => {
+    if (!uid) return;
+    let alive = true;
+    (async () => {
+      try {
+        const { data } = await supabase
+          .from('calls')
+          .select('id, conversation_id, caller_id, type, status, started_at')
+          .eq('status', 'ringing')
+          .neq('caller_id', uid)
+          .order('started_at', { ascending: false })
+          .limit(3);
+        if (!alive || !data?.length || activeRef.current || incomingRef.current) return;
+        const now = Date.now();
+        for (const row of data as Call[]) {
+          const started = row.started_at ? new Date(row.started_at).getTime() : 0;
+          // Ignore stale rings older than 55s (server timeout ≈ 60s).
+          if (started && now - started > 55_000) continue;
+          const peer = await getProfile(supabase, row.caller_id).catch(() => null);
+          if (!alive) return;
+          await presentIncomingRing(row, peer);
+          break;
+        }
+      } catch { /* best-effort hydrate */ }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [uid, presentIncomingRing]);
+
+  // When user returns to foreground mid-ring, collapse system tray → in-app only.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') return;
+      const inc = incomingRef.current;
+      if (inc && !activeRef.current) {
+        void clearCallNotification(inc.call.id);
+        setInAppCallRinging(true);
+      }
+    });
+    return () => sub.remove();
+  }, []);
 
   // Watch the incoming call's row so a caller-hangup (status → ended/declined/
   // missed) stops the ring INSTANTLY. subscribeToIncomingCalls above listens to
@@ -437,6 +497,20 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     await updateCallStatus(supabase, callId, 'declined').catch(() => {});
   }, []);
 
+  /** Clear local ring without writing declined (caller already ended/missed). */
+  const dismissIncomingById = useCallback(async (callId: UUID) => {
+    if (!callId) return;
+    if (ringTimeoutRef.current) {
+      clearTimeout(ringTimeoutRef.current);
+      ringTimeoutRef.current = null;
+    }
+    stopAllCallTones();
+    void clearCallNotification(callId);
+    if (incomingRef.current?.call.id === callId) {
+      setIncoming(null);
+    }
+  }, []);
+
   const endActive = useCallback(async (status: 'ended' | 'missed' = 'ended') => {
     const cur = activeRef.current;
     if (!cur) return;
@@ -459,7 +533,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <Ctx.Provider value={{ startCall, acceptCallById, declineCallById }}>
+    <Ctx.Provider value={{ startCall, acceptCallById, declineCallById, dismissIncomingById }}>
       {children}
       {incoming && !active && (
         <IncomingCallView
@@ -502,6 +576,7 @@ function IncomingCallView({
   onDecline: () => void;
 }) {
   const pulse = useRef(new Animated.Value(1)).current;
+  const [mutedRing, setMutedRing] = useState(false);
   useEffect(() => {
     const loop = Animated.loop(
       Animated.sequence([
@@ -513,8 +588,22 @@ function IncomingCallView({
     return () => loop.stop();
   }, [pulse]);
 
+  function toggleMuteRing() {
+    setMutedRing((m) => {
+      const next = !m;
+      try {
+        if (next) {
+          (InCallManager as any).stopRingtone?.();
+        } else {
+          (InCallManager as any).startRingtone?.('_DEFAULT_');
+        }
+      } catch { /* noop */ }
+      return next;
+    });
+  }
+
   return (
-    <View style={[StyleSheet.absoluteFill, styles.ringContainer]}>
+    <View style={[StyleSheet.absoluteFill, styles.ringContainer]} accessibilityViewIsModal>
       <Text style={styles.incomingLabel}>
         Incoming {type === 'video' ? 'video' : 'voice'} call
       </Text>
@@ -522,10 +611,16 @@ function IncomingCallView({
         <Avatar uri={peer?.avatar_url} name={resolveDisplayName(peer, { fallback: 'Contact' })} size={128} />
       </Animated.View>
       <Text style={styles.peerName}>{resolveDisplayName(peer, { fallback: 'Contact' })}</Text>
-      <Text style={styles.incomingHint}>Lumixo · end-to-end media (DTLS/SRTP)</Text>
+      <Text style={styles.incomingHint}>End-to-end encrypted · Lumixo</Text>
       <View style={styles.ringActions}>
-        <CircleButton icon="call" color="#2BD167" label="Accept" onPress={onAccept} />
         <CircleButton icon="close" color="#F15C6D" label="Decline" onPress={onDecline} />
+        <CircleButton
+          icon={mutedRing ? 'volume-mute' : 'volume-high'}
+          color="#555E67"
+          label={mutedRing ? 'Unmute' : 'Mute'}
+          onPress={toggleMuteRing}
+        />
+        <CircleButton icon="call" color="#2BD167" label="Accept" onPress={onAccept} />
       </View>
     </View>
   );
@@ -551,6 +646,10 @@ function ActiveCallView({
   const [localGen, setLocalGen] = useState(0);
   const [facing, setFacing] = useState<'user' | 'environment'>('user');
   const [connected, setConnected] = useState(false);
+  /** Caller UX: Calling… → Ringing… → Connecting… → timer. */
+  const [outPhase, setOutPhase] = useState<'calling' | 'ringing' | 'connecting' | 'unavailable'>(
+    call.isCaller ? 'calling' : 'connecting',
+  );
   const [muted, setMuted] = useState(false);
   const [videoOn, setVideoOn] = useState(call.type === 'video');
   const [speaker, setSpeaker] = useState(call.type === 'video');
@@ -611,7 +710,7 @@ function ActiveCallView({
       onQuality: (q) => setNetQuality(q),
     });
     sessionRef.current = session;
-    // Sticky ongoing tray immediately (Connecting…) so user can return to the app.
+    // Sticky ongoing tray immediately so user can return to the app.
     void presentOngoingCallNotification({
       callId: call.callId,
       conversationId: call.conversationId,
@@ -623,18 +722,33 @@ function ActiveCallView({
       if (typeof __DEV__ !== 'undefined' && __DEV__) {
         console.warn('[call] start() FAILED:', e?.message ?? String(e));
       }
-      session.end(false);
-      finish('ended');
+      // getUserMedia / ICE setup failed → show Unavailable briefly then hang up.
+      setOutPhase('unavailable');
+      setTimeout(() => {
+        session.end(false);
+        finish('ended');
+      }, 1600);
     });
+
+    // Caller: Calling… for ~1.2s then Ringing… until accepted.
+    let phaseTimer: ReturnType<typeof setTimeout> | null = null;
+    if (call.isCaller) {
+      phaseTimer = setTimeout(() => {
+        if (!finished && !connectedRef.current) setOutPhase('ringing');
+      }, 1200);
+    }
 
     // Caller no-answer timeout (WhatsApp ~45–60s) → missed.
     let ringTimer: ReturnType<typeof setTimeout> | null = null;
     if (call.isCaller) {
       ringTimer = setTimeout(() => {
         if (finished || sessionRef.current !== session || connectedRef.current) return;
+        setOutPhase('unavailable');
         void updateCallStatus(supabase, call.callId, 'missed').catch(() => {});
-        session.end(true);
-        finish('missed');
+        setTimeout(() => {
+          session.end(true);
+          finish('missed');
+        }, 900);
       }, 55_000);
     }
 
@@ -643,6 +757,7 @@ function ActiveCallView({
         stopAllCallTones();
         // Busy tone for caller when peer declines (classic telephony UX).
         if (c.status === 'declined' && call.isCaller) {
+          setOutPhase('unavailable');
           try {
             (InCallManager as any).startBusytone?.('_BUSY_');
             setTimeout(() => {
@@ -656,11 +771,14 @@ function ActiveCallView({
       if (c.status === 'accepted') {
         stopAllCallTones();
         session.stopAllTones();
+        // Peer answered — media still negotiating.
+        if (!connectedRef.current) setOutPhase('connecting');
       }
     });
 
     return () => {
       if (ringTimer) clearTimeout(ringTimer);
+      if (phaseTimer) clearTimeout(phaseTimer);
       supabase.removeChannel(statusCh);
       session.end(false);
       if (!finished) {
@@ -716,12 +834,22 @@ function ActiveCallView({
     ? 'Reconnecting…'
     : connected
       ? timer
-      : call.isCaller
-        ? 'Ringing…'
-        : 'Connecting…';
+      : outPhase === 'unavailable'
+        ? 'Unavailable'
+        : outPhase === 'calling'
+          ? 'Calling…'
+          : outPhase === 'ringing'
+            ? 'Ringing…'
+            : 'Connecting…';
 
   const pathLabel =
-    connPath === 'relay' ? 'Secured via relay' : connPath === 'direct' ? 'Direct connection' : null;
+    connPath === 'relay'
+      ? 'End-to-end encrypted · relay'
+      : connPath === 'direct'
+        ? 'End-to-end encrypted'
+        : connected
+          ? 'End-to-end encrypted'
+          : null;
 
   // Remote has a *live* video track (not just audio) — otherwise RTCView paints white.
   const remoteHasVideo = !!(
@@ -1112,9 +1240,16 @@ const styles = StyleSheet.create({
   incomingLabel: { color: '#8696A0', fontSize: 15, marginBottom: 24, letterSpacing: 0.3 },
   incomingHint: { color: 'rgba(134,150,160,0.75)', fontSize: 12, marginTop: 8 },
   peerName: { color: '#fff', fontSize: 26, fontWeight: '700', marginTop: 20 },
-  ringActions: { flexDirection: 'row', gap: 60, marginTop: 80 },
-  circle: { width: 70, height: 70, borderRadius: 35, alignItems: 'center', justifyContent: 'center' },
-  circleLabel: { color: '#fff', marginTop: 8, fontSize: 13 },
+  ringActions: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-evenly',
+    width: '88%',
+    maxWidth: 360,
+    marginTop: 72,
+  },
+  circle: { width: 68, height: 68, borderRadius: 34, alignItems: 'center', justifyContent: 'center' },
+  circleLabel: { color: '#fff', marginTop: 8, fontSize: 12, textAlign: 'center' },
   callContainer: { backgroundColor: '#000', zIndex: 100 },
   audioBg: {
     flex: 1,

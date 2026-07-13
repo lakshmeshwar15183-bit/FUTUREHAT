@@ -12,6 +12,7 @@ import { useEffect, useRef } from 'react';
 import { AppState, type AppStateStatus } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import type { NavigationContainerRef } from '@react-navigation/native';
+import InCallManager from 'react-native-incall-manager';
 
 import { supabase } from '../lib/supabase';
 import {
@@ -55,11 +56,13 @@ export default function NotificationsBridge({
 }: {
   navRef: NavigationContainerRef<RootStackParamList>;
 }) {
-  const { acceptCallById, declineCallById } = useCalls();
+  const { acceptCallById, declineCallById, dismissIncomingById } = useCalls();
   const acceptCallByIdRef = useRef(acceptCallById);
   const declineCallByIdRef = useRef(declineCallById);
+  const dismissIncomingByIdRef = useRef(dismissIncomingById);
   useEffect(() => { acceptCallByIdRef.current = acceptCallById; }, [acceptCallById]);
   useEffect(() => { declineCallByIdRef.current = declineCallById; }, [declineCallById]);
+  useEffect(() => { dismissIncomingByIdRef.current = dismissIncomingById; }, [dismissIncomingById]);
 
   // Drain native Decline (and similar) actions that ran without launching the app.
   useEffect(() => {
@@ -69,6 +72,7 @@ export default function NotificationsBridge({
       const pending = await nativeGetPendingCallAction();
       if (!alive || !pending?.callId) return;
       if (pending.action === 'decline') {
+        // Decline only: update server status. Never launch UI paths.
         await declineCallByIdRef.current(pending.callId);
         await clearCallNotification(pending.callId);
       }
@@ -80,14 +84,18 @@ export default function NotificationsBridge({
     const unsubNative = subscribeNativeIncomingCallActions((payload) => {
       if (!payload.callId) return;
       if (payload.action === 'decline') {
+        // Decline must never launch the app; only update server + clear tray.
         void declineCallByIdRef.current(payload.callId);
         void clearCallNotification(payload.callId);
         void nativeClearPendingCallAction();
       }
       if (payload.action === 'ended' || payload.action === 'missed') {
-        // Caller hung up — drop ring UI + tray if this call is showing.
+        // Caller hung up / timed out — clear ring UI only.
+        // Never write 'declined' over a terminal missed/ended status.
         void clearCallNotification(payload.callId);
+        void dismissIncomingByIdRef.current(payload.callId);
       }
+      // mute: native re-posts silent CallStyle; no JS status change.
     });
     const appSub = AppState.addEventListener('change', (s) => {
       if (s === 'active') void applyPending();
@@ -176,6 +184,9 @@ export default function NotificationsBridge({
               ) {
                 return;
               }
+
+              // Don't spam banners while user is already mid-call (sound muted via handler).
+              // Still present so tray is accurate after hangup.
 
               if (!settingsRef.current) {
                 settingsRef.current = await getNotificationSettings(supabase).catch(() => null);
@@ -309,6 +320,7 @@ export default function NotificationsBridge({
               if (seenCallIds.current.has(call.id)) return;
               seenCallIds.current.add(call.id);
 
+              // Foreground: CallProvider owns full-screen ring — never tray.
               if (AppState.currentState === 'active') return;
 
               const peer = await getProfile(supabase, call.caller_id).catch(() => null);
@@ -337,6 +349,10 @@ export default function NotificationsBridge({
               if (!call) return;
               if (['ended', 'declined', 'accepted', 'missed'].includes(call.status)) {
                 await clearCallNotification(call.id);
+                // Drop local ring UI without overwriting terminal status as declined.
+                if (call.status !== 'accepted') {
+                  void dismissIncomingByIdRef.current(call.id);
+                }
               }
               if (call.status === 'missed' && call.caller_id !== me) {
                 const peer = await getProfile(supabase, call.caller_id).catch(() => null);
@@ -468,7 +484,10 @@ export default function NotificationsBridge({
           return;
         }
         if (action === 'mute' && callId) {
-          // Ring mute only — keep call ringing server-side; user can still Answer.
+          // Expo fallback: stop JS ringtone if any; keep call ringing server-side.
+          try {
+            (InCallManager as any).stopRingtone?.();
+          } catch { /* optional */ }
           return;
         }
         // Body tap / default open → show in-app incoming UI (not auto-answer).
