@@ -4,6 +4,7 @@ import expo.modules.splashscreen.SplashScreenManager
 import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
+import android.view.WindowManager
 
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
@@ -22,6 +23,9 @@ class MainActivity : ReactActivity() {
     SplashScreenManager.registerOnActivity(this)
     // @generated end expo-splashscreen
     super.onCreate(null)
+    // adjustResize: required so react-native-keyboard-controller receives IME
+    // WindowInsets animations (WhatsApp-class). ChatScreen owns the visual lift.
+    window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
     // Seed last-known scheme so the first config change is not dropped as "same".
     SystemThemeModule.emitForce(resources.configuration)
   }

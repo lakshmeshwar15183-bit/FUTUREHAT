@@ -23,6 +23,15 @@ import * as Sharing from 'expo-sharing';
 import { Image } from 'expo-image';
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import {
+  useReanimatedKeyboardAnimation,
+  useKeyboardHandler,
+} from 'react-native-keyboard-controller';
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  runOnJS,
+} from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
@@ -154,8 +163,9 @@ import {
   isInvertedAtLatest,
   shouldRepinToLatestOnComposerResize,
   composerHeightChanged,
-  threadColumnBottomPad,
+  chatBottomSpacer,
   composerTrayHeight,
+  KEYBOARD_CLOSED_EPSILON_PX,
 } from '../lib/chatThreadLayout';
 import { sheetBottomPad } from '../lib/safeLayout';
 import MessageBubble, { type TickStatus, replySummary } from '../components/MessageBubble';
@@ -294,83 +304,56 @@ function ChatScreenInner() {
     return () => { alive = false; };
   }, [conversationId]);
 
-  // Keyboard / IME — no Reanimated root (was translucent on some Realme OEMs).
-  // Android dual behaviour:
-  //  • Classic adjustResize: window shrinks ≈ IME → pad residual 0 (no gap).
-  //  • Edge-to-edge / Realme / API 35: window does NOT shrink → pad residual
-  //    IME so the composer sits above the keyboard (not under it).
-  // iOS: always pad by keyboard height.
+  // ── Keyboard / IME (WhatsApp-class) ─────────────────────────────────────
+  // react-native-keyboard-controller drives height from Android WindowInsets
+  // IME animation (works under EDGE_TO_EDGE_ENFORCED on Realme/Oppo/Samsung/…).
+  // A bottom spacer under the composer grows with the IME so the bar sits
+  // flush above any keyboard / 3-button / gesture nav — no hard-coded dp.
   const safeBottom = insets.bottom;
-  const [imePad, setImePad] = useState(0);
-  /** How much Dimensions window height dropped when IME opened (Android). */
-  const [androidWinShrink, setAndroidWinShrink] = useState(0);
-  /** Window height while keyboard closed — baseline for shrink measurement. */
-  const closedWinHRef = useRef(Dimensions.get('window').height);
-  /** True while system IME is open (for Dimensions remeasure). */
-  const imeOpenRef = useRef(false);
+  const winH = Dimensions.get('window').height;
   /** Last real keyboard height — emoji/sticker tray matches this (WhatsApp). */
   const [lastImeHeight, setLastImeHeight] = useState(280);
-  const winH = Dimensions.get('window').height;
+  const { height: kbAnimHeight } = useReanimatedKeyboardAnimation();
+  const safeBottomSV = useSharedValue(safeBottom);
   useEffect(() => {
-    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const measureShrink = () => {
-      if (Platform.OS !== 'android' || !imeOpenRef.current) return;
-      const winNow = Dimensions.get('window').height;
-      setAndroidWinShrink(Math.max(0, closedWinHRef.current - winNow));
-    };
-    const onShow = Keyboard.addListener(showEvt, (e) => {
-      const h = e?.endCoordinates?.height ?? 0;
-      // Ignore tiny residuals (nav-bar ghost heights on OEMs).
-      if (h > 40) {
-        imeOpenRef.current = true;
-        setImePad(h);
-        setLastImeHeight(h);
-        // Measure now + next frames (adjustResize can lag keyboardDidShow).
-        measureShrink();
-        requestAnimationFrame(measureShrink);
-        setTimeout(measureShrink, 50);
-        setTimeout(measureShrink, 120);
-      } else {
-        imeOpenRef.current = false;
-        setImePad(0);
-        setAndroidWinShrink(0);
-      }
-    });
-    const onHide = Keyboard.addListener(hideEvt, () => {
-      imeOpenRef.current = false;
-      setImePad(0);
-      setAndroidWinShrink(0);
-      // Window restores async on some OEMs — refresh closed baseline shortly.
-      const snap = () => {
-        closedWinHRef.current = Dimensions.get('window').height;
-      };
-      requestAnimationFrame(snap);
-      setTimeout(snap, 80);
-      setTimeout(snap, 200);
-    });
-    // Some OEMs apply adjustResize a frame after keyboardDidShow — remeasure.
-    const onDim = Dimensions.addEventListener('change', () => {
-      measureShrink();
-    });
-    return () => {
-      onShow.remove();
-      onHide.remove();
-      onDim.remove();
-    };
+    safeBottomSV.value = safeBottom;
+  }, [safeBottom, safeBottomSV]);
+
+  const rememberImeHeight = useCallback((h: number) => {
+    if (h > 40) setLastImeHeight(h);
   }, []);
+
+  // Track live IME height for tray sizing + re-pin (JS thread).
+  useKeyboardHandler(
+    {
+      onStart: (e) => {
+        'worklet';
+        if (e.height > KEYBOARD_CLOSED_EPSILON_PX) {
+          runOnJS(rememberImeHeight)(e.height);
+        }
+      },
+      onEnd: (e) => {
+        'worklet';
+        if (e.height > KEYBOARD_CLOSED_EPSILON_PX) {
+          runOnJS(rememberImeHeight)(e.height);
+        }
+      },
+    },
+    [rememberImeHeight],
+  );
+
   // Opaque paper canvas — never translucent over Main tabs.
   const chatCanvasBg =
     wallpaperColor ?? (colors.isLight ? '#EFEAE2' : colors.bg);
-  // Android: residual IME pad (0 if OS already resized). iOS: full IME pad.
-  // Keyboard closed: safe-area only (gesture / 3-button nav).
-  const columnPadBottom = threadColumnBottomPad(
-    imePad,
-    safeBottom,
-    Platform.OS === 'android' ? 'android-resize' : 'manual',
-    Platform.OS === 'android' ? androidWinShrink : 0,
-  );
   const trayH = composerTrayHeight(lastImeHeight, winH);
+  // Bottom spacer style must be declared before any early return (rules of hooks).
+  // IME open → live WindowInsets height; closed → system nav inset.
+  const imeSpacerStyle = useAnimatedStyle(() => {
+    const ime = Math.abs(kbAnimHeight.value);
+    return {
+      height: chatBottomSpacer(ime, safeBottomSV.value, 0),
+    };
+  }, []);
   // Green header chrome: always white glyphs (not muted palette text).
   const headerOnGreen = '#FFFFFF';
 
@@ -535,10 +518,9 @@ function ChatScreenInner() {
     });
   }, []);
 
-  // Keep the latest message in view as the keyboard opens. The composer already
-  // follows the keyboard via columnPadBottom (IME/safe-area), which shrinks the
-  // inverted list from the bottom; if the user was at the newest message we nudge
-  // it back to offset 0 so the last bubble stays visible above the composer.
+  // Keep the latest message in view as the keyboard opens. The composer rides
+  // the IME spacer (WhatsApp); if the user was at the newest message we re-pin
+  // to offset 0 so the last bubble stays visible above the composer.
   /** Message held for reaction while the action sheet is fully dismissed. */
   const pendingReactMsg = useRef<Message | null>(null);
   /** After loading deep history, scroll to oldest once the list lays out. */
@@ -3182,15 +3164,9 @@ function ChatScreenInner() {
   }
 
   return (
-    // Single opaque column — no Reanimated root (was translucent on some OEMs).
+    // Single opaque column. Bottom Animated spacer lifts composer above IME/nav.
     <View
-      style={[
-        styles.flex,
-        {
-          backgroundColor: chatCanvasBg,
-          paddingBottom: columnPadBottom,
-        },
-      ]}
+      style={[styles.flex, { backgroundColor: chatCanvasBg }]}
       collapsable={false}
     >
       {searchOpen && (
@@ -3908,6 +3884,15 @@ function ChatScreenInner() {
           />
         </View>
       )}
+
+      {/* IME / nav / tray spacer — WhatsApp flush: composer sits directly above
+          the keyboard (or system nav bar when keyboard closed). Height is live
+          WindowInsets IME from keyboard-controller, never hard-coded. */}
+      <Animated.View
+        style={imeSpacerStyle}
+        pointerEvents="none"
+        collapsable={false}
+      />
 
       {/* Forward picker — multi-recipient with search, recents, groups & preview */}
       <ForwardSheet

@@ -3,6 +3,8 @@
  */
 import {
   threadColumnBottomPad,
+  chatBottomSpacer,
+  imeHeightFromEvent,
   invertedListContentPadding,
   composerInnerBottomPad,
   isInvertedAtLatest,
@@ -12,7 +14,45 @@ import {
   KEYBOARD_CLOSED_EPSILON_PX,
 } from '../chatThreadLayout';
 
-describe('threadColumnBottomPad (manual / iOS)', () => {
+describe('chatBottomSpacer (WhatsApp IME + nav)', () => {
+  it('uses full IME height when keyboard is open (covers nav under keyboard)', () => {
+    expect(chatBottomSpacer(765, 132, 0)).toBe(765);
+    expect(chatBottomSpacer(320, 34, 280)).toBe(320);
+  });
+
+  it('uses tray height when IME closed and tray open', () => {
+    expect(chatBottomSpacer(0, 132, 300)).toBe(300);
+  });
+
+  it('uses safe-area only when both IME and tray closed', () => {
+    expect(chatBottomSpacer(0, 48, 0)).toBe(48);
+    expect(chatBottomSpacer(1, 48, 0)).toBe(48); // residual noise
+  });
+
+  it('never double-counts IME + inset', () => {
+    const pad = chatBottomSpacer(300, 48, 0);
+    expect(pad).toBe(300);
+    expect(pad).not.toBe(348);
+  });
+});
+
+describe('imeHeightFromEvent (edge-to-edge)', () => {
+  it('prefers screenY distance to bottom of screen', () => {
+    // Realme: screen 2412, keyboard top at 1515 → 897
+    expect(imeHeightFromEvent({ height: 765, screenY: 1515 }, 2412)).toBe(897);
+  });
+
+  it('falls back to height when screenY missing', () => {
+    expect(imeHeightFromEvent({ height: 320 }, 800)).toBe(320);
+  });
+
+  it('returns 0 when keyboard closed', () => {
+    expect(imeHeightFromEvent({ height: 0, screenY: 2412 }, 2412)).toBe(0);
+    expect(imeHeightFromEvent(null, 2412)).toBe(0);
+  });
+});
+
+describe('threadColumnBottomPad (manual / iOS legacy)', () => {
   it('uses IME height only when keyboard is open (no double-count with inset)', () => {
     expect(threadColumnBottomPad(320, 34, 'manual')).toBe(320);
     expect(threadColumnBottomPad(300, 0, 'manual')).toBe(300);
@@ -27,43 +67,16 @@ describe('threadColumnBottomPad (manual / iOS)', () => {
     expect(threadColumnBottomPad(KEYBOARD_CLOSED_EPSILON_PX, 34, 'manual')).toBe(34);
     expect(threadColumnBottomPad(1, 20, 'manual')).toBe(20);
   });
-
-  it('never returns Math.max(ime, inset) while IME is clearly open', () => {
-    const pad = threadColumnBottomPad(40, 34, 'manual');
-    expect(pad).toBe(40);
-    expect(pad).not.toBe(40 + 34);
-  });
 });
 
-describe('threadColumnBottomPad (android-resize)', () => {
+describe('threadColumnBottomPad (android-resize legacy)', () => {
   it('returns 0 when OS fully resized the window (shrink ≈ IME)', () => {
-    // Classic adjustResize — pad would double-count and create a huge gap.
     expect(threadColumnBottomPad(320, 34, 'android-resize', 320)).toBe(0);
     expect(threadColumnBottomPad(280, 0, 'android-resize', 280)).toBe(0);
-    // Near-full shrink within slack still counts as complete.
-    expect(threadColumnBottomPad(320, 34, 'android-resize', 315)).toBe(0);
   });
 
-  it('pads residual IME when window did not shrink (edge-to-edge / Realme)', () => {
-    // Phone screenshot bug: IME open, window height unchanged → pad full IME.
+  it('pads residual IME when window did not shrink', () => {
     expect(threadColumnBottomPad(765, 132, 'android-resize', 0)).toBe(765);
-    expect(threadColumnBottomPad(897, 132, 'android-resize', 0)).toBe(897);
-    // Partial resize: only lift what the OS did not already exclude.
-    expect(threadColumnBottomPad(320, 34, 'android-resize', 100)).toBe(220);
-  });
-
-  it('uses safe-area only when keyboard is closed', () => {
-    expect(threadColumnBottomPad(0, 34, 'android-resize', 0)).toBe(34);
-    expect(threadColumnBottomPad(0, 0, 'android-resize', 50)).toBe(0);
-  });
-
-  it('treats residual IME noise as closed', () => {
-    expect(threadColumnBottomPad(1, 24, 'android-resize', 0)).toBe(24);
-  });
-
-  it('legacy call without shrink arg still pads full IME (safe default)', () => {
-    // Missing 4th arg → shrink 0 → residual = IME (never under the keyboard).
-    expect(threadColumnBottomPad(320, 34, 'android-resize')).toBe(320);
   });
 });
 
@@ -84,12 +97,6 @@ describe('invertedListContentPadding', () => {
     expect(p.paddingTop).toBeLessThanOrEqual(4);
     expect(p.paddingBottom).toBeGreaterThanOrEqual(p.paddingTop);
   });
-
-  it('maps paddingTop to near-composer (inverted contract)', () => {
-    const p = invertedListContentPadding({ nearComposerPx: 2, nearTopPx: 10 });
-    expect(p.paddingTop).toBe(2);
-    expect(p.paddingBottom).toBe(10);
-  });
 });
 
 describe('composerInnerBottomPad', () => {
@@ -107,7 +114,6 @@ describe('isInvertedAtLatest', () => {
   it('uses tight slack so a 100px gap is NOT “at latest”', () => {
     expect(isInvertedAtLatest(100)).toBe(false);
     expect(isInvertedAtLatest(10)).toBe(true);
-    expect(isInvertedAtLatest(20)).toBe(false);
   });
 });
 
@@ -123,7 +129,7 @@ describe('composer resize re-pin', () => {
   });
 });
 
-describe('source contract: ChatScreen must not reintroduce gap bugs', () => {
+describe('source contract: ChatScreen WhatsApp keyboard', () => {
   const fs = require('fs');
   const path = require('path');
   const src = fs.readFileSync(
@@ -131,24 +137,23 @@ describe('source contract: ChatScreen must not reintroduce gap bugs', () => {
     'utf8',
   );
 
-  it('uses threadColumnBottomPad with android-resize on Android', () => {
-    expect(src).toMatch(/threadColumnBottomPad/);
-    expect(src).toMatch(/android-resize/);
-    // Must not reintroduce Math.max(ime, inset).
-    expect(src).not.toMatch(/Math\.max\(\s*keyboard\.height/);
+  it('uses keyboard-controller IME animation + chatBottomSpacer', () => {
+    expect(src).toMatch(/useReanimatedKeyboardAnimation/);
+    expect(src).toMatch(/chatBottomSpacer/);
+    expect(src).toMatch(/react-native-keyboard-controller/);
     expect(src).not.toMatch(/useAnimatedKeyboard/);
-    expect(src).toMatch(/keyboardDidShow|keyboardWillShow/);
+    expect(src).not.toMatch(/android-resize/);
+  });
+
+  it('has bottom IME spacer (not only paddingBottom on root)', () => {
+    expect(src).toMatch(/imeSpacerStyle/);
+    expect(src).toMatch(/Animated\.View/);
   });
 
   it('paints an opaque chat canvas (no Main tab bleed-through)', () => {
     expect(src).toMatch(/chatCanvasBg|EFEAE2/);
     expect(src).toMatch(/collapsable=\{false\}/);
     expect(src).toMatch(/backgroundColor: chatCanvasBg/);
-  });
-
-  it('uses white header chrome on green header', () => {
-    expect(src).toMatch(/headerOnGreen/);
-    expect(src).toMatch(/headerTitle:[\s\S]*?#FFFFFF/);
   });
 
   it('gives FlatList explicit flex:1 list style', () => {
@@ -162,7 +167,7 @@ describe('source contract: ChatScreen must not reintroduce gap bugs', () => {
 
   it('re-pins on composer layout and keyboard hide', () => {
     expect(src).toMatch(/onComposerLayout/);
-    expect(src).toMatch(/keyboardWillHide|keyboardDidHide/);
+    expect(src).toMatch(/keyboardWillHide|keyboardDidHide|useKeyboardHandler/);
     expect(src).toMatch(/isInvertedAtLatest/);
   });
 

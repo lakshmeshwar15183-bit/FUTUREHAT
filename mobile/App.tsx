@@ -5,6 +5,7 @@ import { ActivityIndicator, AppState, Platform, StyleSheet, Text, View } from 'r
 import * as Linking from 'expo-linking';
 import { SafeAreaProvider, useSafeAreaInsets, initialWindowMetrics } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { NavigationContainer, DefaultTheme, useNavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -501,20 +502,29 @@ export default function App() {
             the nav bar before the provider measures. Live updates still flow
             when the user changes navigation mode. */}
         <SafeAreaProvider initialMetrics={initialWindowMetrics}>
-          {/* Premium outside Theme so theme gates update instantly on purchase. */}
-          <PremiumProvider>
-            <ThemeProvider>
-              <AppLockProvider>
-                <ChatLockProvider>
-                  <CallProvider>
-                    <StatusPresenceProvider>
-                      <RootNavigator />
-                    </StatusPresenceProvider>
-                  </CallProvider>
-                </ChatLockProvider>
-              </AppLockProvider>
-            </ThemeProvider>
-          </PremiumProvider>
+          {/* KeyboardProvider: live IME WindowInsets (edge-to-edge Android + iOS).
+              status/navigation translucent so chat can pad correctly above 3-button
+              / gesture bars and any OEM keyboard (Gboard, Samsung, Realme, …). */}
+          <KeyboardProvider
+            statusBarTranslucent
+            navigationBarTranslucent
+            preserveEdgeToEdge
+          >
+            {/* Premium outside Theme so theme gates update instantly on purchase. */}
+            <PremiumProvider>
+              <ThemeProvider>
+                <AppLockProvider>
+                  <ChatLockProvider>
+                    <CallProvider>
+                      <StatusPresenceProvider>
+                        <RootNavigator />
+                      </StatusPresenceProvider>
+                    </CallProvider>
+                  </ChatLockProvider>
+                </AppLockProvider>
+              </ThemeProvider>
+            </PremiumProvider>
+          </KeyboardProvider>
         </SafeAreaProvider>
       </GestureHandlerRootView>
     </ErrorBoundary>
