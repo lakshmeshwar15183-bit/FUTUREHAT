@@ -373,17 +373,9 @@ export default function SettingsScreen() {
         dest: { kind: 'action', action: 'signOut' },
         danger: true,
       },
-      // About (searchable)
-      {
-        id: 'about-version',
-        section: 'About',
-        icon: 'information-circle-outline',
-        iconColor: ICON.about,
-        label: 'Version',
-        subtitle: `${APP_NAME} v${APP_VERSION}`,
-        keywords: 'version build about whats new open source licenses',
-        dest: { kind: 'action', action: 'diagnostics' },
-      },
+      // No public Diagnostics entry — internal health/report UI is support-only
+      // via the footer version 7-tap (WhatsApp-class hidden gate). Version is
+      // already shown in the about footer for every account.
     ];
 
     if (moderator) {
@@ -434,7 +426,7 @@ export default function SettingsScreen() {
   }, [catalog, q]);
 
   const sections = useMemo(() => {
-    const order = ['Account', 'Chats & data', 'Support', 'About'];
+    const order = ['Account', 'Chats & data', 'Support'];
     const map = new Map<string, SettingItem[]>();
     for (const item of filtered) {
       const list = map.get(item.section) ?? [];
