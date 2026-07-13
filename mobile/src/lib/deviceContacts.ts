@@ -1,9 +1,26 @@
 // Lumixo mobile — read device contacts locally for discovery.
 // Never uploads the raw list: callers hash phones via contactDiscoveryApi.
+//
+// Permission flow (WhatsApp-class):
+//  1) Already granted → never ask again, just read.
+//  2) Can ask → show Android runtime dialog immediately (no custom pre-dialog).
+//  3) Soft deny → friendly explanation; app stays fully usable.
+//  4) Permanent deny (Don't ask again) → Open Settings (no more requestPermissions).
 
 import type { LocalContactEntry } from './shared';
 
-export type ContactsPermission = 'granted' | 'denied' | 'undetermined' | 'unavailable';
+export type ContactsPermission =
+  | 'granted'
+  | 'denied'
+  | 'permanently_denied'
+  | 'undetermined'
+  | 'unavailable';
+
+export type ContactsPermissionResult = {
+  permission: ContactsPermission;
+  /** False when Android will not show the runtime dialog again. */
+  canAskAgain: boolean;
+};
 
 function loadContactsModule(): typeof import('expo-contacts') | null {
   try {
@@ -15,25 +32,68 @@ function loadContactsModule(): typeof import('expo-contacts') | null {
   }
 }
 
-/** Request contacts permission (or report unavailable if native module missing). */
-export async function requestContactsPermission(): Promise<ContactsPermission> {
+function mapStatus(
+  granted: boolean,
+  status: string,
+  canAskAgain: boolean,
+): ContactsPermission {
+  if (granted) return 'granted';
+  if (status === 'undetermined') return 'undetermined';
+  if (!canAskAgain) return 'permanently_denied';
+  return 'denied';
+}
+
+/** Current permission without prompting. */
+export async function getContactsPermission(): Promise<ContactsPermissionResult> {
   const Contacts = loadContactsModule();
-  if (!Contacts) return 'unavailable';
+  if (!Contacts) {
+    return { permission: 'unavailable', canAskAgain: false };
+  }
   const current = await Contacts.getPermissionsAsync();
-  if (current.granted) return 'granted';
-  if (current.canAskAgain === false && current.status === 'denied') return 'denied';
-  const next = await Contacts.requestPermissionsAsync();
-  if (next.granted) return 'granted';
-  return next.status === 'undetermined' ? 'undetermined' : 'denied';
+  return {
+    permission: mapStatus(!!current.granted, current.status, current.canAskAgain !== false),
+    canAskAgain: current.canAskAgain !== false,
+  };
 }
 
 /**
- * Read contacts from the device address book.
- * Returns empty array if permission denied or module unavailable.
+ * Ensure we may read contacts (WhatsApp-class).
+ * - granted → no dialog
+ * - can ask → system runtime dialog only (no custom pre-dialog)
+ * - permanently denied → do not call requestPermissions again
+ */
+export async function ensureContactsPermission(): Promise<ContactsPermissionResult> {
+  const Contacts = loadContactsModule();
+  if (!Contacts) {
+    return { permission: 'unavailable', canAskAgain: false };
+  }
+
+  const current = await Contacts.getPermissionsAsync();
+  if (current.granted) {
+    return { permission: 'granted', canAskAgain: true };
+  }
+
+  // Permanent deny: never re-request; UI should offer Open Settings.
+  if (current.status === 'denied' && current.canAskAgain === false) {
+    return { permission: 'permanently_denied', canAskAgain: false };
+  }
+
+  // First install or soft deny — Android system dialog only.
+  const next = await Contacts.requestPermissionsAsync();
+  return {
+    permission: mapStatus(!!next.granted, next.status, next.canAskAgain !== false),
+    canAskAgain: next.canAskAgain !== false,
+  };
+}
+
+/**
+ * Read contacts from the device address book after ensuring permission.
+ * Does not invent custom dialogs — callers handle UX from `permission`.
  */
 export async function readLocalContactEntries(): Promise<{
   entries: LocalContactEntry[];
   permission: ContactsPermission;
+  canAskAgain: boolean;
   error: Error | null;
 }> {
   const Contacts = loadContactsModule();
@@ -41,19 +101,21 @@ export async function readLocalContactEntries(): Promise<{
     return {
       entries: [],
       permission: 'unavailable',
-      error: new Error('Contacts are not available on this build. Update the app to find friends by phone.'),
+      canAskAgain: false,
+      error: new Error(
+        'Contacts are not available on this build. Update the app to find friends by phone.',
+      ),
     };
   }
 
-  const perm = await requestContactsPermission();
-  if (perm !== 'granted') {
+  const { permission, canAskAgain } = await ensureContactsPermission();
+  if (permission !== 'granted') {
     return {
       entries: [],
-      permission: perm,
-      error:
-        perm === 'denied'
-          ? new Error('Contacts permission is off. Enable it in Settings to find friends on Lumixo.')
-          : null,
+      permission,
+      canAskAgain,
+      // No error for soft/permanent deny — NewChatScreen owns the copy.
+      error: null,
     };
   }
 
@@ -75,11 +137,12 @@ export async function readLocalContactEntries(): Promise<{
         phones,
       });
     }
-    return { entries, permission: 'granted', error: null };
+    return { entries, permission: 'granted', canAskAgain: true, error: null };
   } catch (e: any) {
     return {
       entries: [],
       permission: 'granted',
+      canAskAgain: true,
       error: new Error(e?.message || 'Could not read contacts.'),
     };
   }

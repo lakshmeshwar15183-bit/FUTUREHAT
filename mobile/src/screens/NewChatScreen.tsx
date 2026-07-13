@@ -9,11 +9,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Linking,
   Pressable,
   StyleSheet,
   Text,
   TextInput,
-  View
+  View,
 } from 'react-native';
 import SafeFlatList from '../ui/SafeFlatList';
 import { Ionicons } from '@expo/vector-icons';
@@ -181,7 +182,46 @@ export default function NewChatScreen() {
     if (discovering) return;
     setDiscovering(true);
     try {
-      const { entries, error: readErr } = await readLocalContactEntries();
+      // WhatsApp-class: tap → system permission dialog first (no custom pre-prompt).
+      // Permanent deny → Open Settings. Soft deny → friendly note, stay usable.
+      const { entries, permission, error: readErr } = await readLocalContactEntries();
+
+      if (permission === 'unavailable') {
+        Alert.alert(
+          'Contacts',
+          readErr?.message ??
+            'Contacts are not available on this build. Update the app to find friends by phone.',
+        );
+        return;
+      }
+
+      if (permission === 'permanently_denied') {
+        Alert.alert(
+          'Contacts access',
+          'Contacts permission is permanently turned off for Lumixo. Open Settings to enable it so you can find friends from your address book.',
+          [
+            { text: 'Not now', style: 'cancel' },
+            {
+              text: 'Open Settings',
+              onPress: () => {
+                void Linking.openSettings().catch(() => {});
+              },
+            },
+          ],
+        );
+        return;
+      }
+
+      if (permission === 'denied' || permission === 'undetermined') {
+        // User dismissed the system dialog once — do not block the rest of the app.
+        Alert.alert(
+          'Contacts',
+          'You can still search by name or @username. Allow Contacts anytime to find friends who are already on Lumixo.',
+        );
+        return;
+      }
+
+      // granted
       if (readErr) {
         Alert.alert('Contacts', readErr.message);
         return;
