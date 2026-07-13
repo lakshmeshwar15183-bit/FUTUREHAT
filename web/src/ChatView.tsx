@@ -19,6 +19,9 @@ import {
   markViewOnceSeen, getViewOnceState,
   buildTickMap, applyReceiptToTickMap, computeOutboundTick, tickGlyph, tickIsRead,
   resolveDisplayName,
+  deletedMessageLabel,
+  deletedReplyLabel,
+  isModerationRemoved,
   type TickStatus,
 } from '@shared/api';
 import { getNickname } from './lib/nicknames';
@@ -512,7 +515,13 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
   async function doDelete(m: Message) {
     setActionFor(null);
     const prev = messages;
-    setMessages((cur) => cur.map((x) => (x.id === m.id ? { ...x, is_deleted: true, content: null, media_url: null } : x)));
+    setMessages((cur) =>
+      cur.map((x) =>
+        x.id === m.id
+          ? { ...x, is_deleted: true, deleted_kind: 'user' as const, content: null, media_url: null }
+          : x,
+      ),
+    );
     const { error } = await deleteMessage(supabase, m.id);
     if (error) { setMessages(prev); setToast(error.message); }
   }
@@ -724,13 +733,11 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
   // WhatsApp-style search: keep the whole thread visible and jump between
   // matches rather than filtering. A kind filter (media/links/docs/voice) can
   // narrow the set, with or without a text query.
-  // Unsend (Instagram-style): an unsent message (`is_deleted`) vanishes entirely
-  // for everyone — no "deleted" tombstone. It's filtered out here, so the existing
-  // realtime UPDATE (is_deleted → true) makes it disappear live on all clients.
-  // messageExpired: a disappearing message (0022) past its expiry is hidden
-  // instantly; the `now` tick re-runs this filter as each one expires.
+  // Soft-deleted messages stay in the timeline as tombstones (user unsend or
+  // Lumixo moderation). delete-for-me (hiddenMsgIds) and expired disappearing
+  // messages are still fully hidden.
   const displayMessages = useMemo(
-    () => messages.filter((m) => !hiddenMsgIds.has(m.id) && !m.is_deleted && !messageExpired(m, now)),
+    () => messages.filter((m) => !hiddenMsgIds.has(m.id) && !messageExpired(m, now)),
     [messages, hiddenMsgIds, now],
   );
   const searchActive = searchOpen && (!!search || searchKind !== 'all');
@@ -981,23 +988,39 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
                   </div>
                 )}
                 <div className="message-row">
-                  <div className={`message-bubble ${msg.is_deleted ? 'deleted' : ''}`} {...bubbleHoldHandlers(msg.id, !!msg.is_deleted)}>
+                  <div
+                    className={`message-bubble ${msg.is_deleted ? 'deleted' : ''} ${isModerationRemoved(msg) ? 'moderation-removed' : ''}`}
+                    {...bubbleHoldHandlers(msg.id, !!msg.is_deleted)}
+                  >
                     {msg.is_deleted ? (
-                      <div className="message-text deleted-text">🚫 This message was deleted</div>
+                      <div className="message-text deleted-text">
+                        <span className="deleted-icon" aria-hidden>
+                          {isModerationRemoved(msg) ? '🛡️' : '🚫'}
+                        </span>
+                        {deletedMessageLabel(msg, { isGroup })}
+                      </div>
                     ) : (
                       <>
                         {msg.is_forwarded && <div className="forwarded-tag"><ForwardIcon size={12} /> Forwarded</div>}
                         {replied && (
                           <div className="reply-quote">
                             <span className="reply-quote-name">
-                              {replied.sender_id === profile?.id
-                                ? 'You'
-                                : resolveDisplayName(
-                                    conversation.participants.find((p) => p.id === replied.sender_id),
-                                    { fallback: 'Contact' },
-                                  )}
+                              {replied.is_deleted
+                                ? isModerationRemoved(replied)
+                                  ? 'Removed by Lumixo'
+                                  : 'Message'
+                                : replied.sender_id === profile?.id
+                                  ? 'You'
+                                  : resolveDisplayName(
+                                      conversation.participants.find((p) => p.id === replied.sender_id),
+                                      { fallback: 'Contact' },
+                                    )}
                             </span>
-                            <span className="reply-quote-text">{replied.content || '[media]'}</span>
+                            <span className="reply-quote-text">
+                              {replied.is_deleted
+                                ? deletedReplyLabel(replied)
+                                : replied.content || '[media]'}
+                            </span>
                           </div>
                         )}
                         {msg.type === 'image' && (msg.media_meta as { sticker?: boolean } | null)?.sticker && (

@@ -669,8 +669,29 @@
 .reply-quote-name { font-size: 12px; font-weight: 600; color: var(--fh-accent); }
 .reply-quote-text { font-size: 13px; color: var(--fh-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-.message-bubble.deleted { opacity: 0.8; }
-.deleted-text { font-style: italic; color: var(--fh-muted); }
+.message-bubble.deleted {
+  opacity: 0.92;
+  pointer-events: none;
+  user-select: none;
+}
+.message-bubble.moderation-removed {
+  background: color-mix(in srgb, var(--fh-muted) 12%, transparent) !important;
+  border: 1px solid color-mix(in srgb, var(--fh-muted) 20%, transparent);
+  box-shadow: none;
+}
+.deleted-text {
+  font-style: italic;
+  color: var(--fh-muted);
+  font-size: 0.92em;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.35rem;
+  line-height: 1.35;
+}
+.deleted-icon {
+  flex-shrink: 0;
+  line-height: 1.35;
+}
 .edited-tag { font-size: 10px; opacity: 0.7; margin-right: 2px; }
 
 /* ── Reply / edit compose banner ──────────────────────────────────────────── */

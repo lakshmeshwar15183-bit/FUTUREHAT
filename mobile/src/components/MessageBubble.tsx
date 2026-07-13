@@ -1,11 +1,24 @@
 // Lumixo mobile — a single chat bubble. Handles text/image/video/audio/file,
 // reply preview, reaction chips, edited marker, and delivery ticks.
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withSequence,
+  withTiming,
+} from 'react-native-reanimated';
 
 import type { Message, MessageReaction, TickStatus } from '../lib/shared';
-import { isVideoMessage, tickIsDouble, tickIsRead } from '../lib/shared';
+import {
+  isVideoMessage,
+  tickIsDouble,
+  tickIsRead,
+  deletedMessageLabel,
+  deletedReplyLabel,
+  isModerationRemoved,
+} from '../lib/shared';
 import { formatTime } from '../lib/time';
 import { isStickerUrl, resolveSticker } from '../lib/stickers';
 import { useColors, radius, font, type Palette } from '../theme';
@@ -52,6 +65,8 @@ interface Props {
   mine: boolean;
   /** Current user id — used to highlight reactions I made. */
   myId?: string | null;
+  /** Group chats use shorter moderation copy. */
+  isGroup?: boolean;
   senderName?: string | null;
   replyTo?: Message | null;
   /** Tapping the reply preview jumps to the original message. */
@@ -115,6 +130,7 @@ function MessageBubble({
   message,
   mine,
   myId,
+  isGroup = false,
   senderName,
   replyTo,
   onReplyPress,
@@ -135,19 +151,103 @@ function MessageBubble({
   const colors = useColors();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const tint = mine ? colors.bubbleOutText : colors.text;
+
+  // Subtle tick pop when delivery status advances (sending → sent → delivered → read).
+  const tickScale = useSharedValue(1);
+  useEffect(() => {
+    if (!tick) return;
+    tickScale.value = withSequence(
+      withTiming(1.25, { duration: 90 }),
+      withTiming(1, { duration: 120 }),
+    );
+  }, [tick, tickScale]);
+  const tickAnimStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: tickScale.value }],
+  }));
   // Continuation bubbles stack tightly with no tail (WhatsApp grouping).
   const bubbleShape = groupedRun
     ? { borderTopRightRadius: radius.lg, borderTopLeftRadius: radius.lg }
     : null;
   const wrapTight = groupedRun ? { marginVertical: 1 } : null;
 
+  // Soft-deleted: keep position in the timeline with a non-interactive tombstone.
+  // Moderation removals use a system-style (no colored bubble) + shield icon.
   if (message.is_deleted) {
+    const mod = isModerationRemoved(message);
+    const label = deletedMessageLabel(message, { isGroup });
+    const time = formatTime(message.created_at);
     return (
-      <View style={[styles.wrap, wrapTight, mine ? styles.wrapMine : styles.wrapTheirs, selected && styles.wrapSelected]}>
-        <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs, bubbleShape]}>
-          <Text style={[styles.deleted, { color: mine ? colors.bubbleOutMuted : colors.textMuted }]}>
-            <Ionicons name="ban-outline" size={13} /> This message was deleted
-          </Text>
+      <View
+        style={[
+          styles.wrap,
+          wrapTight,
+          mine ? styles.wrapMine : styles.wrapTheirs,
+          selected && styles.wrapSelected,
+        ]}
+        accessibilityRole="text"
+        accessibilityLabel={label}
+        pointerEvents="none"
+      >
+        <View
+          style={[
+            mod ? styles.moderationBubble : styles.bubble,
+            !mod && (mine ? styles.bubbleMine : styles.bubbleTheirs),
+            bubbleShape,
+          ]}
+        >
+          <View style={styles.deletedRow}>
+            <Ionicons
+              name={mod ? 'shield-checkmark-outline' : 'ban-outline'}
+              size={13}
+              color={mod ? colors.textFaint : mine ? colors.bubbleOutMuted : colors.textMuted}
+              style={{ marginRight: 5, marginTop: 2 }}
+            />
+            <Text
+              style={[
+                styles.deleted,
+                {
+                  color: mod
+                    ? colors.textMuted
+                    : mine
+                      ? colors.bubbleOutMuted
+                      : colors.textMuted,
+                  flexShrink: 1,
+                },
+              ]}
+            >
+              {label}
+            </Text>
+          </View>
+          <View style={styles.meta}>
+            <Text
+              style={[
+                styles.time,
+                {
+                  color: mod
+                    ? colors.textFaint
+                    : mine
+                      ? colors.bubbleOutMuted
+                      : colors.textFaint,
+                },
+              ]}
+            >
+              {time}
+            </Text>
+            {mine && tick && !mod && (
+              <Ionicons
+                name={
+                  tickIsDouble(tick)
+                    ? 'checkmark-done'
+                    : tick === 'sending'
+                      ? 'time-outline'
+                      : 'checkmark'
+                }
+                size={14}
+                color={tickIsRead(tick) ? '#53bdeb' : colors.bubbleOutMuted}
+                style={{ marginLeft: 3 }}
+              />
+            )}
+          </View>
         </View>
       </View>
     );
@@ -183,10 +283,14 @@ function MessageBubble({
             style={[styles.reply, { borderLeftColor: colors.primary }]}
           >
             <Text style={styles.replyName} numberOfLines={1}>
-              {replyTo.is_deleted ? 'Message' : 'Replying to'}
+              {replyTo.is_deleted
+                ? isModerationRemoved(replyTo)
+                  ? 'Removed by Lumixo'
+                  : 'Message'
+                : 'Replying to'}
             </Text>
             <Text style={[styles.replyText, { color: mine ? colors.bubbleOutMuted : colors.textMuted }]} numberOfLines={1}>
-              {replyTo.is_deleted ? 'This message was deleted' : replySummary(replyTo)}
+              {replyTo.is_deleted ? deletedReplyLabel(replyTo) : replySummary(replyTo)}
             </Text>
           </Pressable>
         )}
@@ -306,26 +410,27 @@ function MessageBubble({
             {formatTime(message.created_at)}
           </Text>
           {mine && tick && (
-            <Ionicons
-              name={
-                tick === 'failed'
-                  ? 'alert-circle'
-                  : tick === 'sending'
-                    ? 'time-outline'
-                    : tickIsDouble(tick)
-                      ? 'checkmark-done'
-                      : 'checkmark'
-              }
-              size={15}
-              color={
-                tick === 'failed'
-                  ? '#EF4444'
-                  : tickIsRead(tick)
-                    ? '#53BDEB'
-                    : colors.bubbleOutMuted
-              }
-              style={{ marginLeft: 3 }}
-            />
+            <Animated.View style={[{ marginLeft: 3 }, tickAnimStyle]}>
+              <Ionicons
+                name={
+                  tick === 'failed'
+                    ? 'alert-circle'
+                    : tick === 'sending'
+                      ? 'time-outline'
+                      : tickIsDouble(tick)
+                        ? 'checkmark-done'
+                        : 'checkmark'
+                }
+                size={15}
+                color={
+                  tick === 'failed'
+                    ? '#EF4444'
+                    : tickIsRead(tick)
+                      ? '#53BDEB'
+                      : colors.bubbleOutMuted
+                }
+              />
+            </Animated.View>
           )}
         </View>
       </View>
@@ -363,6 +468,7 @@ function areEqual(a: Props, b: Props): boolean {
   if (
     a.mine !== b.mine ||
     a.myId !== b.myId ||
+    a.isGroup !== b.isGroup ||
     a.grouped !== b.grouped ||
     a.selected !== b.selected ||
     a.selectionMode !== b.selectionMode ||
@@ -376,13 +482,15 @@ function areEqual(a: Props, b: Props): boolean {
   const m = a.message, n = b.message;
   if (
     m.id !== n.id || m.content !== n.content || m.type !== n.type ||
-    m.media_url !== n.media_url || m.is_deleted !== n.is_deleted || m.edited_at !== n.edited_at ||
+    m.media_url !== n.media_url || m.is_deleted !== n.is_deleted ||
+    m.deleted_kind !== n.deleted_kind || m.edited_at !== n.edited_at ||
     m.pending !== n.pending || m.is_forwarded !== n.is_forwarded
   ) return false;
   if (
     (a.replyTo?.id ?? null) !== (b.replyTo?.id ?? null) ||
     (a.replyTo?.content ?? null) !== (b.replyTo?.content ?? null) ||
-    (a.replyTo?.is_deleted ?? null) !== (b.replyTo?.is_deleted ?? null)
+    (a.replyTo?.is_deleted ?? null) !== (b.replyTo?.is_deleted ?? null) ||
+    (a.replyTo?.deleted_kind ?? null) !== (b.replyTo?.deleted_kind ?? null)
   ) return false;
   return sameReactions(a.reactions, b.reactions);
 }
@@ -422,7 +530,18 @@ const makeStyles = (colors: Palette) =>
     forwarded: { flexDirection: 'row', alignItems: 'center', gap: 3, marginBottom: 2 },
     forwardedText: { fontSize: font.tiny, fontStyle: 'italic' },
     text: { fontSize: font.body, lineHeight: 19.5, letterSpacing: -0.1 },
-    deleted: { fontSize: font.body, fontStyle: 'italic' },
+    deleted: { fontSize: font.small, fontStyle: 'italic', lineHeight: 18 },
+    deletedRow: { flexDirection: 'row', alignItems: 'flex-start', maxWidth: 280 },
+    /** System-style tombstone for moderation removals (no chat-bubble fill). */
+    moderationBubble: {
+      maxWidth: '88%',
+      borderRadius: 10,
+      paddingHorizontal: 10,
+      paddingVertical: 7,
+      backgroundColor: colors.isLight ? 'rgba(0,0,0,0.04)' : 'rgba(255,255,255,0.06)',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.isLight ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.08)',
+    },
     image: { width: 210, height: 210, borderRadius: 10, marginBottom: 2 },
     stickerWrap: { marginBottom: 2, marginTop: 2 },
     viewOnceTag: { position: 'absolute', left: 8, top: 8, flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 999, paddingHorizontal: 7, paddingVertical: 2 },

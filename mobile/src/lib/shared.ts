@@ -3,6 +3,7 @@
 // TypeScript resolves them via the @shared/* path alias / relative source.
 export * from '../../../shared/api';
 export * from '../../../shared/types';
+export * from '../../../shared/messageDeletion';
 // messageStatus / identity / nicknames are re-exported from shared/api.
 export * from '../../../shared/groupsApi';
 export * from '../../../shared/messageExtras';

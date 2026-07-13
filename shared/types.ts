@@ -91,6 +91,13 @@ export interface Message {
   media_url: string | null;
   reply_to: UUID | null;
   is_deleted: boolean;
+  /**
+   * Soft-delete provenance (0061).
+   * - `user` — sender unsend (“This message was deleted”)
+   * - `moderation` — admin/moderator removal (“Removed by Lumixo…”)
+   * Optional so pre-migration clients still type-check.
+   */
+  deleted_kind?: 'user' | 'moderation' | null;
   created_at: string;
   edited_at: string | null;
   /** Set when this message was forwarded from another chat (see 0011). Optional

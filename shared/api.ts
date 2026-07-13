@@ -53,6 +53,14 @@ export {
 } from './messageStatus.js';
 
 export {
+  isModerationRemoved,
+  deletedMessageLabel,
+  deletedReplyLabel,
+  deletedListPreview,
+  type MessageDeletedKind,
+} from './messageDeletion.js';
+
+export {
   type IdentityLike,
   resolveDisplayName,
   resolveUsernameHandle,
@@ -706,13 +714,20 @@ export async function editMessage(
 
 // Soft-delete a message (keeps the row so threads/realtime stay consistent).
 // System messages are immutable in DB; filter client-side too.
+// deleted_kind = 'user' so clients show a tombstone (not a moderation line).
 export async function deleteMessage(
   client: SupabaseClient,
   messageId: UUID,
 ): Promise<{ error: Error | null }> {
   const { error } = await client
     .from('messages')
-    .update({ is_deleted: true, content: null, media_url: null })
+    .update({
+      is_deleted: true,
+      deleted_kind: 'user',
+      content: null,
+      media_url: null,
+      media_meta: {},
+    })
     .eq('id', messageId)
     .neq('type', 'system');
   return { error };

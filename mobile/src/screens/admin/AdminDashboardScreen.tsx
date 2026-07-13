@@ -135,7 +135,10 @@ export default function AdminDashboardScreen() {
                 reportId: r.report_id,
               });
               await setReportStatus(r.report_id, 'resolved');
-              Alert.alert('Deleted', 'Message deleted and report resolved.');
+              Alert.alert(
+                'Removed',
+                'Message replaced with a Lumixo moderation notice for all participants. Report resolved.',
+              );
             } catch (e: any) {
               Alert.alert('Error', e.message);
             }
@@ -462,7 +465,10 @@ function MessagesTab({ colors, styles }: { colors: Palette; styles: Styles }) {
       });
       setDelId('');
       setDelReason('');
-      Alert.alert('Deleted', 'Message deleted (audited). Prefer Reports for normal moderation.');
+      Alert.alert(
+        'Removed',
+        'Message shows as “removed by Lumixo” for users. Audit log kept for moderators. Prefer Reports for day-to-day work.',
+      );
       adminListDeletedMessages(supabase, 50).then(setDeleted).catch(() => {});
     } catch (e: any) {
       Alert.alert('Error', e.message);
