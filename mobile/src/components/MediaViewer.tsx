@@ -46,7 +46,6 @@ import type { MediaMeta } from '../lib/shared';
 import { signedMediaUrl } from '../lib/shared';
 import { supabase } from '../lib/supabase';
 import { useSignedUrl } from '../lib/useSignedUrl';
-import { ensureMediaCached } from '../lib/mediaCache';
 import { requestMediaDownload } from '../lib/mediaDownloadManager';
 import { formatBytes } from '../media/qualityEstimate';
 import {
