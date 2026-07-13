@@ -3,6 +3,8 @@
 // Free users are always pinned to the base options (premium values are ignored
 // until the user is premium) so gating is enforced even if a stored pref leaks.
 
+import { applyAppearanceMode, getStoredAppearanceMode } from './appearanceMode';
+
 export interface ThemeDef {
   id: string;
   label: string;
@@ -151,11 +153,22 @@ export interface AppliedPrefs {
 
 // Apply preferences to the document. Premium-only choices are forced to base
 // values when `isPremium` is false.
+// Classic (default) theme respects Follow System / Light / Dark appearance mode.
+// Named premium themes keep their designed (dark-tinted) palettes.
 export function applyPreferences(p: AppliedPrefs, isPremium: boolean) {
   const root = document.documentElement;
 
   const theme = THEMES[p.theme] && (isPremium || !THEMES[p.theme].premium) ? THEMES[p.theme] : THEMES.default;
-  for (const [k, v] of Object.entries(theme.vars)) root.style.setProperty(k, v);
+  const useSystemChrome = theme.id === 'default';
+
+  if (useSystemChrome) {
+    // Light/dark chrome from appearance mode (default Follow System).
+    applyAppearanceMode(getStoredAppearanceMode());
+  } else {
+    for (const [k, v] of Object.entries(theme.vars)) root.style.setProperty(k, v);
+    root.dataset.appearance = 'dark';
+    root.style.colorScheme = 'dark';
+  }
 
   const font = FONTS[p.font] && (isPremium || !FONTS[p.font].premium) ? FONTS[p.font] : FONTS.system;
   root.style.setProperty('--fh-font', font.stack);

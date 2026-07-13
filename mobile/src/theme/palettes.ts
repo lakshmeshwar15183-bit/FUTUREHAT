@@ -56,7 +56,9 @@ export const palettes: Record<ThemeMode, Palette> = {
     isLight: false,
   },
   light: {
-    bg: '#F0F2F5',
+    // WhatsApp-inspired light: clean white surfaces, soft grey app chrome,
+    // black primary text, grey secondary, light separators, green brand.
+    bg: '#FFFFFF',
     surface: '#FFFFFF',
     surfaceAlt: '#F0F2F5',
     header: '#008069',
@@ -68,14 +70,11 @@ export const palettes: Record<ThemeMode, Palette> = {
     bubbleOutText: '#0B1B12',
     bubbleOutMuted: '#4A6B5F',
     text: '#111B21',
-    // Darkened for WCAG AA: the old #667781/#8696A0 failed 4.5:1 on the #F0F2F5
-    // app background and #8696A0 failed even on white. These pass on both.
-    textMuted: '#55616B',
-    textFaint: '#5C6A73',
-    border: '#D1D9DF',
-    danger: '#D11A2A',
-    // Bright gold on purpose: it is used as a BADGE BACKGROUND with dark text,
-    // so it must stay light enough for that dark text to pass contrast.
+    textMuted: '#667781',
+    textFaint: '#8696A0',
+    border: '#E9EDEF',
+    danger: '#EA0038',
+    // Bright gold badge fill; darker gold for text-on-white.
     accentPlus: '#E5A400',
     accentPlusText: '#8A6A0C',
     isLight: true,
@@ -136,10 +135,18 @@ export const elevation = {
   },
   card: {
     shadowColor: '#000' as const,
-    shadowOpacity: 0.12,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 4,
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  /** Soft Material-style card shadow for light mode chat rows / search. */
+  cardLight: {
+    shadowColor: '#111B21' as const,
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 1,
   },
   sheet: {
     shadowColor: '#000' as const,

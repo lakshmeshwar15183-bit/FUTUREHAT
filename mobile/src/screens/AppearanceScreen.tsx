@@ -36,11 +36,12 @@ import { Alert } from '../ui/dialog';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
+// Primary three match WhatsApp; AMOLED is an extra forced-dark option.
 const OPTIONS: { key: ThemePreference; label: string; sub: string }[] = [
-  { key: 'system', label: 'System', sub: 'Match device' },
-  { key: 'dark', label: 'Dark', sub: 'Classic dark' },
-  { key: 'light', label: 'Light', sub: 'Bright & clean' },
-  { key: 'amoled', label: 'AMOLED', sub: 'True black' },
+  { key: 'system', label: 'Follow System', sub: 'Default · match phone light/dark' },
+  { key: 'light', label: 'Light', sub: 'Clean white · WhatsApp-style' },
+  { key: 'dark', label: 'Dark', sub: 'Lumixo classic dark' },
+  { key: 'amoled', label: 'AMOLED', sub: 'True black · OLED-friendly' },
 ];
 
 // Mirrors web theme/themes.ts FONTS. Only 'system' is free.

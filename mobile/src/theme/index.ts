@@ -26,8 +26,12 @@ export {
   ThemeProvider,
   useTheme,
   useColors,
-  type ThemePreference,
 } from './ThemeContext';
+export {
+  resolveThemeMode,
+  isValidThemePreference,
+  type ThemePreference,
+} from './themeMode';
 export {
   COLOR_THEMES,
   WALLPAPERS,

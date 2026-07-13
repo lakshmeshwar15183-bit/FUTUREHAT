@@ -17,7 +17,7 @@
   <meta property="og:type" content="website" />
   <meta property="og:image" content="/lumixo-512.png" />
   <title>Lumixo</title>
-  <!-- Instant first paint: WhatsApp-class shell before JS executes. Removed when React mounts. -->
+  <!-- Instant first paint: Follow System (WhatsApp) — light/dark before JS. -->
   <style>
     html, body, #root {
       height: 100%;
@@ -35,6 +35,12 @@
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
       overflow: hidden;
       -webkit-font-smoothing: antialiased;
+    }
+    @media (prefers-color-scheme: light) {
+      #root { background: #ffffff; }
+      body { background: #ffffff; color: #111b21; }
+      #fh-boot { background: #ffffff !important; color: #111b21; }
+      .fh-boot-fallback { background: #ffffff !important; color: #111b21 !important; }
     }
     #fh-boot {
       position: fixed; inset: 0; z-index: 0;

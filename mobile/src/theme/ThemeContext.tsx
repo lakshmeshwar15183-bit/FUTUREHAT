@@ -1,43 +1,43 @@
-// Lumixo mobile — theme provider. Holds the active palette, persists the
-// user's choices, and exposes a hook every screen uses to build styles.
+// Lumixo mobile — theme provider.
 //
-// Two independent dimensions compose into the live palette:
-//  1. MODE (dark/light/amoled/system) — device-local, AsyncStorage, always available.
-//  2. COLOR THEME (Classic + 5 premium named palettes) + WALLPAPER — server prefs
-//     shared with web (`user_preferences.theme` / `.wallpaper`), premium-gated.
-// When a premium color theme is active it overrides the mode palette (web parity).
+// DEFAULT: Follow System (WhatsApp-class). First launch matches the device
+// appearance with no manual step. Runtime OS light/dark changes update live
+// without remounting navigation or auth.
 //
-// Premium flag comes from PremiumProvider so purchase unlocks themes instantly
-// without remounting ThemeProvider or the navigation tree.
+// Dimensions:
+//  1. MODE preference: system | light | dark | amoled (device-local AsyncStorage)
+//  2. COLOR THEME + WALLPAPER (server prefs, premium-gated)
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { useColorScheme } from 'react-native';
+import { Appearance, useColorScheme, type ColorSchemeName } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { palettes, type Palette, type ThemeMode } from './palettes';
+import {
+  resolveThemeMode,
+  isValidThemePreference,
+  type ThemePreference,
+} from './themeMode';
 import { resolveThemePalette, resolveWallpaperColor } from './appearance';
 import { supabase } from '../lib/supabase';
 import { getPreferences, updatePreferences } from '../lib/shared';
 import { usePremiumOptional } from '../premium';
 
-const STORAGE_KEY = 'futurehat.theme.mode';
-const THEME_KEY = 'futurehat.theme.color'; // local mirror of user_preferences.theme
-const WALLPAPER_KEY = 'futurehat.theme.wallpaper';
+export type { ThemePreference };
+export { resolveThemeMode, isValidThemePreference } from './themeMode';
 
-/** 'system' follows the OS; the others force a palette. */
-export type ThemePreference = ThemeMode | 'system';
+const STORAGE_KEY = 'futurehat.theme.mode';
+const THEME_KEY = 'futurehat.theme.color';
+const WALLPAPER_KEY = 'futurehat.theme.wallpaper';
 
 interface ThemeContextValue {
   colors: Palette;
   mode: ThemeMode;
   preference: ThemePreference;
   setPreference: (p: ThemePreference) => void;
-  /** Named color theme id (web parity). 'default' = use the mode palette. */
   colorTheme: string;
   setColorTheme: (id: string) => void;
-  /** Chat wallpaper id (web parity). */
   wallpaper: string;
   setWallpaper: (id: string) => void;
-  /** Resolved chat-background tint, gated by premium. null = no override. */
   wallpaperColor: string | null;
   isPremium: boolean;
 }
@@ -45,26 +45,54 @@ interface ThemeContextValue {
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const system = useColorScheme();
+  // Live system scheme — updates when the user toggles OS appearance.
+  const systemFromHook = useColorScheme();
+  const [systemScheme, setSystemScheme] = useState<ColorSchemeName>(() => Appearance.getColorScheme());
+
+  // Keep in sync with Appearance API (belt + useColorScheme for all platforms).
+  useEffect(() => {
+    setSystemScheme(systemFromHook ?? Appearance.getColorScheme());
+  }, [systemFromHook]);
+
+  useEffect(() => {
+    const sub = Appearance.addChangeListener(({ colorScheme }) => {
+      setSystemScheme(colorScheme);
+    });
+    return () => sub.remove();
+  }, []);
+
   const premiumCtx = usePremiumOptional();
   const isPremium = premiumCtx?.isPremium ?? false;
 
-  const [preference, setPreferenceState] = useState<ThemePreference>('dark');
+  // DEFAULT = Follow System (WhatsApp). No dark hard-code for new users.
+  const [preference, setPreferenceState] = useState<ThemePreference>('system');
   const [colorTheme, setColorThemeState] = useState('default');
   const [wallpaper, setWallpaperState] = useState('default');
+  const [hydrated, setHydrated] = useState(false);
 
-  // Instant local hydrate (no network wait), then reconcile with the server prefs.
+  // Instant local hydrate — if user previously chose light/dark/amoled, restore.
+  // Missing key → stay on 'system' (do not write until user picks).
   useEffect(() => {
-    AsyncStorage.multiGet([STORAGE_KEY, THEME_KEY, WALLPAPER_KEY]).then((entries) => {
-      const map = Object.fromEntries(entries);
-      const m = map[STORAGE_KEY];
-      if (m === 'dark' || m === 'light' || m === 'amoled' || m === 'system') setPreferenceState(m);
-      if (map[THEME_KEY]) setColorThemeState(map[THEME_KEY]!);
-      if (map[WALLPAPER_KEY]) setWallpaperState(map[WALLPAPER_KEY]!);
-    });
+    let alive = true;
+    AsyncStorage.multiGet([STORAGE_KEY, THEME_KEY, WALLPAPER_KEY])
+      .then((entries) => {
+        if (!alive) return;
+        const map = Object.fromEntries(entries);
+        const m = map[STORAGE_KEY];
+        if (isValidThemePreference(m)) setPreferenceState(m);
+        if (map[THEME_KEY]) setColorThemeState(map[THEME_KEY]!);
+        if (map[WALLPAPER_KEY]) setWallpaperState(map[WALLPAPER_KEY]!);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (alive) setHydrated(true);
+      });
+    return () => {
+      alive = false;
+    };
   }, []);
 
-  // Server reconcile: color theme + wallpaper only (premium lives in PremiumProvider).
+  // Server reconcile: color theme + wallpaper only.
   useEffect(() => {
     let alive = true;
     getPreferences(supabase)
@@ -102,8 +130,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     updatePreferences(supabase, { wallpaper: id }).catch(() => {});
   };
 
-  const mode: ThemeMode =
-    preference === 'system' ? (system === 'light' ? 'light' : 'dark') : preference;
+  const mode = resolveThemeMode(preference, systemScheme);
 
   const value = useMemo<ThemeContextValue>(() => {
     const base = palettes[mode];
@@ -121,7 +148,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       isPremium,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, preference, colorTheme, wallpaper, isPremium]);
+  }, [mode, preference, colorTheme, wallpaper, isPremium, hydrated]);
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }

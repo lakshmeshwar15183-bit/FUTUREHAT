@@ -10,7 +10,13 @@ import { PremiumBadge } from './PremiumBadge';
 import { supabase } from '../supabase';
 import { getServerModerator, getMailboxUnseenCount } from '@shared/adminApi';
 import '../moderator/ModeratorDashboard.css';
-import { THEMES, FONTS, BUBBLES, WALLPAPERS, APP_ICONS } from '../theme/themes';
+import { THEMES, FONTS, BUBBLES, WALLPAPERS, APP_ICONS, applyPreferences } from '../theme/themes';
+import {
+  APPEARANCE_OPTIONS,
+  getStoredAppearanceMode,
+  setStoredAppearanceMode,
+  type AppearanceMode,
+} from '../theme/appearanceMode';
 import { modalBackdrop, modalPanel } from '../motion';
 import { APP_VERSION, OWNER } from '../branding';
 import { LumixoCat } from '../mascot/LumixoCat';
@@ -47,11 +53,28 @@ export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin, onModer
   const [sub, setSub] = useState<SubPanel | null>(null);
   const [isModerator, setIsModerator] = useState(false);
   const [unseenMail, setUnseenMail] = useState(0);
+  const [appearanceMode, setAppearanceMode] = useState<AppearanceMode>(() => getStoredAppearanceMode());
 
   useEffect(() => {
     getServerModerator(supabase).then(setIsModerator).catch(() => {});
     getMailboxUnseenCount(supabase).then(setUnseenMail).catch(() => {});
   }, []);
+
+  function chooseAppearance(mode: AppearanceMode) {
+    setAppearanceMode(mode);
+    setStoredAppearanceMode(mode);
+    // Re-apply prefs so Classic chrome picks up light/dark immediately.
+    applyPreferences(
+      {
+        theme: preferences.theme,
+        font: preferences.font,
+        bubble_style: preferences.bubble_style,
+        wallpaper: preferences.wallpaper,
+        app_icon: preferences.app_icon,
+      },
+      isPremium,
+    );
+  }
   // Escape closes the open sub-panel first, then the Settings modal itself.
   useEscapeToClose(useCallback(() => (sub ? setSub(null) : onClose()), [sub, onClose]));
 
@@ -123,9 +146,27 @@ export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin, onModer
 
         {/* Appearance */}
         <section className="settings-section">
-          <h3>🎨 Appearance {!isPremium && <span className="lock-hint">premium</span>}</h3>
+          <h3>🎨 Appearance</h3>
 
-          <label className="setting-label">Theme</label>
+          <label className="setting-label">Display mode</label>
+          <div className="chip-row">
+            {APPEARANCE_OPTIONS.map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                className={`pill ${appearanceMode === opt.id ? 'active' : ''}`}
+                onClick={() => chooseAppearance(opt.id)}
+                title={opt.sub}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <p className="setting-hint" style={{ marginTop: 6, opacity: 0.75, fontSize: 12 }}>
+            Follow System is the default (like WhatsApp). Light and Dark override the device.
+          </p>
+
+          <label className="setting-label">Color theme {!isPremium && <span className="lock-hint">premium</span>}</label>
           <div className="chip-row">
             {themeList.map((t) => (
               <button key={t.id}

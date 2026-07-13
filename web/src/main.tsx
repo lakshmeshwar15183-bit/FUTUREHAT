@@ -14,6 +14,14 @@ import { afterFirstPaint, mark } from './lib/startupCache';
 import { installViewportStability } from './lib/viewportStability';
 import './index.css';
 import './theme/premium.css';
+import {
+  applyAppearanceMode,
+  watchSystemAppearance,
+} from './theme/appearanceMode';
+
+// Follow System by default — apply before React paint to avoid dark→light flash.
+applyAppearanceMode();
+watchSystemAppearance(() => applyAppearanceMode());
 
 mark('js-exec');
 
