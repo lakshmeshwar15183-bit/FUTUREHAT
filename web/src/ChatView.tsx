@@ -550,7 +550,15 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
     if (docs.length) {
       const limit = isPremium ? PREMIUM_LIMITS.uploadBytes : FREE_LIMITS.uploadBytes;
       for (const file of docs) {
-        if (file.size > limit) { if (!isPremium) { openUpgrade(); } else { setToast('File too large.'); } continue; }
+        if (file.size > limit) {
+          if (!isPremium) {
+            setToast(`Free sends up to ${Math.round(FREE_LIMITS.uploadBytes / (1024 * 1024))} MB · Lumixo+ up to ${Math.round(PREMIUM_LIMITS.uploadBytes / (1024 * 1024))} MB`);
+            openUpgrade();
+          } else {
+            setToast(`File too large (max ${Math.round(PREMIUM_LIMITS.uploadBytes / (1024 * 1024))} MB)`);
+          }
+          continue;
+        }
         setUploading(true);
         try {
           // Durable: blob in IndexedDB when offline; upload on flush when online.
