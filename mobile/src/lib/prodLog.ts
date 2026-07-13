@@ -12,12 +12,26 @@ export function logDebug(...args: unknown[]): void {
 }
 
 export function logWarn(...args: unknown[]): void {
+  // Release: no console noise (avoid leaking paths/state to logcat scrapers).
   if (IS_DEV) console.warn(...args);
-  else console.warn(...args); // keep warnings for release diagnosis (low volume)
 }
 
 export function logError(...args: unknown[]): void {
-  console.error(...args);
+  // Release: still record breadcrumb; avoid full object dumps to logcat.
+  if (IS_DEV) {
+    console.error(...args);
+    return;
+  }
+  try {
+    const msg = args
+      .map((a) => (a instanceof Error ? a.message : typeof a === 'string' ? a : ''))
+      .filter(Boolean)
+      .join(' ')
+      .slice(0, 200);
+    if (msg) console.error('[Lumixo]', msg);
+  } catch {
+    /* ignore */
+  }
 }
 
 /** Record a short breadcrumb for post-crash diagnosis (no PII). */

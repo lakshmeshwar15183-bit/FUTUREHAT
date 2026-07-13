@@ -1352,6 +1352,11 @@ function assertSafeUpload(
   if (typeof byteLength === 'number' && byteLength > 2 * 1024 * 1024 * 1024) {
     return new Error('file too large');
   }
+  // Block double extensions like evil.pdf.exe
+  const base = fileName.toLowerCase();
+  if (/\.(exe|bat|cmd|sh|apk|dex|js|html|htm|svg|php|asp|aspx|dll|so|msi|scr|ps1)(\.|$)/i.test(base)) {
+    return new Error('unsupported file type');
+  }
   return null;
 }
 

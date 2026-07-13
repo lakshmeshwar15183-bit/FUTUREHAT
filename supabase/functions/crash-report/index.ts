@@ -96,8 +96,9 @@ Deno.serve(async (req) => {
 
     return json({ ok: true }, 200);
   } catch (e) {
-    console.error('[crash-report]', e);
-    return json({ error: String(e) }, 500);
+    console.error('[crash-report]', e instanceof Error ? e.message : 'error');
+    // Never leak stack traces / internal errors to clients.
+    return json({ error: 'internal error' }, 500);
   }
 });
 
