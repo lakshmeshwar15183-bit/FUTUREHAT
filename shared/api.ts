@@ -1347,8 +1347,9 @@ function assertSafeUpload(
   ) {
     return new Error('unsupported content type');
   }
-  // Hard ceiling 100 MB even if caller skips premium check.
-  if (typeof byteLength === 'number' && byteLength > 100 * 1024 * 1024) {
+  // Hard ceiling matches premium max (2 GB). Free/premium soft limits are
+  // enforced in the client via FREE_LIMITS / PREMIUM_LIMITS.
+  if (typeof byteLength === 'number' && byteLength > 2 * 1024 * 1024 * 1024) {
     return new Error('file too large');
   }
   return null;

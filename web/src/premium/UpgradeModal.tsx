@@ -19,7 +19,7 @@ import { modalBackdrop, modalPanel, spring } from '../motion';
 import './UpgradeModal.css';
 
 const CATEGORY_ORDER: FeatureCategory[] = [
-  'customization', 'stickers', 'ai', 'messaging', 'privacy', 'storage', 'identity',
+  'customization', 'stickers', 'messaging', 'privacy', 'storage', 'identity',
 ];
 
 export function UpgradeModal({ onClose }: { onClose: () => void }) {

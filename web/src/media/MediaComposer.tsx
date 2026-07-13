@@ -99,7 +99,17 @@ export function MediaComposer({ convId, isPremium, files, onClose, onSent, onUpg
     if (sending || !items.length) return;
     // enforce upload limit (free vs premium) before doing work
     const tooBig = items.find((i) => i.file.size > limit);
-    if (tooBig) { if (!isPremium) { onUpgrade(); return; } setError('A file is too large.'); return; }
+    if (tooBig) {
+      const freeMb = Math.round(FREE_LIMITS.uploadBytes / (1024 * 1024));
+      const premMb = Math.round(PREMIUM_LIMITS.uploadBytes / (1024 * 1024));
+      if (!isPremium) {
+        setError(`Free accounts can send up to ${freeMb} MB (like WhatsApp). Lumixo+ raises this to ${premMb} MB.`);
+        onUpgrade();
+        return;
+      }
+      setError(`This file exceeds the ${premMb} MB Lumixo+ limit.`);
+      return;
+    }
     setSending(true);
     setError(null);
     try {

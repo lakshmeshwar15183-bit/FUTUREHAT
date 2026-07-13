@@ -1106,20 +1106,22 @@ function ChatScreenInner() {
     }
   }
 
-  // Free tier caps uploads at 5 MB; premium lifts it to 100 MB (web parity via
-  // FREE_LIMITS/PREMIUM_LIMITS). Returns true if the file is within the limit.
+  // Free: WhatsApp-class everyday uploads (100 MB). Premium extends to 2 GB.
+  // Soft limit here; server hard ceiling matches premium max.
   function withinUploadLimit(bytes: number | undefined): boolean {
     if (bytes == null) return true; // size unknown — let the server be the backstop
     const limit = isPremium ? PREMIUM_LIMITS.uploadBytes : FREE_LIMITS.uploadBytes;
     if (bytes <= limit) return true;
+    const freeMb = Math.round(FREE_LIMITS.uploadBytes / (1024 * 1024));
+    const premMb = Math.round(PREMIUM_LIMITS.uploadBytes / (1024 * 1024));
     if (!isPremium) {
       Alert.alert(
         'File too large',
-        `Free accounts can send files up to ${Math.round(FREE_LIMITS.uploadBytes / (1024 * 1024))} MB. Upgrade to Lumixo+ to send files up to ${Math.round(PREMIUM_LIMITS.uploadBytes / (1024 * 1024))} MB.`,
+        `You can send files up to ${freeMb} MB for free (like WhatsApp). Upgrade to Lumixo+ for up to ${premMb} MB.`,
         [{ text: 'Not now', style: 'cancel' }, { text: 'Upgrade', onPress: () => navigation.navigate('Premium') }],
       );
     } else {
-      Alert.alert('File too large', `This file exceeds the ${Math.round(PREMIUM_LIMITS.uploadBytes / (1024 * 1024))} MB limit.`);
+      Alert.alert('File too large', `This file exceeds the ${premMb} MB Lumixo+ limit.`);
     }
     return false;
   }
