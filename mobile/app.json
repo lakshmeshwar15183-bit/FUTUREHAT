@@ -19,11 +19,11 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "dev.lakshmeshwar.futurehat",
-      "buildNumber": "48",
+      "buildNumber": "49",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSPhotoLibraryAddUsageDescription": "Lumixo saves photos and media you download to your photo library.",
-        "NSContactsUsageDescription": "Lumixo uses your contacts only to find friends already on Lumixo. Phone numbers are hashed on your device — we never upload your full contact list.",
+        "NSContactsUsageDescription": "Lumixo uses your contacts only to find friends already on Lumixo. Phone numbers are hashed on your device \u2014 we never upload your full contact list.",
         "UIBackgroundModes": [
           "audio",
           "remote-notification",
@@ -33,7 +33,7 @@
     },
     "android": {
       "package": "dev.lakshmeshwar.futurehat",
-      "versionCode": 63,
+      "versionCode": 65,
       "allowBackup": false,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
@@ -91,7 +91,7 @@
       [
         "expo-contacts",
         {
-          "contactsPermission": "Lumixo uses your contacts only to find friends already on Lumixo. Numbers are hashed on your device — we never upload your full contact list."
+          "contactsPermission": "Lumixo uses your contacts only to find friends already on Lumixo. Numbers are hashed on your device \u2014 we never upload your full contact list."
         }
       ],
       [

@@ -22,6 +22,8 @@ export function threadColumnBottomPad(
   keyboardHeight: number,
   safeAreaBottom: number,
 ): number {
+  // Callable from Reanimated UI worklets (ChatScreen keyboard pad). Pure math only.
+  'worklet';
   const kb = Number.isFinite(keyboardHeight) ? Math.max(0, keyboardHeight) : 0;
   const inset = Number.isFinite(safeAreaBottom) ? Math.max(0, safeAreaBottom) : 0;
   if (kb > KEYBOARD_CLOSED_EPSILON_PX) return kb;

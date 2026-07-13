@@ -90,9 +90,13 @@ describe('source contract: ChatScreen must not reintroduce gap bugs', () => {
     'utf8',
   );
 
-  it('uses threadColumnBottomPad (not Math.max keyboard/inset)', () => {
-    expect(src).toMatch(/threadColumnBottomPad/);
+  it('keyboard pad is worklet-safe (no Math.max keyboard/inset double-count)', () => {
+    // Must not reintroduce Math.max(ime, inset) which leaves a blank band on OEMs.
     expect(src).not.toMatch(/Math\.max\(\s*keyboard\.height/);
+    // Pad rule must run inside a worklet with pure math (no JS helper call).
+    expect(src).toMatch(/useAnimatedStyle/);
+    expect(src).toMatch(/'worklet'/);
+    expect(src).toMatch(/kb > 2/);
   });
 
   it('gives FlatList explicit flex:1 list style', () => {

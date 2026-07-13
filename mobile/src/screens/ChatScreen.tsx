@@ -133,7 +133,6 @@ import { formatLastSeen, formatDaySeparator, formatTime } from '../lib/time';
 import { useColors, useTheme, spacing, radius, font, listPerf, motion, type Palette } from '../theme';
 import { usePremium } from '../premium';
 import {
-  threadColumnBottomPad,
   invertedListContentPadding,
   composerInnerBottomPad,
   isInvertedAtLatest,
@@ -287,9 +286,16 @@ function ChatScreenInner() {
   // leaves a blank band between the last bubble and the composer.
   const keyboard = useAnimatedKeyboard();
   const safeBottom = insets.bottom;
-  const keyboardStyle = useAnimatedStyle(() => ({
-    paddingBottom: threadColumnBottomPad(keyboard.height.value, safeBottom),
-  }));
+  // CRITICAL (Android crash): never call non-worklet JS helpers from
+  // useAnimatedStyle — Hermes UI runtime throws "Object is not a function"
+  // and kills the app when opening a chat. Pure numbers only on UI thread.
+  // Rule matches threadColumnBottomPad() / KEYBOARD_CLOSED_EPSILON_PX (=2).
+  const keyboardStyle = useAnimatedStyle(() => {
+    'worklet';
+    const kb = keyboard.height.value;
+    const pad = kb > 2 ? kb : safeBottom;
+    return { paddingBottom: pad };
+  });
 
   const [uid, setUid] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
