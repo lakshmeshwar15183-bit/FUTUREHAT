@@ -222,7 +222,7 @@ export function UpgradeModal({ onClose }: { onClose: () => void }) {
           })}
         </div>
 
-        <div className="upgrade-footer">Developed by LAKSHMESHWAR PANDEY</div>
+        <div className="upgrade-footer">© Lumixo. All rights reserved.</div>
 
         <AnimatePresence>
           {showSoon && (

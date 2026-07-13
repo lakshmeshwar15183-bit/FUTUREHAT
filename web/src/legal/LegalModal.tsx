@@ -5,7 +5,7 @@
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { modalBackdrop, modalPanel } from '../motion';
-import { APP_VERSION, OWNER } from '../branding';
+import { APP_VERSION, CREDIT, SUPPORT_EMAIL, GRIEVANCE_TEAM } from '../branding';
 import './LegalModal.css';
 
 type Tab = 'terms' | 'privacy' | 'guidelines';
@@ -57,6 +57,11 @@ export function LegalModal({ onClose, initial = 'terms' }: { onClose: () => void
               <p>You can edit your profile, manage privacy visibility, block users, mute chats, export your data, and request account deletion at any time.</p>
               <h4>Sharing</h4>
               <p>We do not sell your data. Limited processors (hosting, payments) handle data solely to provide the service.</p>
+              <h4>Contact</h4>
+              <p>
+                Support: <a href={`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent('Lumixo Support Request')}`}>{SUPPORT_EMAIL}</a>.
+                {' '}Grievance Team: {GRIEVANCE_TEAM}.
+              </p>
             </>
           )}
           {tab === 'guidelines' && (
@@ -75,7 +80,7 @@ export function LegalModal({ onClose, initial = 'terms' }: { onClose: () => void
           )}
         </div>
 
-        <div className="legal-foot">Lumixo v{APP_VERSION} · Developed by {OWNER}</div>
+        <div className="legal-foot">Lumixo v{APP_VERSION} · {CREDIT}</div>
       </motion.div>
     </motion.div>
   );

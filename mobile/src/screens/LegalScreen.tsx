@@ -3,7 +3,7 @@
 import React, { useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
-import { CREDIT, APP_VERSION, SUPPORT_EMAIL, OWNER, GRIEVANCE_OFFICER } from '../branding';
+import { CREDIT, APP_VERSION, SUPPORT_EMAIL, GRIEVANCE_TEAM } from '../branding';
 
 type Tab = 'terms' | 'privacy' | 'guidelines';
 
@@ -79,7 +79,7 @@ export default function LegalScreen() {
             </Text>
             <Text style={styles.h2}>Contact</Text>
             <Text style={styles.p}>
-              Privacy / support: {SUPPORT_EMAIL}. Grievance officer: {GRIEVANCE_OFFICER} ({OWNER}).
+              Privacy / support: {SUPPORT_EMAIL}. Grievance Team: {GRIEVANCE_TEAM}.
             </Text>
           </>
         )}

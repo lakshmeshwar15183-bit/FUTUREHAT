@@ -18,7 +18,7 @@ import {
   type AppearanceMode,
 } from '../theme/appearanceMode';
 import { modalBackdrop, modalPanel } from '../motion';
-import { APP_VERSION, OWNER } from '../branding';
+import { APP_VERSION, CREDIT, SUPPORT_EMAIL } from '../branding';
 import { LumixoCat } from '../mascot/LumixoCat';
 import { useEscapeToClose } from '../useEscapeToClose';
 import { safeCssUrl } from '../util/safeUrl';
@@ -310,8 +310,8 @@ export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin, onModer
           <div className="about-row"><span>App</span><span>Lumixo</span></div>
           <div className="about-row"><span>Mascot</span><span>Lumi</span></div>
           <div className="about-row"><span>Version</span><span>{APP_VERSION}</span></div>
-          <div className="about-row"><span>Developer</span><span>{OWNER}</span></div>
-          <div className="about-credit">Developed by {OWNER}</div>
+          <div className="about-row"><span>Support</span><span><a href={`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent('Lumixo Support Request')}`}>{SUPPORT_EMAIL}</a></span></div>
+          <div className="about-credit">{CREDIT}</div>
         </section>
       </motion.div>
     </motion.div>
