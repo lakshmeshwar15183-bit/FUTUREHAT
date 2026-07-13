@@ -87,6 +87,163 @@ export async function getMyCommunities(client: SupabaseClient): Promise<Communit
   return data ?? [];
 }
 
+/** Channel row with optional last-message preview for the Communities list. */
+export interface ChannelSummary extends Channel {
+  lastMessagePreview?: string | null;
+  lastMessageAt?: string | null;
+  unreadCount?: number;
+}
+
+/** Community + nested groups/channels for the WhatsApp-style expandable list. */
+export interface CommunitySummary extends Community {
+  channels: ChannelSummary[];
+  lastActivityAt?: string | null;
+  lastPreview?: string | null;
+  totalUnread?: number;
+  memberCount?: number;
+}
+
+function previewFromMessage(m: {
+  type?: string | null;
+  content?: string | null;
+  is_deleted?: boolean | null;
+} | null | undefined): string {
+  if (!m) return '';
+  if (m.is_deleted) return 'This message was deleted';
+  if (m.type === 'image') return '📷 Photo';
+  if (m.type === 'video') return '🎥 Video';
+  if (m.type === 'audio') return '🎤 Voice message';
+  if (m.type === 'file') return m.content?.trim() ? `📄 ${m.content}` : '📄 Document';
+  if (m.type === 'system') {
+    return (m.content ?? '').replace(/\s*\[call:[0-9a-f-]{36}\]\s*$/i, '').trim();
+  }
+  return (m.content ?? '').trim();
+}
+
+/**
+ * Load communities with channels + last-message previews for the tab list.
+ * Best-effort: never throws; offline callers should keep cache on catch.
+ */
+export async function getMyCommunitySummaries(
+  client: SupabaseClient,
+): Promise<CommunitySummary[]> {
+  const communities = await getMyCommunities(client);
+  if (!communities.length) return [];
+
+  const ids = communities.map((c) => c.id);
+  const { data: channelRows } = await client
+    .from('channels')
+    .select('*')
+    .in('community_id', ids)
+    .order('created_at');
+  const channels = (channelRows ?? []) as Channel[];
+
+  // Member counts (single query)
+  const { data: memRows } = await client
+    .from('community_members')
+    .select('community_id')
+    .in('community_id', ids);
+  const memberCountByComm = new Map<string, number>();
+  for (const r of memRows ?? []) {
+    const cid = (r as { community_id: string }).community_id;
+    memberCountByComm.set(cid, (memberCountByComm.get(cid) ?? 0) + 1);
+  }
+
+  // Last message per channel conversation (parallel, capped)
+  const convIds = channels.map((c) => c.conversation_id).filter(Boolean);
+  const lastByConv = new Map<string, { preview: string; at: string }>();
+  if (convIds.length) {
+    // Batch: fetch recent messages then keep newest per conversation.
+    const { data: msgs } = await client
+      .from('messages')
+      .select('conversation_id, type, content, is_deleted, created_at')
+      .in('conversation_id', convIds.slice(0, 80))
+      .order('created_at', { ascending: false })
+      .limit(Math.min(convIds.length * 3, 240));
+    for (const raw of msgs ?? []) {
+      const m = raw as {
+        conversation_id: string;
+        type?: string;
+        content?: string;
+        is_deleted?: boolean;
+        created_at: string;
+      };
+      if (lastByConv.has(m.conversation_id)) continue;
+      lastByConv.set(m.conversation_id, {
+        preview: previewFromMessage(m),
+        at: m.created_at,
+      });
+    }
+  }
+
+  const channelsByComm = new Map<string, ChannelSummary[]>();
+  for (const ch of channels) {
+    const last = lastByConv.get(ch.conversation_id);
+    const summary: ChannelSummary = {
+      ...ch,
+      lastMessagePreview: last?.preview ?? null,
+      lastMessageAt: last?.at ?? ch.created_at,
+      unreadCount: 0,
+    };
+    const list = channelsByComm.get(ch.community_id) ?? [];
+    list.push(summary);
+    channelsByComm.set(ch.community_id, list);
+  }
+
+  // Announcement channels first, then alphabetical (WhatsApp order).
+  for (const [cid, list] of channelsByComm) {
+    list.sort((a, b) => {
+      const aAnn = a.kind === 'announcement' ? 0 : 1;
+      const bAnn = b.kind === 'announcement' ? 0 : 1;
+      if (aAnn !== bAnn) return aAnn - bAnn;
+      return a.name.localeCompare(b.name);
+    });
+    channelsByComm.set(cid, list);
+  }
+
+  return communities.map((c) => {
+    const chs = channelsByComm.get(c.id) ?? [];
+    let lastActivityAt: string | null = c.created_at;
+    let lastPreview: string | null = c.description || 'Community';
+    for (const ch of chs) {
+      if (ch.lastMessageAt && (!lastActivityAt || ch.lastMessageAt > lastActivityAt)) {
+        lastActivityAt = ch.lastMessageAt;
+        lastPreview = ch.lastMessagePreview
+          ? `${ch.name}: ${ch.lastMessagePreview}`
+          : ch.name;
+      }
+    }
+    const totalUnread = chs.reduce((n, ch) => n + (ch.unreadCount ?? 0), 0);
+    return {
+      ...c,
+      channels: chs,
+      lastActivityAt,
+      lastPreview,
+      totalUnread,
+      memberCount: memberCountByComm.get(c.id) ?? 0,
+    };
+  }).sort((a, b) => {
+    // Newest activity first
+    const at = a.lastActivityAt ?? a.created_at;
+    const bt = b.lastActivityAt ?? b.created_at;
+    return bt.localeCompare(at);
+  });
+}
+
+export async function leaveCommunity(
+  client: SupabaseClient,
+  communityId: UUID,
+): Promise<{ error: Error | null }> {
+  const user = await getCurrentUser(client);
+  if (!user) return { error: new Error('not authenticated') };
+  const { error } = await client
+    .from('community_members')
+    .delete()
+    .eq('community_id', communityId)
+    .eq('user_id', user.id);
+  return { error };
+}
+
 export interface CommunityMember {
   community_id: UUID;
   user_id: UUID;
