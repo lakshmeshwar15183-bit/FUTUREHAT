@@ -9,8 +9,19 @@
 //   • source is a data:/file:/sticker/external url  → passes through.
 //   • source is a supabase-media url  → signs it once (60m TTL) via signedMediaUrl.
 //   • On ANY failure (sign, network, decode, stall) we surface retry — never black.
-import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+//   • Layout: width/height/flex on `style` are applied to the CONTAINER. The
+//     Image uses absoluteFill inside that sized box. Callers that only pass
+//     style={{ width, height }} (ProfilePhotoViewer) must not collapse to 0×0.
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+  type StyleProp,
+  type ViewStyle,
+} from 'react-native';
 import { Image, type ImageContentFit, type ImageStyle } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -47,6 +58,53 @@ interface Props {
   kind?: MediaKind;
 }
 
+/** Layout keys that size the outer box — must not only live on absoluteFill Image. */
+const LAYOUT_KEYS = [
+  'width',
+  'height',
+  'minWidth',
+  'minHeight',
+  'maxWidth',
+  'maxHeight',
+  'flex',
+  'flexGrow',
+  'flexShrink',
+  'flexBasis',
+  'alignSelf',
+  'aspectRatio',
+  'borderRadius',
+  'borderTopLeftRadius',
+  'borderTopRightRadius',
+  'borderBottomLeftRadius',
+  'borderBottomRightRadius',
+  'overflow',
+] as const;
+
+function splitLayoutStyle(style: StyleProp<ImageStyle> | undefined): {
+  containerLayout: ViewStyle;
+  imageStyle: StyleProp<ImageStyle>;
+} {
+  const flat = StyleSheet.flatten(style) as ImageStyle | undefined;
+  if (!flat || typeof flat !== 'object') {
+    return { containerLayout: {}, imageStyle: style };
+  }
+  const containerLayout: Record<string, unknown> = {};
+  const rest: Record<string, unknown> = { ...flat };
+  for (const k of LAYOUT_KEYS) {
+    if (k in rest && rest[k] != null) {
+      containerLayout[k] = rest[k];
+      // Keep borderRadius on the image too for cover crop on Android.
+      if (!String(k).startsWith('border') && k !== 'overflow') {
+        delete rest[k];
+      }
+    }
+  }
+  return {
+    containerLayout: containerLayout as ViewStyle,
+    imageStyle: rest as ImageStyle,
+  };
+}
+
 export default function SignedImage({
   source,
   style,
@@ -72,8 +130,13 @@ export default function SignedImage({
   const [nonce, setNonce] = useState(0);
   const stallTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const { containerLayout, imageStyle } = useMemo(() => splitLayoutStyle(style), [style]);
+
   const clearStallTimer = () => {
-    if (stallTimer.current) { clearTimeout(stallTimer.current); stallTimer.current = null; }
+    if (stallTimer.current) {
+      clearTimeout(stallTimer.current);
+      stallTimer.current = null;
+    }
   };
   const armStallTimer = () => {
     if (!stallTimeoutMs) return;
@@ -114,12 +177,19 @@ export default function SignedImage({
   const empty = !source;
 
   return (
-    <View style={[styles.container, { backgroundColor: placeholderBackground }, containerStyle]}>
+    <View
+      style={[
+        styles.container,
+        containerLayout,
+        { backgroundColor: placeholderBackground },
+        containerStyle,
+      ]}
+    >
       {!!url && !failed && (
         <Image
           key={nonce /* force a fresh decode on retry, bypassing a bad cache entry */}
           source={{ uri: url, cacheKey: cacheKey ?? mediaKey(source) }}
-          style={[StyleSheet.absoluteFill, style as StyleProp<ImageStyle>]}
+          style={[StyleSheet.absoluteFill, imageStyle]}
           contentFit={contentFit}
           cachePolicy="memory-disk"
           transition={transition}
@@ -151,7 +221,13 @@ export default function SignedImage({
       )}
 
       {failed && showRetry && (
-        <Pressable style={styles.overlay} onPress={onRetry} hitSlop={12} accessibilityRole="button" accessibilityLabel="Retry loading media">
+        <Pressable
+          style={styles.overlay}
+          onPress={onRetry}
+          hitSlop={12}
+          accessibilityRole="button"
+          accessibilityLabel="Retry loading media"
+        >
           <Ionicons name="reload" size={26} color={tint} />
           <Text style={[styles.retryText, { color: tint }]}>Tap to retry</Text>
         </Pressable>

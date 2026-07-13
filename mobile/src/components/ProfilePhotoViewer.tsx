@@ -1,6 +1,10 @@
 // Lumixo — full-screen profile photo viewer (WhatsApp-grade).
 // Pinch / double-tap zoom, pan while zoomed, swipe-down to dismiss,
 // black backdrop, smooth entrance. Uses signed/cached URLs via SignedImage.
+//
+// CRITICAL: SignedImage must receive a sized container (width × height). Passing
+// dimensions only on the image style used to collapse the view to 0×0 → black
+// screen while the avatar on the profile screen still rendered correctly.
 import React, { useCallback, useEffect, useMemo } from 'react';
 import {
   Modal,
@@ -38,6 +42,30 @@ export interface ProfilePhotoViewerProps {
   onClose: () => void;
 }
 
+const AVATAR_PALETTE = ['#00A884', '#5B6EF5', '#E8638A', '#F7A948', '#9B6EF5', '#3FB0E0'];
+
+function initials(name?: string | null): string {
+  if (!name) return '?';
+  const parts = name.trim().split(/\s+/).slice(0, 2);
+  return parts.map((p) => p[0]?.toUpperCase() ?? '').join('') || '?';
+}
+
+function colorFor(name?: string | null): string {
+  if (!name) return AVATAR_PALETTE[0];
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % AVATAR_PALETTE.length;
+  return AVATAR_PALETTE[h];
+}
+
+/** Stable expo-image cache key (path without rotating query tokens). */
+function stableCacheKey(uri: string | null | undefined): string | undefined {
+  if (!uri) return undefined;
+  const m = uri.match(/\/media\/([^?#]+)/);
+  if (m) return `avatar:${decodeURIComponent(m[1])}`;
+  const bare = uri.split('?')[0];
+  return bare || uri;
+}
+
 export default function ProfilePhotoViewer({
   visible,
   uri,
@@ -46,6 +74,9 @@ export default function ProfilePhotoViewer({
 }: ProfilePhotoViewerProps) {
   const insets = useSafeAreaInsets();
   const { width: screenW, height: screenH } = useWindowDimensions();
+  // Fit image in the stage between chrome and safe bottom (WhatsApp-like).
+  const imgW = screenW;
+  const imgH = Math.max(240, Math.round(screenH * 0.72));
 
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
@@ -183,6 +214,9 @@ export default function ProfilePhotoViewer({
     [name],
   );
 
+  const hasPhoto = !!(uri && String(uri).trim().length > 0);
+  const cacheKey = useMemo(() => stableCacheKey(uri), [uri]);
+
   if (!visible) return null;
 
   return (
@@ -214,20 +248,33 @@ export default function ProfilePhotoViewer({
 
         <GestureDetector gesture={composed}>
           <Animated.View style={[styles.stage, imgStyle]}>
-            {uri ? (
+            {hasPhoto ? (
               <SignedImage
                 source={uri}
-                style={{ width: screenW, height: screenH * 0.72 }}
+                // Size the CONTAINER — Image is absoluteFill inside (zero-size bug fix).
+                containerStyle={{ width: imgW, height: imgH }}
+                style={{ width: imgW, height: imgH }}
                 contentFit="contain"
-                cacheKey={uri}
+                cacheKey={cacheKey}
                 kind="avatar"
                 persist
-                placeholderBackground="rgba(0,0,0,0.2)"
+                transition={160}
+                stallTimeoutMs={15000}
+                placeholderBackground="rgba(20,20,20,0.9)"
+                tint="#fff"
+                showRetry
               />
             ) : (
-              <View style={styles.empty}>
-                <Ionicons name="person" size={96} color="rgba(255,255,255,0.35)" />
-                <Text style={styles.emptyText}>No profile photo</Text>
+              <View
+                style={[
+                  styles.empty,
+                  { width: Math.min(200, imgW * 0.5), height: Math.min(200, imgW * 0.5), borderRadius: 999 },
+                  { backgroundColor: colorFor(name) },
+                ]}
+              >
+                <Text style={[styles.emptyInitials, { fontSize: Math.min(200, imgW * 0.5) * 0.4 }]}>
+                  {initials(name)}
+                </Text>
               </View>
             )}
           </Animated.View>
@@ -275,6 +322,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  empty: { alignItems: 'center', justifyContent: 'center', gap: 12 },
-  emptyText: { color: 'rgba(255,255,255,0.55)', fontSize: 15 },
+  empty: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyInitials: {
+    color: '#fff',
+    fontWeight: '700',
+  },
 });
