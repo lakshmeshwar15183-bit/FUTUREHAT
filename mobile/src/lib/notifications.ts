@@ -18,6 +18,7 @@ import { supabase } from './supabase';
 import { registerPushToken, removePushToken } from './shared';
 import { nativeCancelIncomingCall, nativeShowIncomingCall } from './incomingCallNative';
 import { recordDelivery } from './notifLatency';
+import { openBatteryAssistantSettings } from './batteryAssistant';
 
 // Bump when channel definitions change so they're re-created once.
 // v7: killed-app reliability — non-sticky call rings align with FCM cancel-by-tag.
@@ -431,8 +432,10 @@ export async function openNotificationSystemSettings(): Promise<void> {
 /** Open battery optimization / app details so OEM can allow killed-state FCM. */
 export async function openBatteryOptimizationSettings(): Promise<void> {
   try {
+    if (await openBatteryAssistantSettings()) return;
+  } catch { /* fall through */ }
+  try {
     if (Platform.OS === 'android') {
-      // Opens App info (Battery / Unrestricted lives here on modern Android).
       try {
         await Linking.openURL('package:dev.lakshmeshwar.futurehat');
         return;

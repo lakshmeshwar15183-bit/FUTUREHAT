@@ -18,15 +18,15 @@ import type { NotificationSettings } from '../lib/shared';
 import {
   CHANNELS,
   getNotificationPermissionGranted,
-  openBatteryOptimizationSettings,
   openNotificationSystemSettings,
   registerForPush,
 } from '../lib/notifications';
+import { detectOemFamily, getOemGuide } from '../lib/notificationSetup';
 import {
-  detectOemFamily,
-  getOemGuide,
-  openAppBatterySettings,
-} from '../lib/notificationSetup';
+  getBatteryAssistStatus,
+  resetBatteryAssistantForManualOpen,
+} from '../lib/batteryAssistant';
+import BatteryAssistant from '../components/BatteryAssistant';
 import { getCache, setCache } from '../lib/localCache';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 
@@ -54,13 +54,30 @@ export default function NotificationsScreen() {
   const oem = useMemo(() => getOemGuide(detectOemFamily()), []);
   const [n, setN] = useState<NotificationSettings>(DEFAULT_NOTIFICATION_SETTINGS);
   const [osGranted, setOsGranted] = useState<boolean | null>(null);
+  const [batteryAllowed, setBatteryAllowed] = useState<boolean | null>(null);
+  const [batteryKnown, setBatteryKnown] = useState(false);
+  const [showBatteryAssist, setShowBatteryAssist] = useState(false);
+
+  const refreshBattery = useCallback(() => {
+    if (Platform.OS !== 'android') return;
+    getBatteryAssistStatus()
+      .then((s) => {
+        setBatteryKnown(s.statusKnown);
+        setBatteryAllowed(s.statusKnown ? s.backgroundAllowed : null);
+      })
+      .catch(() => {
+        setBatteryKnown(false);
+        setBatteryAllowed(null);
+      });
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
       getCache<NotificationSettings | null>('notifsV2', null).then((c) => { if (c) setN({ ...DEFAULT_NOTIFICATION_SETTINGS, ...c }); });
       getNotificationSettings(supabase).then((s) => { setN(s); setCache('notifsV2', s); }).catch(() => {});
       getNotificationPermissionGranted().then(setOsGranted).catch(() => setOsGranted(null));
-    }, []),
+      refreshBattery();
+    }, [refreshBattery]),
   );
 
   function update(patch: Partial<NotificationSettings>) {
@@ -132,49 +149,39 @@ export default function NotificationsScreen() {
           <Pressable
             style={styles.row}
             onPress={() => {
-              Alert.alert(
-                'Background delivery',
-                'Some phones pause apps in the background. Set Lumixo battery usage to Unrestricted so message and call alerts still arrive when the app is closed.',
-                [
-                  { text: 'Cancel', style: 'cancel' },
-                  { text: 'Open battery settings', onPress: () => void openBatteryOptimizationSettings() },
-                ],
-              );
+              void resetBatteryAssistantForManualOpen();
+              setShowBatteryAssist(true);
             }}
+            accessibilityRole="button"
+            accessibilityLabel="Battery optimization assistant"
           >
             <View style={{ flex: 1, marginRight: spacing(3) }}>
               <Text style={styles.rowLabel}>Battery optimization</Text>
               <Text style={styles.rowDesc}>
-                Allow unrestricted battery so notifications work after force-stop
+                {batteryKnown && batteryAllowed
+                  ? 'Background activity enabled — calls & alerts should be reliable'
+                  : batteryKnown && batteryAllowed === false
+                    ? `${oem.brandLabel}: tap for a guided fix (recommended)`
+                    : 'Improve call & notification delivery when the app is closed'}
               </Text>
             </View>
-            <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
-          </Pressable>
-        )}
-        {Platform.OS === 'android' && oem.aggressive && (
-          <Pressable
-            style={styles.row}
-            onPress={() => {
-              Alert.alert(
-                oem.title,
-                `${oem.body}\n\n${oem.steps.map((s, i) => `${i + 1}. ${s}`).join('\n')}`,
-                [
-                  { text: 'Cancel', style: 'cancel' },
-                  { text: 'Open settings', onPress: () => void openAppBatterySettings() },
-                ],
-              );
-            }}
-          >
-            <View style={{ flex: 1, marginRight: spacing(3) }}>
-              <Text style={styles.rowLabel}>{oem.brandLabel} background settings</Text>
-              <Text style={styles.rowDesc}>
-                This phone may block closed-app alerts — follow the recommended steps
-              </Text>
-            </View>
-            <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
+            <Ionicons
+              name={batteryKnown && batteryAllowed ? 'checkmark-circle' : 'chevron-forward'}
+              size={batteryKnown && batteryAllowed ? 22 : 16}
+              color={batteryKnown && batteryAllowed ? colors.primary : colors.textFaint}
+            />
           </Pressable>
         )}
       </View>
+
+      <BatteryAssistant
+        visible={showBatteryAssist}
+        force
+        onClose={() => {
+          setShowBatteryAssist(false);
+          refreshBattery();
+        }}
+      />
 
       {/* MESSAGE */}
       <Text style={styles.sectionLabel}>MESSAGE</Text>

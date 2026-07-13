@@ -13,6 +13,7 @@ import {
   type OemFamily,
   type OemGuide,
 } from './oemNotifGuides';
+import { openBatteryAssistantSettings } from './batteryAssistant';
 
 export type { OemFamily, OemGuide };
 export { getOemGuidePure as getOemGuideForFamily };
@@ -159,6 +160,10 @@ export async function openAppNotificationSettings(): Promise<void> {
 }
 
 export async function openAppBatterySettings(): Promise<void> {
+  // Prefer OEM-aware battery assistant deep-links (never crash).
+  try {
+    if (await openBatteryAssistantSettings()) return;
+  } catch { /* fall through */ }
   try {
     if (Platform.OS === 'android') {
       try {

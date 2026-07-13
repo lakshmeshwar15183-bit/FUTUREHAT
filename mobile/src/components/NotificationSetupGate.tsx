@@ -1,13 +1,12 @@
 /**
  * Full-screen first-launch notification setup.
- * Flow: rationale → system permission → (optional) OEM/battery guide → done.
- * Never nags after dismiss of battery/OEM steps; permanent deny offers Settings.
+ * Flow: rationale → system permission → (optional) Battery Assistant → done.
+ * Never nags after dismiss; permanent deny offers Settings.
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -22,20 +21,18 @@ import {
   NOTIF_RATIONALE,
   dismissBatteryGuide,
   dismissOemGuide,
-  getOemGuide,
   getPermissionState,
   markNotificationSetupDone,
-  openAppBatterySettings,
   openAppNotificationSettings,
   requestNotificationPermissionFromUser,
-  shouldShowBatteryGuide,
   shouldShowNotificationSetup,
-  shouldShowOemGuide,
   type NotifPermissionState,
 } from '../lib/notificationSetup';
+import { shouldShowBatteryAssistant } from '../lib/batteryAssistant';
 import { initNotifications, registerForPush } from '../lib/notifications';
+import BatteryAssistant from './BatteryAssistant';
 
-type Step = 'loading' | 'rationale' | 'denied' | 'oem' | 'battery' | 'hidden';
+type Step = 'loading' | 'rationale' | 'denied' | 'battery' | 'hidden';
 
 export default function NotificationSetupGate() {
   const colors = useColors();
@@ -44,18 +41,16 @@ export default function NotificationSetupGate() {
   const [step, setStep] = useState<Step>('loading');
   const [busy, setBusy] = useState(false);
   const [perm, setPerm] = useState<NotifPermissionState>('undetermined');
-  const oem = useMemo(() => getOemGuide(), []);
 
   const finishOrNextGuides = useCallback(async () => {
     await markNotificationSetupDone();
-    if (await shouldShowOemGuide()) {
-      setStep('oem');
-      return;
-    }
-    if (await shouldShowBatteryGuide()) {
+    // Dismiss legacy OEM/battery keys so old flags don't re-fire after upgrade.
+    await dismissOemGuide();
+    if (await shouldShowBatteryAssistant()) {
       setStep('battery');
       return;
     }
+    await dismissBatteryGuide();
     setStep('hidden');
   }, []);
 
@@ -68,14 +63,8 @@ export default function NotificationSetupGate() {
       if (!alive) return;
       setPerm(state);
       if (!show && state === 'granted') {
-        // Soft re-register token; skip UI.
         void registerForPush();
-        // Still offer OEM guide once if never dismissed.
-        if (await shouldShowOemGuide()) {
-          setStep('oem');
-          return;
-        }
-        if (await shouldShowBatteryGuide()) {
+        if (await shouldShowBatteryAssistant()) {
           setStep('battery');
           return;
         }
@@ -115,16 +104,13 @@ export default function NotificationSetupGate() {
 
   async function onSkipRationale() {
     await markNotificationSetupDone();
-    // Still show OEM/battery once — user can fix later in Settings.
-    if (await shouldShowOemGuide()) setStep('oem');
-    else if (await shouldShowBatteryGuide()) setStep('battery');
+    if (await shouldShowBatteryAssistant()) setStep('battery');
     else setStep('hidden');
   }
 
   async function onRetry() {
     if (perm === 'denied_permanent') {
       await openAppNotificationSettings();
-      // Re-check when they return (AppState handled by bridge register).
       setTimeout(async () => {
         const s = await getPermissionState();
         setPerm(s);
@@ -138,20 +124,18 @@ export default function NotificationSetupGate() {
     await onAllow();
   }
 
-  async function onOemContinue(openSettings: boolean) {
-    if (openSettings) await openAppBatterySettings();
-    await dismissOemGuide();
-    if (await shouldShowBatteryGuide()) setStep('battery');
-    else setStep('hidden');
-  }
-
-  async function onBatteryContinue(openSettings: boolean) {
-    if (openSettings) await openAppBatterySettings();
+  async function onBatteryAssistantClose() {
     await dismissBatteryGuide();
+    await dismissOemGuide();
     setStep('hidden');
   }
 
   if (step === 'loading' || step === 'hidden') return null;
+
+  // Interactive battery assistant (separate modal — Material, auto status check).
+  if (step === 'battery') {
+    return <BatteryAssistant visible onClose={() => void onBatteryAssistantClose()} />;
+  }
 
   return (
     <Modal visible animationType="fade" transparent={false} statusBarTranslucent>
@@ -221,48 +205,6 @@ export default function NotificationSetupGate() {
                 hitSlop={12}
               >
                 <Text style={styles.secondaryLink}>Continue without notifications</Text>
-              </Pressable>
-            </>
-          )}
-
-          {step === 'oem' && (
-            <>
-              <View style={[styles.iconWrap, { backgroundColor: colors.primary + '22' }]}>
-                <Ionicons name="phone-portrait-outline" size={40} color={colors.primary} />
-              </View>
-              <Text style={styles.badge}>{oem.brandLabel}</Text>
-              <Text style={styles.title}>{oem.title}</Text>
-              <Text style={styles.body}>{oem.body}</Text>
-              {oem.steps.map((s, i) => (
-                <View key={s} style={styles.bulletRow}>
-                  <Text style={styles.stepNum}>{i + 1}</Text>
-                  <Text style={styles.bulletText}>{s}</Text>
-                </View>
-              ))}
-              <Pressable style={styles.primaryBtn} onPress={() => void onOemContinue(true)}>
-                <Text style={styles.primaryText}>Open app settings</Text>
-              </Pressable>
-              <Pressable onPress={() => void onOemContinue(false)} hitSlop={12}>
-                <Text style={styles.secondaryLink}>I already did this / Skip</Text>
-              </Pressable>
-            </>
-          )}
-
-          {step === 'battery' && (
-            <>
-              <View style={[styles.iconWrap, { backgroundColor: colors.primary + '22' }]}>
-                <Ionicons name="battery-charging" size={40} color={colors.primary} />
-              </View>
-              <Text style={styles.title}>Unrestricted battery</Text>
-              <Text style={styles.body}>
-                If battery optimization is on, Android may delay or stop notifications when Lumixo
-                is closed. Set battery use to Unrestricted for reliable delivery.
-              </Text>
-              <Pressable style={styles.primaryBtn} onPress={() => void onBatteryContinue(true)}>
-                <Text style={styles.primaryText}>Open battery settings</Text>
-              </Pressable>
-              <Pressable onPress={() => void onBatteryContinue(false)} hitSlop={12}>
-                <Text style={styles.secondaryLink}>Don&apos;t show again</Text>
               </Pressable>
             </>
           )}

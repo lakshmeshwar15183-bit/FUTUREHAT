@@ -12,6 +12,7 @@ export type OemFamily =
   | 'motorola'
   | 'google'
   | 'huawei'
+  | 'nothing'
   | 'other'
   | 'ios';
 
@@ -115,8 +116,17 @@ export function getOemGuide(family: OemFamily): OemGuide {
         brandLabel: 'Google Pixel',
         aggressive: false,
         title: 'Unrestricted battery (optional)',
-        body: 'Pixels usually deliver FCM well. If notifications lag, set battery to Unrestricted.',
+        body: 'Pixels usually deliver alerts well. If notifications lag, set battery to Unrestricted.',
         steps: ['App info → App battery usage → Unrestricted'],
+      };
+    case 'nothing':
+      return {
+        family,
+        brandLabel: 'Nothing',
+        aggressive: false,
+        title: 'Background battery',
+        body: 'If calls or notifications lag when Lumixo is closed, set battery use to Unrestricted.',
+        steps: ['App info → Battery → Unrestricted'],
       };
     case 'ios':
       return {
@@ -131,7 +141,8 @@ export function getOemGuide(family: OemFamily): OemGuide {
       return {
         family: 'other',
         brandLabel: 'Android',
-        aggressive: true,
+        // Don't auto-prompt unknown devices — only when user opens Battery Optimization.
+        aggressive: false,
         title: 'Background battery',
         body: 'Some phones pause apps to save battery. Allow unrestricted battery so Lumixo can notify you when closed.',
         steps: ['App info → Battery → Unrestricted / No restrictions'],
@@ -144,13 +155,24 @@ export function oemFamilyFromBrand(brandRaw: string): OemFamily {
   const b = brandRaw.trim().toLowerCase();
   if (!b) return 'other';
   if (/xiaomi|redmi|poco|mi\b/.test(b)) return 'xiaomi';
-  if (/oppo/.test(b)) return 'oppo';
-  if (/vivo/.test(b)) return 'vivo';
   if (/realme/.test(b)) return 'realme';
+  if (/oppo/.test(b)) return 'oppo';
+  if (/vivo|iqoo/.test(b)) return 'vivo';
   if (/oneplus|one plus/.test(b)) return 'oneplus';
   if (/samsung/.test(b)) return 'samsung';
   if (/motorola|moto/.test(b)) return 'motorola';
   if (/google|pixel/.test(b)) return 'google';
   if (/huawei|honor/.test(b)) return 'huawei';
+  if (/nothing/.test(b)) return 'nothing';
   return 'other';
+}
+
+/** Human label for a detected family (assistant header). */
+export function oemDisplayName(family: OemFamily): string {
+  return getOemGuide(family).brandLabel;
+}
+
+/** Whether this family needs proactive battery guidance (first-run / soft prompt). */
+export function oemNeedsProactiveBatteryAssist(family: OemFamily): boolean {
+  return getOemGuide(family).aggressive;
 }
