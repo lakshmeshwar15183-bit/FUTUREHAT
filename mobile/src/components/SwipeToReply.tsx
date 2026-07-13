@@ -1,12 +1,12 @@
 // Lumixo mobile — WhatsApp-style swipe + long-press.
 //
-// • Swipe right → reply (default, normal bubbles)
-// • Swipe left  → delete (optional; call-history / delete-only rows)
+// • Swipe right → reply (normal bubbles)
+// • Swipe left  → delete (call history)
 // • Long-press  → selection / actions menu
 //
-// Gestures live in react-native-gesture-handler so they share a native arbiter
-// with the inverted FlatList (no RN Pressable contention).
-import React from 'react';
+// Callbacks are always invoked via stable runOnJS wrappers (never optional
+// functions directly inside worklets — that crashed chat on open/swipe).
+import React, { useCallback } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
@@ -30,12 +30,11 @@ interface Props {
   onReply?: () => void;
   /** Swipe left → delete (call history, etc.). */
   onSwipeDelete?: () => void;
-  /** Press-and-hold the whole row. Independent of swipe `enabled`. */
+  /** Press-and-hold the whole row. */
   onLongPress?: () => void;
   /** Enables horizontal swipe gestures. */
   enabled?: boolean;
   tint?: string;
-  /** Color for the left-swipe delete affordance. */
   deleteTint?: string;
 }
 
@@ -56,21 +55,53 @@ export default function SwipeToReply({
   const armedReply = useSharedValue(false);
   const armedDelete = useSharedValue(false);
 
-  const canReply = enabled && !!onReply;
-  const canDelete = enabled && !!onSwipeDelete;
+  // Stable JS-thread callbacks for runOnJS (never pass maybe-undefined into worklets).
+  const fireReply = useCallback(() => {
+    try {
+      onReply?.();
+    } catch {
+      /* never crash the UI thread */
+    }
+  }, [onReply]);
 
+  const fireDelete = useCallback(() => {
+    try {
+      onSwipeDelete?.();
+    } catch {
+      /* never crash the UI thread */
+    }
+  }, [onSwipeDelete]);
+
+  const fireLongPress = useCallback(() => {
+    try {
+      onLongPress?.();
+    } catch {
+      /* never crash the UI thread */
+    }
+  }, [onLongPress]);
+
+  const canReply = enabled && typeof onReply === 'function';
+  const canDelete = enabled && typeof onSwipeDelete === 'function';
+  const canLongPress = typeof onLongPress === 'function';
+
+  // Capture direction flags as shared values so worklets never read React props.
+  const allowReply = useSharedValue(canReply ? 1 : 0);
+  const allowDelete = useSharedValue(canDelete ? 1 : 0);
+  allowReply.value = canReply ? 1 : 0;
+  allowDelete.value = canDelete ? 1 : 0;
+
+  // Directional activation: only arm the axes we support (avoids scroll fights).
   const pan = Gesture.Pan()
     .enabled(canReply || canDelete)
-    .activeOffsetX([-14, 14])
+    .activeOffsetX(canReply && canDelete ? [-14, 14] : canReply ? [14, 10000] : [-10000, -14])
     .failOffsetY([-14, 14])
     .onUpdate((e) => {
+      'worklet';
       let x = e.translationX;
-      // Clamp to allowed directions
-      if (!canReply && x > 0) x = 0;
-      if (!canDelete && x < 0) x = 0;
+      if (allowReply.value === 0 && x > 0) x = 0;
+      if (allowDelete.value === 0 && x < 0) x = 0;
 
       if (x >= 0) {
-        // Right: reply
         const raw = x;
         tx.value = raw <= THRESHOLD ? raw : THRESHOLD + (raw - THRESHOLD) * 0.35;
         if (tx.value >= THRESHOLD && !armedReply.value) {
@@ -81,7 +112,6 @@ export default function SwipeToReply({
           armedReply.value = false;
         }
       } else {
-        // Left: delete
         const raw = -x;
         const mag = raw <= THRESHOLD ? raw : THRESHOLD + (raw - THRESHOLD) * 0.35;
         tx.value = -mag;
@@ -95,24 +125,32 @@ export default function SwipeToReply({
       }
     })
     .onEnd(() => {
-      if (armedReply.value && onReply) runOnJS(onReply)();
-      if (armedDelete.value && onSwipeDelete) runOnJS(onSwipeDelete)();
+      'worklet';
+      if (armedReply.value) {
+        runOnJS(fireReply)();
+      }
+      if (armedDelete.value) {
+        runOnJS(fireDelete)();
+      }
       armedReply.value = false;
       armedDelete.value = false;
       tx.value = withSpring(0, { damping: 20, stiffness: 220, mass: 0.5 });
     });
 
   const longPress = Gesture.LongPress()
-    .enabled(!!onLongPress)
+    .enabled(canLongPress)
     .minDuration(LONG_PRESS_MS)
     .maxDistance(10)
     .onStart(() => {
-      if (onLongPress) runOnJS(onLongPress)();
+      'worklet';
+      runOnJS(fireLongPress)();
     });
 
   const gesture = Gesture.Simultaneous(pan, longPress);
 
-  const rowStyle = useAnimatedStyle(() => ({ transform: [{ translateX: tx.value }] }));
+  const rowStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: tx.value }],
+  }));
   const replyIconStyle = useAnimatedStyle(() => ({
     opacity: interpolate(tx.value, [8, THRESHOLD], [0, 1], Extrapolation.CLAMP),
     transform: [
@@ -130,16 +168,16 @@ export default function SwipeToReply({
 
   return (
     <View>
-      {canReply && (
+      {canReply ? (
         <Animated.View style={[styles.iconLeft, replyIconStyle]} pointerEvents="none">
           <Ionicons name="arrow-undo" size={20} color={tint} />
         </Animated.View>
-      )}
-      {canDelete && (
+      ) : null}
+      {canDelete ? (
         <Animated.View style={[styles.iconRight, deleteIconStyle]} pointerEvents="none">
           <Ionicons name="trash" size={20} color={deleteTint} />
         </Animated.View>
-      )}
+      ) : null}
       <GestureDetector gesture={gesture}>
         <Animated.View style={rowStyle}>{children}</Animated.View>
       </GestureDetector>

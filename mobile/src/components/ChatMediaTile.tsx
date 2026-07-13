@@ -49,23 +49,38 @@ function kindFor(k: Props['kind']): MediaKind {
 export default function ChatMediaTile({ message, kind, onOpen, tint }: Props) {
   const colors = useColors();
   const styles = useMemo(() => makeStyles(colors), [colors]);
-  const url = message.media_url!;
+  const url = message.media_url ?? '';
   const meta = message.media_meta;
-  const [local, setLocal] = useState<string | null>(() => peekCachedMediaUri(url));
-  const [auto, setAuto] = useState(() =>
-    shouldAutoDownload(kindFor(kind), getNetworkClass(), isRoamingLike()),
+  const [local, setLocal] = useState<string | null>(() =>
+    url ? peekCachedMediaUri(url) : null,
   );
+  const [auto, setAuto] = useState(() => {
+    try {
+      return shouldAutoDownload(kindFor(kind), getNetworkClass(), isRoamingLike());
+    } catch {
+      return false;
+    }
+  });
   const [progress, setProgress] = useState(0);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    const refresh = () =>
-      setAuto(shouldAutoDownload(kindFor(kind), getNetworkClass(), isRoamingLike()));
-    void hydrateMediaStorageSettings().then(refresh);
+    const refresh = () => {
+      try {
+        setAuto(shouldAutoDownload(kindFor(kind), getNetworkClass(), isRoamingLike()));
+      } catch {
+        setAuto(false);
+      }
+    };
+    void hydrateMediaStorageSettings().then(refresh).catch(refresh);
     return subscribeMediaStorage(refresh);
   }, [kind]);
 
   useEffect(() => {
+    if (!url) {
+      setLocal(null);
+      return;
+    }
     let alive = true;
     void getCachedMediaUri(url).then((u) => {
       if (alive && u) setLocal(u);
@@ -75,13 +90,13 @@ export default function ChatMediaTile({ message, kind, onOpen, tint }: Props) {
     };
   }, [url]);
 
+  // Hooks must run unconditionally (never after an early return).
   useEffect(() => {
-    return subscribeDownloads((map) => {
-      const key = url;
-      const job = [...map.values()].find((j) => j.url === key || j.id.includes(key.slice(-20)));
-      const j = getDownloadJob(url) ?? job;
+    if (!url) return;
+    return subscribeDownloads(() => {
+      const j = getDownloadJob(url);
       if (!j) return;
-      setProgress(j.progress);
+      setProgress(j.progress ?? 0);
       if (j.status === 'done' && j.localUri) {
         setLocal(j.localUri);
         setBusy(false);
@@ -94,34 +109,43 @@ export default function ChatMediaTile({ message, kind, onOpen, tint }: Props) {
   const sizeLabel = typeof meta?.width === 'number' && typeof meta?.height === 'number'
     ? `${meta.width}×${meta.height}`
     : '';
-  // No size field on MediaMeta for file bytes — optional future; duration for video
   const duration = formatDurationMs(meta?.durationMs);
   const showPreview = !!local || auto;
 
   const startDownload = useCallback(async () => {
+    if (!url) return;
     setBusy(true);
-    const uri = await requestMediaDownload(url);
-    if (uri) setLocal(uri);
-    setBusy(false);
+    try {
+      const uri = await requestMediaDownload(url);
+      if (uri) setLocal(uri);
+    } finally {
+      setBusy(false);
+    }
   }, [url]);
 
   const handlePress = useCallback(async () => {
+    if (!url) return;
     if (local) {
       onOpen(url);
       return;
     }
-    // Open path: download then open (user request)
     setBusy(true);
-    const uri = await requestMediaDownload(url);
-    setBusy(false);
-    if (uri) {
-      setLocal(uri);
-      onOpen(url);
-    } else {
-      // Still allow open via signed stream in viewer
-      onOpen(url);
+    try {
+      const uri = await requestMediaDownload(url);
+      if (uri) setLocal(uri);
+    } finally {
+      setBusy(false);
     }
+    onOpen(url);
   }, [local, onOpen, url]);
+
+  if (!url) {
+    return (
+      <View style={[styles.image, styles.placeholder]}>
+        <Ionicons name="image-outline" size={36} color={colors.textFaint} />
+      </View>
+    );
+  }
 
   if (kind === 'video' && !showPreview) {
     return (
