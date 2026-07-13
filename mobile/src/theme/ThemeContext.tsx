@@ -13,6 +13,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { palettes, type Palette, type ThemeMode } from './palettes';
 import {
+  DEFAULT_THEME_PREFERENCE,
   resolveThemeMode,
   isValidThemePreference,
   type ThemePreference,
@@ -23,7 +24,11 @@ import { getPreferences, updatePreferences } from '../lib/shared';
 import { usePremiumOptional } from '../premium';
 
 export type { ThemePreference };
-export { resolveThemeMode, isValidThemePreference } from './themeMode';
+export {
+  DEFAULT_THEME_PREFERENCE,
+  resolveThemeMode,
+  isValidThemePreference,
+} from './themeMode';
 
 const STORAGE_KEY = 'futurehat.theme.mode';
 const THEME_KEY = 'futurehat.theme.color';
@@ -64,14 +69,15 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const premiumCtx = usePremiumOptional();
   const isPremium = premiumCtx?.isPremium ?? false;
 
-  // DEFAULT = Follow System (WhatsApp). No dark hard-code for new users.
-  const [preference, setPreferenceState] = useState<ThemePreference>('system');
+  // DEFAULT = Follow System (WhatsApp). First open matches the phone.
+  // Light / Dark / AMOLED are only applied after an explicit Settings choice.
+  const [preference, setPreferenceState] = useState<ThemePreference>(DEFAULT_THEME_PREFERENCE);
   const [colorTheme, setColorThemeState] = useState('default');
   const [wallpaper, setWallpaperState] = useState('default');
   const [hydrated, setHydrated] = useState(false);
 
-  // Instant local hydrate — if user previously chose light/dark/amoled, restore.
-  // Missing key → stay on 'system' (do not write until user picks).
+  // Instant local hydrate — restore only if the user previously chose a mode.
+  // Missing key → stay on Follow System. Never auto-write dark/light on launch.
   useEffect(() => {
     let alive = true;
     AsyncStorage.multiGet([STORAGE_KEY, THEME_KEY, WALLPAPER_KEY])
@@ -79,11 +85,15 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
         if (!alive) return;
         const map = Object.fromEntries(entries);
         const m = map[STORAGE_KEY];
+        // Only apply a stored override; empty/invalid → keep DEFAULT_THEME_PREFERENCE.
         if (isValidThemePreference(m)) setPreferenceState(m);
+        else setPreferenceState(DEFAULT_THEME_PREFERENCE);
         if (map[THEME_KEY]) setColorThemeState(map[THEME_KEY]!);
         if (map[WALLPAPER_KEY]) setWallpaperState(map[WALLPAPER_KEY]!);
       })
-      .catch(() => {})
+      .catch(() => {
+        if (alive) setPreferenceState(DEFAULT_THEME_PREFERENCE);
+      })
       .finally(() => {
         if (alive) setHydrated(true);
       });
@@ -92,7 +102,8 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  // Server reconcile: color theme + wallpaper only.
+  // Server reconcile: color theme + wallpaper only (never display mode).
+  // Display mode stays device-local so first open can always Follow System.
   useEffect(() => {
     let alive = true;
     getPreferences(supabase)
@@ -113,6 +124,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
+  /** Explicit user choice from Appearance settings — only path that persists mode. */
   const setPreference = (p: ThemePreference) => {
     setPreferenceState(p);
     AsyncStorage.setItem(STORAGE_KEY, p).catch(() => {});

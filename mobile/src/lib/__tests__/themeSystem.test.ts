@@ -1,9 +1,19 @@
 /**
  * Follow System theme resolution (WhatsApp-class default).
  */
-import { resolveThemeMode, isValidThemePreference } from '../../theme/themeMode';
+import {
+  DEFAULT_THEME_PREFERENCE,
+  resolveThemeMode,
+  isValidThemePreference,
+} from '../../theme/themeMode';
 import * as fs from 'fs';
 import * as path from 'path';
+
+describe('DEFAULT_THEME_PREFERENCE', () => {
+  it('is Follow System (like WhatsApp)', () => {
+    expect(DEFAULT_THEME_PREFERENCE).toBe('system');
+  });
+});
 
 describe('resolveThemeMode', () => {
   it('follows system light', () => {
@@ -18,7 +28,7 @@ describe('resolveThemeMode', () => {
     expect(resolveThemeMode('system', null)).toBe('dark');
   });
 
-  it('honors forced light/dark/amoled', () => {
+  it('honors forced light/dark/amoled (user Settings choice)', () => {
     expect(resolveThemeMode('light', 'dark')).toBe('light');
     expect(resolveThemeMode('dark', 'light')).toBe('dark');
     expect(resolveThemeMode('amoled', 'light')).toBe('amoled');
@@ -41,13 +51,15 @@ describe('isValidThemePreference', () => {
 });
 
 describe('default preference source contract', () => {
-  it('ThemeContext defaults to system not dark', () => {
+  it('ThemeContext defaults via DEFAULT_THEME_PREFERENCE (system)', () => {
     const src = fs.readFileSync(
       path.join(__dirname, '../../theme/ThemeContext.tsx'),
       'utf8',
     );
-    expect(src).toMatch(/useState<ThemePreference>\('system'\)/);
+    expect(src).toMatch(/useState<ThemePreference>\(DEFAULT_THEME_PREFERENCE\)/);
     expect(src).toMatch(/Appearance\.addChangeListener/);
+    // Display mode must not come from server (device-local like WhatsApp).
+    expect(src).toMatch(/never display mode/i);
   });
 
   it('app.json uses automatic userInterfaceStyle', () => {

@@ -4,7 +4,16 @@
 // live palette and let users choose a font, chat-bubble style and app icon.
 // Font / bubble / icon persist to user_preferences (shared with web).
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Image,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  useColorScheme,
+  View,
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -27,6 +36,8 @@ import {
   font,
   COLOR_THEMES,
   WALLPAPERS,
+  resolveThemeMode,
+  DEFAULT_THEME_PREFERENCE,
   type Palette,
   type ThemePreference,
 } from '../theme';
@@ -37,10 +48,15 @@ import { Alert } from '../ui/dialog';
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
 // Primary three match WhatsApp; AMOLED is an extra forced-dark option.
+// Follow System is the factory default — Light/Dark/AMOLED are user overrides.
 const OPTIONS: { key: ThemePreference; label: string; sub: string }[] = [
-  { key: 'system', label: 'Follow System', sub: 'Default · match phone light/dark' },
-  { key: 'light', label: 'Light', sub: 'Clean white · WhatsApp-style' },
-  { key: 'dark', label: 'Dark', sub: 'Lumixo classic dark' },
+  {
+    key: 'system',
+    label: 'Follow System',
+    sub: 'Default · like WhatsApp · matches your phone',
+  },
+  { key: 'light', label: 'Light', sub: 'Always light · your choice' },
+  { key: 'dark', label: 'Dark', sub: 'Always dark · your choice' },
   { key: 'amoled', label: 'AMOLED', sub: 'True black · OLED-friendly' },
 ];
 
@@ -65,8 +81,11 @@ type AppearancePrefs = { font: string; bubble_style: string; app_icon: string };
 
 export default function AppearanceScreen() {
   const { preference, setPreference, colors, mode, colorTheme, setColorTheme, wallpaper, setWallpaper } = useTheme();
+  const systemScheme = useColorScheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const navigation = useNavigation<Nav>();
+  // Preview swatch for Follow System = current phone light/dark (not always dark).
+  const systemSwatchMode = resolveThemeMode('system', systemScheme);
 
   const { isPremium: premium } = usePremium();
   const [loaded, setLoaded] = useState(false);
@@ -201,19 +220,38 @@ export default function AppearanceScreen() {
 
       {/* ── Mode ─────────────────────────────────────────────────────────── */}
       <Text style={styles.sectionTitle}>Appearance</Text>
+      <Text style={styles.sectionHint}>
+        Opens like WhatsApp by default (Follow System). Light, Dark, and AMOLED are optional overrides you choose here.
+      </Text>
       <View style={styles.modeGrid}>
         {OPTIONS.map((o) => {
-          const swatch = o.key === 'system' ? palettes.dark : palettes[o.key];
+          const swatch =
+            o.key === 'system' ? palettes[systemSwatchMode] : palettes[o.key];
           const active = preference === o.key;
+          const isDefault = o.key === DEFAULT_THEME_PREFERENCE;
           return (
-            <Pressable key={o.key} style={[styles.modeCard, active && styles.modeCardOn]} onPress={() => setPreference(o.key)}>
+            <Pressable
+              key={o.key}
+              style={[styles.modeCard, active && styles.modeCardOn]}
+              onPress={() => setPreference(o.key)}
+              accessibilityRole="radio"
+              accessibilityState={{ selected: active }}
+              accessibilityLabel={`${o.label}${isDefault ? ', default' : ''}`}
+            >
               <View style={[styles.modeSwatch, { backgroundColor: swatch.bg, borderColor: colors.border }]}>
                 <View style={[styles.modeSwatchBubbleIn, { backgroundColor: swatch.bubbleIn }]} />
                 <View style={[styles.modeSwatchBubbleOut, { backgroundColor: swatch.bubbleOut }]} />
                 <View style={[styles.modeSwatchDot, { backgroundColor: swatch.primary }]} />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={[styles.modeLabel, active && { color: colors.primary }]}>{o.label}</Text>
+                <View style={styles.modeLabelRow}>
+                  <Text style={[styles.modeLabel, active && { color: colors.primary }]}>{o.label}</Text>
+                  {isDefault && (
+                    <View style={[styles.defaultBadge, active && styles.defaultBadgeOn]}>
+                      <Text style={[styles.defaultBadgeText, active && { color: colors.primary }]}>Default</Text>
+                    </View>
+                  )}
+                </View>
                 <Text style={styles.modeSub}>{o.sub}</Text>
               </View>
               <Ionicons
@@ -456,7 +494,14 @@ const previewStyles = StyleSheet.create({
 const makeStyles = (colors: Palette) =>
   StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.bg },
-    sectionTitle: { color: colors.primary, fontSize: font.small, fontWeight: '800', letterSpacing: 0.3, marginBottom: spacing(2), marginLeft: spacing(1) },
+    sectionTitle: { color: colors.primary, fontSize: font.small, fontWeight: '800', letterSpacing: 0.3, marginBottom: spacing(1), marginLeft: spacing(1) },
+    sectionHint: {
+      color: colors.textMuted,
+      fontSize: font.tiny,
+      lineHeight: 16,
+      marginBottom: spacing(2.5),
+      marginHorizontal: spacing(1),
+    },
     premiumHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: spacing(6) },
     upsell: {
       flexDirection: 'row', alignItems: 'center', gap: spacing(2),
@@ -464,10 +509,10 @@ const makeStyles = (colors: Palette) =>
       paddingHorizontal: spacing(3), paddingVertical: spacing(2.5), marginBottom: spacing(3),
     },
     upsellText: { flex: 1, color: colors.accentPlusText, fontSize: font.small, fontWeight: '700' },
-    // Mode cards (2 per row)
-    modeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing(2) },
+    // Mode cards (full width list — clearer WhatsApp-style radio choices)
+    modeGrid: { gap: spacing(2) },
     modeCard: {
-      width: '48.5%', flexDirection: 'row', alignItems: 'center', gap: spacing(2.5),
+      width: '100%', flexDirection: 'row', alignItems: 'center', gap: spacing(2.5),
       backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing(2.5),
       borderWidth: 1.5, borderColor: colors.border,
     },
@@ -476,8 +521,28 @@ const makeStyles = (colors: Palette) =>
     modeSwatchBubbleIn: { position: 'absolute', top: 7, left: 6, width: 20, height: 7, borderRadius: 4 },
     modeSwatchBubbleOut: { position: 'absolute', bottom: 8, right: 6, width: 22, height: 7, borderRadius: 4 },
     modeSwatchDot: { position: 'absolute', bottom: 7, left: 7, width: 9, height: 9, borderRadius: 5 },
+    modeLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
     modeLabel: { color: colors.text, fontSize: font.body, fontWeight: '600' },
     modeSub: { color: colors.textMuted, fontSize: font.tiny, marginTop: 1 },
+    defaultBadge: {
+      paddingHorizontal: 6,
+      paddingVertical: 1,
+      borderRadius: radius.pill,
+      backgroundColor: colors.surfaceAlt,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+    },
+    defaultBadgeOn: {
+      backgroundColor: colors.primary + '18',
+      borderColor: colors.primary + '55',
+    },
+    defaultBadgeText: {
+      color: colors.textMuted,
+      fontSize: 10,
+      fontWeight: '800',
+      letterSpacing: 0.2,
+      textTransform: 'uppercase',
+    },
     // Swatch tile grid (themes + wallpapers)
     tileGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing(3) },
     tile: { width: 68, alignItems: 'center' },

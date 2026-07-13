@@ -163,7 +163,7 @@ export function SettingsModal({ onClose, onEditProfile, onHelp, onAdmin, onModer
             ))}
           </div>
           <p className="setting-hint" style={{ marginTop: 6, opacity: 0.75, fontSize: 12 }}>
-            Follow System is the default (like WhatsApp). Light and Dark override the device.
+            Default is Follow System (like WhatsApp). Light and Dark are optional overrides you choose here.
           </p>
 
           <label className="setting-label">Color theme {!isPremium && <span className="lock-hint">premium</span>}</label>

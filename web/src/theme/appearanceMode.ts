@@ -7,10 +7,13 @@ export type AppearanceMode = 'system' | 'light' | 'dark';
 const STORAGE_KEY = 'lumixo.appearance.mode';
 
 export const APPEARANCE_OPTIONS: { id: AppearanceMode; label: string; sub: string }[] = [
-  { id: 'system', label: 'Follow System', sub: 'Default · match device' },
-  { id: 'light', label: 'Light', sub: 'Clean white' },
-  { id: 'dark', label: 'Dark', sub: 'Lumixo classic' },
+  { id: 'system', label: 'Follow System', sub: 'Default · like WhatsApp · matches device' },
+  { id: 'light', label: 'Light', sub: 'Always light · your choice' },
+  { id: 'dark', label: 'Dark', sub: 'Always dark · your choice' },
 ];
+
+/** Factory default — first open matches the device (WhatsApp-class). */
+export const DEFAULT_APPEARANCE_MODE: AppearanceMode = 'system';
 
 const LIGHT_VARS: Record<string, string> = {
   '--fh-bg': '#ffffff',
@@ -51,7 +54,7 @@ export function getStoredAppearanceMode(): AppearanceMode {
   } catch {
     /* private mode */
   }
-  return 'system';
+  return DEFAULT_APPEARANCE_MODE;
 }
 
 export function setStoredAppearanceMode(mode: AppearanceMode) {

@@ -11,6 +11,7 @@ export {
   lineHeight,
 } from './palettes';
 export type { Palette, ThemeMode } from './palettes';
+export { DEFAULT_THEME_PREFERENCE } from './themeMode';
 export {
   motion,
   ease,
