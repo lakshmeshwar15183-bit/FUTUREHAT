@@ -22,7 +22,6 @@ import * as Sharing from 'expo-sharing';
 import Animated, { useAnimatedKeyboard, useAnimatedStyle } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Clipboard from 'expo-clipboard';
@@ -149,9 +148,16 @@ import PollCard from '../components/PollCard';
 import ScheduleMessageModal from '../components/ScheduleMessageModal';
 import ErrorBoundary from '../components/ErrorBoundary';
 import Avatar from '../components/Avatar';
-import { STICKERS } from '../lib/stickers';
+import {
+  pushRecentSticker,
+  stickerMediaMeta,
+  preloadStickerCache,
+  type Sticker,
+} from '../lib/stickers';
+import { preloadEmojiCache } from '../lib/emojiCache';
 import { QUICK_REACTIONS } from '../lib/emojiData';
 import EmojiPicker from '../components/EmojiPicker';
+import StickerPicker from '../components/StickerPicker';
 import { useCalls } from '../calls/CallContext';
 import { useChatLock } from '../security/ChatLock';
 import type { RootStackParamList } from '../navigation/types';
@@ -308,7 +314,8 @@ function ChatScreenInner() {
   const [reportDetails, setReportDetails] = useState('');
   const [reportBusy, setReportBusy] = useState(false);
   const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
-  const [emojiComposerOpen, setEmojiComposerOpen] = useState(false);
+  /** Composer tray: none | emoji | stickers (WhatsApp keyboard replacement). */
+  const [composerTray, setComposerTray] = useState<'none' | 'emoji' | 'stickers'>('none');
   const [starredIds, setStarredIds] = useState<Set<string>>(new Set());
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
   // Disappearing messages (0022): a tick that advances to the next-soonest
@@ -317,7 +324,9 @@ function ChatScreenInner() {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [attachOpen, setAttachOpen] = useState(false);
+  /** Modal sticker picker (from attach sheet). */
   const [stickersOpen, setStickersOpen] = useState(false);
+  const inputRef = useRef<TextInput>(null);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [viewerUrl, setViewerUrl] = useState<string | null>(null);
   // View-Once (0030): ids of View-Once messages the current user has already
@@ -395,6 +404,12 @@ function ChatScreenInner() {
   /** After loading deep history, scroll to oldest once the list lays out. */
   const scrollToOldestPending = useRef(false);
 
+  // Warm emoji/sticker caches as soon as a chat mounts (instant open).
+  useEffect(() => {
+    void preloadEmojiCache();
+    void preloadStickerCache();
+  }, []);
+
   // Re-pin newest messages when IME opens/closes or emoji keyboard resizes.
   // Without re-pin, inverted lists can leave a blank band above the composer.
   const pinToLatest = useCallback((animated: boolean) => {
@@ -408,10 +423,38 @@ function ChatScreenInner() {
     });
   }, []);
 
+  const openComposerEmoji = useCallback(() => {
+    Keyboard.dismiss();
+    setStickersOpen(false);
+    setComposerTray('emoji');
+    pinToLatest(false);
+  }, [pinToLatest]);
+
+  const openComposerStickers = useCallback(() => {
+    Keyboard.dismiss();
+    setAttachOpen(false);
+    setComposerTray('stickers');
+    pinToLatest(false);
+  }, [pinToLatest]);
+
+  const closeComposerTray = useCallback(() => {
+    setComposerTray('none');
+    // Restore system keyboard after tray closes (WhatsApp parity).
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }, []);
+
+  const hideComposerTrayOnly = useCallback(() => {
+    setComposerTray('none');
+  }, []);
+
   useEffect(() => {
     const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const onShow = Keyboard.addListener(showEvt, () => pinToLatest(true));
+    // System keyboard opens → close emoji/sticker tray so they never stack.
+    const onShow = Keyboard.addListener(showEvt, () => {
+      setComposerTray('none');
+      pinToLatest(true);
+    });
     const onHide = Keyboard.addListener(hideEvt, () => pinToLatest(false));
     return () => {
       onShow.remove();
@@ -1182,27 +1225,30 @@ function ChatScreenInner() {
     return off;
   }, [conversationId, sendMediaSubmission]);
 
-  // Premium stickers — durable outbox (same offline path as text/media).
-  // Data-URI mediaUrl needs no upload; flush inserts the row on reconnect.
-  async function sendSticker(url: string) {
+  // Stickers — durable outbox. Native emoji cards (no upload); media_meta drives render.
+  async function sendSticker(sticker: Sticker) {
     setStickersOpen(false);
+    setComposerTray('none');
+    pushRecentSticker(sticker.id);
     if (groupSendBlocked) {
       Alert.alert('Only admins', 'Only admins can send messages in this group.');
       return;
     }
+    const meta = stickerMediaMeta(sticker);
     const tempId = uuidv4();
     const optimistic: Message = {
       id: tempId,
       conversation_id: conversationId,
       sender_id: uid ?? '',
       type: 'image',
-      content: '',
-      media_url: url,
+      content: sticker.emoji,
+      media_url: sticker.url,
       reply_to: null,
       is_deleted: false,
       created_at: new Date().toISOString(),
       edited_at: null,
       pending: true,
+      media_meta: meta as Message['media_meta'],
     };
     setMsgs((prev) => [...prev, optimistic]);
     setReceipts((prev) => new Map(prev).set(tempId, 'sending'));
@@ -1211,9 +1257,10 @@ function ChatScreenInner() {
       tempId,
       conversationId,
       senderId: uid ?? '',
-      content: '',
+      content: sticker.emoji,
       type: 'image',
-      mediaUrl: url,
+      mediaUrl: sticker.url,
+      mediaMeta: meta,
       createdAt: optimistic.created_at,
       attempts: 0,
     });
@@ -1226,6 +1273,8 @@ function ChatScreenInner() {
   const openMedia = useCallback(async (msg: Message) => {
     const url = msg.media_url;
     if (!url) return;
+    // Stickers are native cards — no full-screen image viewer.
+    if (msg.media_meta?.sticker || url.startsWith('lumixo-sticker://')) return;
     const vo = msg.media_meta?.viewOnce;
     if (!vo) { setViewerUrl(url); return; }          // normal media
     const mine = msg.sender_id === uid;
@@ -1511,12 +1560,49 @@ function ChatScreenInner() {
   // Toggle a reaction. From the action sheet `target` is omitted (uses `selected`);
   // tapping an existing reaction pill passes the message directly so the sheet
   // needn't be open (WhatsApp/web parity — tap a pill to add/remove your reaction).
+  // Optimistic UI: reaction appears immediately; server sync in background.
+  // Duplicate inserts are prevented by toggle semantics (same emoji removes).
   async function react(emoji: string, target?: Message) {
-    const t = target ?? selected;
-    if (!t) return;
+    const t = target ?? selected ?? pendingReactMsg.current;
+    if (!t || !uid) return;
     if (!target) setSelected(null);
-    await toggleReaction(supabase, t.id, emoji);
-    getReactions(supabase, messagesRef.current.map((m) => m.id)).then(setReactions);
+    const mid = t.id;
+
+    // Optimistic toggle for this user + emoji (no duplicates).
+    setReactions((prev) => {
+      const mine = prev.find((r) => r.message_id === mid && r.user_id === uid && r.emoji === emoji);
+      if (mine) {
+        return prev.filter((r) => !(r.message_id === mid && r.user_id === uid && r.emoji === emoji));
+      }
+      return [
+        ...prev.filter((r) => !(r.message_id === mid && r.user_id === uid && r.emoji === emoji)),
+        {
+          message_id: mid,
+          user_id: uid,
+          emoji,
+          created_at: new Date().toISOString(),
+        } as MessageReaction,
+      ];
+    });
+
+    try {
+      await toggleReaction(supabase, mid, emoji);
+    } catch {
+      /* network — will resync below / via realtime */
+    }
+    getReactions(supabase, messagesRef.current.map((m) => m.id)).then(setReactions).catch(() => {});
+  }
+
+  /** Open full reaction emoji picker — capture target first so sheet close can't drop it. */
+  function openReactionPicker() {
+    const target = selected ?? pendingReactMsg.current;
+    if (!target) return;
+    pendingReactMsg.current = target;
+    setSelected(null);
+    // Open on next frame after sheet dismiss starts — avoids stacked-modal blank on Android.
+    requestAnimationFrame(() => {
+      setEmojiPickerOpen(true);
+    });
   }
 
   async function togglePin() {
@@ -2155,7 +2241,12 @@ function ChatScreenInner() {
 
   // Image/video messages — backs the swipeable full-screen viewer (web MediaLightbox parity).
   const viewerItems = useMemo<ViewerItem[]>(() => messages
-    .filter((m) => !m.is_deleted && m.media_url && (m.type === 'image' || isVideoMessage(m)))
+    .filter((m) =>
+      !m.is_deleted &&
+      m.media_url &&
+      !m.media_meta?.sticker &&
+      !m.media_url.startsWith('lumixo-sticker://') &&
+      (m.type === 'image' || isVideoMessage(m)))
     .map((m) => {
       const mine = m.sender_id === uid;
       const status = mine
@@ -2578,6 +2669,7 @@ function ChatScreenInner() {
             </Pressable>
           )}
           <TextInput
+            ref={inputRef}
             style={styles.input}
             placeholder="Message"
             placeholderTextColor={colors.textFaint}
@@ -2586,18 +2678,31 @@ function ChatScreenInner() {
             onChangeText={onChangeText}
             onKeyPress={onInputKeyPress}
             onSubmitEditing={enterToSend ? handleSend : undefined}
+            onFocus={hideComposerTrayOnly}
             blurOnSubmit={false}
             returnKeyType={enterToSend ? 'send' : 'default'}
             multiline
           />
           <Pressable
-            onPress={() => { Keyboard.dismiss(); setEmojiComposerOpen(true); }}
+            onPress={() => {
+              if (composerTray === 'emoji') {
+                closeComposerTray();
+              } else if (composerTray === 'stickers') {
+                setComposerTray('emoji');
+              } else {
+                openComposerEmoji();
+              }
+            }}
             hitSlop={8}
             style={{ marginRight: 4 }}
             accessibilityRole="button"
-            accessibilityLabel="Emoji"
+            accessibilityLabel={composerTray === 'emoji' ? 'Show keyboard' : 'Emoji'}
           >
-            <Ionicons name="happy-outline" size={26} color={colors.textMuted} />
+            <Ionicons
+              name={composerTray === 'emoji' ? 'keypad-outline' : 'happy-outline'}
+              size={26}
+              color={composerTray !== 'none' ? colors.primary : colors.textMuted}
+            />
           </Pressable>
           {text.trim().length > 0 ? (
             <Pressable
@@ -2646,17 +2751,12 @@ function ChatScreenInner() {
             <View style={styles.attachMore}>
               <AttachOption
                 icon="happy"
-                label={isPremium ? 'Stickers' : 'Stickers'}
+                label="Stickers"
                 color="#F45D9C"
-                locked={!isPremium}
                 onPress={() => {
                   setAttachOpen(false);
-                  if (isPremium) setStickersOpen(true);
-                  else
-                    Alert.alert('Stickers', 'Premium stickers are a Lumixo+ feature.', [
-                      { text: 'Not now', style: 'cancel' },
-                      { text: 'See Lumixo+', onPress: () => navigation.navigate('Premium') },
-                    ]);
+                  // Open sticker tray instantly (offline packs, no premium gate for defaults).
+                  openComposerStickers();
                 }}
               />
               <AttachOption
@@ -2685,21 +2785,13 @@ function ChatScreenInner() {
         </Pressable>
       </Modal>
 
-      {/* Sticker picker (premium) */}
-      <Modal visible={stickersOpen} transparent animationType="slide" onRequestClose={() => setStickersOpen(false)}>
-        <Pressable style={styles.backdrop} onPress={() => setStickersOpen(false)}>
-          <Pressable style={[styles.sheet, { paddingBottom: insets.bottom + 16 }]} onPress={(e) => e.stopPropagation()}>
-            <Text style={styles.sheetTitle}>Stickers</Text>
-            <View style={styles.stickerGrid}>
-              {STICKERS.map((s) => (
-                <Pressable key={s.id} onPress={() => sendSticker(s.url)} style={styles.stickerCell}>
-                  <Image source={{ uri: s.url }} style={styles.stickerImg} contentFit="contain" />
-                </Pressable>
-              ))}
-            </View>
-          </Pressable>
-        </Pressable>
-      </Modal>
+      {/* Sticker picker modal (attach path fallback) */}
+      <StickerPicker
+        visible={stickersOpen}
+        presentation="modal"
+        onClose={() => setStickersOpen(false)}
+        onSelect={(s) => { void sendSticker(s); }}
+      />
 
       {/* Schedule message (premium) */}
       <ScheduleMessageModal
@@ -2766,12 +2858,9 @@ function ChatScreenInner() {
                   <Text style={styles.reactionEmoji}>{e}</Text>
                 </Pressable>
               ))}
-              {/* Full emoji palette — close action sheet first (no stacked modals). */}
+              {/* Full emoji palette — capture target, dismiss sheet, open instantly. */}
               <Pressable
-                onPress={() => {
-                  pendingReactMsg.current = selected;
-                  afterMessageSheetClosed(() => setEmojiPickerOpen(true));
-                }}
+                onPress={openReactionPicker}
                 hitSlop={6}
                 style={styles.reactionAdd}
                 accessibilityLabel="More reactions"
@@ -2865,6 +2954,7 @@ function ChatScreenInner() {
       <EmojiPicker
         visible={emojiPickerOpen}
         mode="reaction"
+        presentation="modal"
         title="React"
         onClose={() => {
           setEmojiPickerOpen(false);
@@ -2878,14 +2968,57 @@ function ChatScreenInner() {
         }}
       />
 
-      {/* Composer emoji picker — stays open while inserting (WhatsApp parity) */}
-      <EmojiPicker
-        visible={emojiComposerOpen}
-        mode="composer"
-        title="Emoji"
-        onClose={() => setEmojiComposerOpen(false)}
-        onSelect={(e) => onChangeText(textRef.current + e)}
-      />
+      {/* Composer emoji / sticker tray — replaces keyboard (WhatsApp parity) */}
+      {composerTray === 'emoji' && (
+        <View>
+          <View style={styles.traySwitch}>
+            <Pressable
+              style={[styles.traySwitchBtn, styles.traySwitchOn]}
+              onPress={() => setComposerTray('emoji')}
+            >
+              <Text style={styles.traySwitchText}>Emoji</Text>
+            </Pressable>
+            <Pressable
+              style={styles.traySwitchBtn}
+              onPress={() => setComposerTray('stickers')}
+            >
+              <Text style={styles.traySwitchTextMuted}>Stickers</Text>
+            </Pressable>
+          </View>
+          <EmojiPicker
+            visible
+            mode="composer"
+            presentation="tray"
+            title="Emoji"
+            onClose={closeComposerTray}
+            onSelect={(e) => onChangeText(textRef.current + e)}
+          />
+        </View>
+      )}
+      {composerTray === 'stickers' && (
+        <View>
+          <View style={styles.traySwitch}>
+            <Pressable
+              style={styles.traySwitchBtn}
+              onPress={() => setComposerTray('emoji')}
+            >
+              <Text style={styles.traySwitchTextMuted}>Emoji</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.traySwitchBtn, styles.traySwitchOn]}
+              onPress={() => setComposerTray('stickers')}
+            >
+              <Text style={styles.traySwitchText}>Stickers</Text>
+            </Pressable>
+          </View>
+          <StickerPicker
+            visible
+            presentation="tray"
+            onClose={closeComposerTray}
+            onSelect={(s) => { void sendSticker(s); }}
+          />
+        </View>
+      )}
 
       {/* Forward picker — multi-recipient with search, recents, groups & preview */}
       <ForwardSheet
@@ -3207,9 +3340,33 @@ const makeStyles = (colors: Palette) =>
       borderRadius: radius.md, paddingHorizontal: 12, paddingVertical: 10, marginTop: 8,
       minHeight: 44, maxHeight: 100,
     },
-    stickerGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', paddingTop: 4 },
-    stickerCell: { width: '23%', aspectRatio: 1, marginBottom: 8, alignItems: 'center', justifyContent: 'center' },
-    stickerImg: { width: '100%', height: '100%', borderRadius: 10 },
+    traySwitch: {
+      flexDirection: 'row',
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: colors.border,
+      backgroundColor: colors.surface,
+      paddingHorizontal: 12,
+      paddingTop: 6,
+      gap: 8,
+    },
+    traySwitchBtn: {
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: radius.pill,
+    },
+    traySwitchOn: {
+      backgroundColor: colors.surfaceAlt,
+    },
+    traySwitchText: {
+      color: colors.text,
+      fontSize: 13,
+      fontWeight: '700',
+    },
+    traySwitchTextMuted: {
+      color: colors.textMuted,
+      fontSize: 13,
+      fontWeight: '600',
+    },
     forwardSheet: { maxHeight: '60%' },
     pollSheet: { maxHeight: '80%' },
     pollInput: {

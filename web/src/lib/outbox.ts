@@ -26,6 +26,8 @@ export interface WebOutboxItem {
   createdAt: string;
   attempts: number;
   senderId?: string;
+  /** Sticker / View Once / quality meta (0030+). */
+  mediaMeta?: Record<string, unknown> | null;
 }
 
 type Listener = (item: WebOutboxItem, result: Message | null, error?: string) => void;
@@ -89,6 +91,7 @@ export async function enqueueSend(args: {
   replyTo?: UUID | null;
   senderId?: string;
   id?: string;
+  mediaMeta?: Record<string, unknown> | null;
 }): Promise<WebOutboxItem> {
   const id = args.id ?? uuid();
   let blobKey: string | undefined;
@@ -116,6 +119,7 @@ export async function enqueueSend(args: {
     createdAt: new Date().toISOString(),
     attempts: 0,
     senderId: args.senderId,
+    mediaMeta: args.mediaMeta ?? null,
   };
   const box = read();
   box.push(item);
@@ -213,6 +217,7 @@ export async function flushOutbox(): Promise<void> {
             mediaUrl,
             item.replyTo ?? undefined,
             item.id,
+            item.mediaMeta as import('@shared/types').MediaMeta | undefined,
           );
           const dupe =
             !!error &&
@@ -227,7 +232,9 @@ export async function flushOutbox(): Promise<void> {
                 item.type === 'text'
                   ? (item.content || 'Message').slice(0, 180)
                   : item.type === 'image'
-                    ? '📷 Photo'
+                    ? (item.mediaMeta as { sticker?: boolean } | null | undefined)?.sticker
+                      ? `${(item.mediaMeta as { emoji?: string })?.emoji || '🎀'} Sticker`
+                      : '📷 Photo'
                     : item.type === 'video'
                       ? '🎥 Video'
                       : item.type === 'audio'
@@ -291,5 +298,6 @@ export function optimisticFromOutbox(item: WebOutboxItem, senderId: string): Mes
     created_at: item.createdAt,
     edited_at: null,
     pending: true,
+    media_meta: (item.mediaMeta ?? null) as Message['media_meta'],
   } as Message;
 }

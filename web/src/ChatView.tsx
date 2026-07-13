@@ -46,7 +46,7 @@ import { FREE_LIMITS, PREMIUM_LIMITS } from '@shared/premium/features';
 import type { ConversationSummary, Message, MessageReaction, ParticipantRole } from '@shared/types';
 import { formatDistanceToNow, format, isToday, isYesterday, isSameDay } from 'date-fns';
 import { spring } from './motion';
-import { STICKERS } from './premium/stickers';
+import { STICKERS, STICKER_PACKS, stickerMediaMeta, type Sticker } from './premium/stickers';
 import { GroupInfoModal } from './GroupInfoModal';
 import {
   enqueueSend,
@@ -575,14 +575,15 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
     }
   }
 
-  async function sendSticker(url: string) {
+  async function sendSticker(sticker: Sticker) {
     setStickersOpen(false);
-    // Data-URI stickers need no upload — durable outbox inserts mediaUrl as-is.
+    // Offline emoji-card stickers — media_meta drives native-like render; no upload.
     const item = await enqueueSend({
       conversationId: convId,
-      content: '',
+      content: sticker.emoji,
       type: 'image',
-      mediaUrl: url,
+      mediaUrl: sticker.url,
+      mediaMeta: stickerMediaMeta(sticker),
       senderId: profile?.id,
     });
     upsertMessage(optimisticFromOutbox(item, profile?.id ?? ''));
@@ -991,7 +992,28 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
                             <span className="reply-quote-text">{replied.content || '[media]'}</span>
                           </div>
                         )}
-                        {msg.type === 'image' && msg.media_url && (
+                        {msg.type === 'image' && (msg.media_meta as { sticker?: boolean } | null)?.sticker && (
+                          <div
+                            className="message-sticker"
+                            style={{
+                              background: (msg.media_meta as { bg?: string })?.bg || '#2a3441',
+                              width: 148,
+                              height: 148,
+                              borderRadius: 24,
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              fontSize: 72,
+                              lineHeight: 1,
+                              margin: '2px 0',
+                            }}
+                            role="img"
+                            aria-label="Sticker"
+                          >
+                            {(msg.media_meta as { emoji?: string })?.emoji || msg.content || '🎀'}
+                          </div>
+                        )}
+                        {msg.type === 'image' && msg.media_url && !(msg.media_meta as { sticker?: boolean } | null)?.sticker && (
                           <button type="button" className="message-image-btn" onClick={() => setLightboxId(msg.id)} aria-label="View photo">
                             <SignedImage source={msg.media_url} alt="Attachment" className="message-image" />
                           </button>
@@ -1116,11 +1138,38 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
         )}
       </AnimatePresence>
 
-      {/* Sticker picker */}
+      {/* Sticker picker — packs + emoji cards (no blank SVG data-URIs) */}
       <AnimatePresence>
         {stickersOpen && (
           <motion.div className="sticker-pop glass" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
-            {STICKERS.map((s) => (<button key={s.id} onClick={() => sendSticker(s.url)} title={s.id}><img src={s.url} alt={s.id} /></button>))}
+            <div className="sticker-pop-title" style={{ fontWeight: 700, marginBottom: 8, opacity: 0.85 }}>
+              Stickers · {STICKER_PACKS.length} packs
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, maxHeight: 280, overflowY: 'auto' }}>
+              {STICKERS.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => void sendSticker(s)}
+                  title={`${s.packName}: ${s.emoji}`}
+                  style={{
+                    width: 64,
+                    height: 64,
+                    borderRadius: 14,
+                    border: 'none',
+                    background: s.bg,
+                    fontSize: 32,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: 0,
+                  }}
+                >
+                  {s.emoji}
+                </button>
+              ))}
+            </div>
           </motion.div>
         )}
       </AnimatePresence>

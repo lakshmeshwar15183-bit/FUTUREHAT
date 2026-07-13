@@ -2,6 +2,12 @@
  * P1: emoji search keywords resolve (WhatsApp-class picker).
  */
 import { searchEmojis, QUICK_REACTIONS, EMOJI_CATEGORIES, ALL_EMOJIS } from '../emojiData';
+import {
+  getLastEmojiCategoryId,
+  getRecentEmojis,
+  pushRecentEmoji,
+  setLastEmojiCategoryId,
+} from '../emojiCache';
 
 describe('emojiData / searchEmojis', () => {
   it('has non-empty catalog and categories', () => {
@@ -26,5 +32,19 @@ describe('emojiData / searchEmojis', () => {
   it('returns empty for blank query', () => {
     expect(searchEmojis('')).toEqual([]);
     expect(searchEmojis('   ')).toEqual([]);
+  });
+});
+
+describe('emojiCache (in-memory)', () => {
+  it('tracks recent emojis without duplicates and remembers category', () => {
+    pushRecentEmoji('😀');
+    pushRecentEmoji('😂');
+    pushRecentEmoji('😀');
+    const recent = getRecentEmojis();
+    expect(recent[0]).toBe('😀');
+    expect(recent.filter((e) => e === '😀').length).toBe(1);
+
+    setLastEmojiCategoryId('animals');
+    expect(getLastEmojiCategoryId()).toBe('animals');
   });
 });

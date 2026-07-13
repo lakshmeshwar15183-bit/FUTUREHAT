@@ -128,6 +128,16 @@ export interface MediaMeta {
   trimEndMs?: number;
   /** Video audio muted (intent; applied by the transcoder). */
   muted?: boolean;
+  /** Built-in emoji sticker card (offline pack system). */
+  sticker?: boolean;
+  stickerId?: string;
+  /** Glyph shown on the sticker card. */
+  emoji?: string;
+  /** Background hex for the sticker card. */
+  bg?: string;
+  /** Soft bounce in picker/bubble. */
+  animated?: boolean;
+  packId?: string;
 }
 
 /** Result of mark_view_once_seen() / view_once_state() (0030). */

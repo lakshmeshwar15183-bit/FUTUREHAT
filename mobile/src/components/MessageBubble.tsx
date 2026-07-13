@@ -7,9 +7,11 @@ import { Ionicons } from '@expo/vector-icons';
 import type { Message, MessageReaction, TickStatus } from '../lib/shared';
 import { isVideoMessage, tickIsDouble, tickIsRead } from '../lib/shared';
 import { formatTime } from '../lib/time';
+import { isStickerUrl, resolveSticker } from '../lib/stickers';
 import { useColors, radius, font, type Palette } from '../theme';
 import AudioMessage from './AudioMessage';
 import SignedImage from './SignedImage';
+import StickerView from './StickerView';
 
 export type { TickStatus };
 
@@ -23,12 +25,25 @@ const VIDEO_RE = /\.(mp4|webm|mov|m4v|ogv|ogg)(\?|#|$)/i;
 export const isVideoUrl = (url?: string | null) => !!url && VIDEO_RE.test(url);
 
 // One-line, type-aware summary of a quoted message (matches the composer preview).
-export function replySummary(m: { type: string; content: string | null; media_url: string | null }): string {
-  if (m.content && m.content.trim()) return m.content;
+export function replySummary(m: {
+  type: string;
+  content: string | null;
+  media_url: string | null;
+  media_meta?: Message['media_meta'];
+}): string {
+  const sticker = resolveSticker(m.media_meta as any, m.media_url);
+  if (sticker) return `${sticker.emoji} Sticker`;
+  if (m.media_meta && (m.media_meta as { sticker?: boolean }).sticker) {
+    const e = (m.media_meta as { emoji?: string }).emoji;
+    return e ? `${e} Sticker` : '🎀 Sticker';
+  }
+  if (isStickerUrl(m.media_url)) return '🎀 Sticker';
+  if (m.content && m.content.trim() && m.type === 'text') return m.content;
   if (m.type === 'image') return /\.gif(\?|#|$)/i.test(m.media_url ?? '') ? '🎞️ GIF' : '📷 Photo';
   if (m.type === 'audio') return '🎤 Voice message';
   if (m.type === 'video') return '🎬 Video';
   if (m.type === 'file') return isVideoUrl(m.media_url) ? '🎬 Video' : '📄 Document';
+  if (m.content && m.content.trim()) return m.content;
   return 'Attachment';
 }
 
@@ -176,7 +191,27 @@ function MessageBubble({
           </Pressable>
         )}
 
-        {message.type === 'image' && message.media_url && (() => {
+        {message.type === 'image' && (() => {
+          const sticker = resolveSticker(message.media_meta as any, message.media_url);
+          if (sticker || (message.media_meta as { sticker?: boolean } | null)?.sticker) {
+            const emoji =
+              sticker?.emoji ??
+              (message.media_meta as { emoji?: string } | null)?.emoji ??
+              message.content?.trim() ??
+              '🎀';
+            const bg =
+              sticker?.bg ??
+              (message.media_meta as { bg?: string } | null)?.bg ??
+              '#2a3441';
+            const animated =
+              sticker?.animated ?? !!(message.media_meta as { animated?: boolean } | null)?.animated;
+            return (
+              <View style={styles.stickerWrap}>
+                <StickerView emoji={emoji} bg={bg} animated={animated} size={148} compact />
+              </View>
+            );
+          }
+          if (!message.media_url) return null;
           const isVO = !!message.media_meta?.viewOnce;
           const spent = isVO && !mine && viewOnceSpent;
           // Recipient's unopened View-Once shows a locked tile (no thumbnail leak);
@@ -371,6 +406,7 @@ const makeStyles = (colors: Palette) =>
     text: { fontSize: font.body, lineHeight: 19.5, letterSpacing: -0.1 },
     deleted: { fontSize: font.body, fontStyle: 'italic' },
     image: { width: 210, height: 210, borderRadius: 10, marginBottom: 2 },
+    stickerWrap: { marginBottom: 2, marginTop: 2 },
     viewOnceTag: { position: 'absolute', left: 8, top: 8, flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 999, paddingHorizontal: 7, paddingVertical: 2 },
     viewOnceText: { color: '#fff', fontSize: 10.5, fontWeight: '600' },
     voTile: { width: 210, height: 110, borderRadius: 10, marginBottom: 2, alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: colors.surfaceAlt, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border },

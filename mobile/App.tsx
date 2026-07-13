@@ -19,6 +19,8 @@ import { startSync } from './src/lib/sync';
 import { hydrateAppIcon } from './src/lib/appIcon';
 import { installCrashReporter } from './src/lib/crashReporter';
 import { runProdHealthChecks } from './src/lib/prodHealth';
+import { preloadEmojiCache } from './src/lib/emojiCache';
+import { preloadStickerCache } from './src/lib/stickers';
 import { ThemeProvider, useTheme, enableLayoutAnimations } from './src/theme';
 // Soft LayoutAnimation for selection/chip transitions (Android opt-in).
 enableLayoutAnimations();
@@ -466,6 +468,11 @@ export default function App() {
   // Start background sync + offline outbox flushing for the whole app lifetime.
   useEffect(() => startSync(), []);
   useEffect(() => { void hydrateAppIcon(); }, []);
+  // Preload emoji/sticker catalogs so chat pickers open instantly (offline cache).
+  useEffect(() => {
+    void preloadEmojiCache();
+    void preloadStickerCache();
+  }, []);
   // Production health (TURN / auth redirect / Supabase) — non-blocking.
   useEffect(() => {
     void runProdHealthChecks();

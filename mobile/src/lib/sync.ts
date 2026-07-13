@@ -195,7 +195,9 @@ export async function flushOutbox(): Promise<void> {
                 item.type === 'text'
                   ? (item.content || 'Message').slice(0, 180)
                   : item.type === 'image'
-                    ? (/\.gif(\?|#|$)/i.test(item.mediaUrl ?? item.localUri ?? '') ? '🎞️ GIF' : '📷 Photo')
+                    ? ((item.mediaMeta as { sticker?: boolean; emoji?: string } | undefined)?.sticker
+                      ? `${(item.mediaMeta as { emoji?: string }).emoji || '🎀'} Sticker`
+                      : (/\.gif(\?|#|$)/i.test(item.mediaUrl ?? item.localUri ?? '') ? '🎞️ GIF' : '📷 Photo'))
                     : item.type === 'video'
                       ? '🎥 Video'
                       : item.type === 'audio'

@@ -190,7 +190,17 @@ export default function OverlayEditor({
               </View>
               <Text style={styles.stickHead}>Lumixo stickers</Text>
               <View style={styles.stickGrid}>
-                {STICKERS.map((s) => <StickerCell key={s.id} content={s.url} emoji={s.emoji} onPick={() => addSticker(s.url, false)} onFav={() => toggleFav(s.url)} faved={favs.includes(s.url)} colors={colors} />)}
+                {STICKERS.slice(0, 48).map((s) => (
+                  <StickerCell
+                    key={s.id}
+                    content={s.emoji}
+                    emoji={s.emoji}
+                    onPick={() => addSticker(s.emoji, true)}
+                    onFav={() => toggleFav(s.emoji)}
+                    faved={favs.includes(s.emoji)}
+                    colors={colors}
+                  />
+                ))}
               </View>
             </ScrollView>
           </View>
@@ -200,7 +210,9 @@ export default function OverlayEditor({
   );
 }
 
-function isEmojiContent(c: string): boolean { return !c.startsWith('data:') && !c.startsWith('http'); }
+function isEmojiContent(c: string): boolean {
+  return !c.startsWith('data:') && !c.startsWith('http') && !c.startsWith('lumixo-sticker:');
+}
 
 // A single draggable/scalable/rotatable overlay.
 function DraggableLayer({ overlay, onChange, onEditText, onRemove, colors }: {
