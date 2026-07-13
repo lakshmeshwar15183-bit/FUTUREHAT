@@ -54,3 +54,6 @@ release/
 
 # Validation run logs
 validation/results/
+
+# Local ops secrets
+.ops/
