@@ -132,6 +132,14 @@ import { registerMediaHandler, type MediaSubmission } from '../media/mediaSendBr
 import { formatLastSeen, formatDaySeparator, formatTime } from '../lib/time';
 import { useColors, useTheme, spacing, radius, font, listPerf, motion, type Palette } from '../theme';
 import { usePremium } from '../premium';
+import {
+  threadColumnBottomPad,
+  invertedListContentPadding,
+  composerInnerBottomPad,
+  isInvertedAtLatest,
+  shouldRepinToLatestOnComposerResize,
+  composerHeightChanged,
+} from '../lib/chatThreadLayout';
 import MessageBubble, { type TickStatus, replySummary } from '../components/MessageBubble';
 import SwipeToReply from '../components/SwipeToReply';
 import MediaViewer, { type ViewerItem } from '../components/MediaViewer';
@@ -235,12 +243,15 @@ function ChatScreenInner() {
   // composer would sit BEHIND the keyboard. Instead we read the live IME height
   // from reanimated's useAnimatedKeyboard (driven off the system WindowInsets
   // animation, so it tracks the keyboard 1:1 with matching speed/curve) and pad
-  // the whole thread up by it — works under forced edge-to-edge and on iOS, with
-  // no hardcoded offsets. When the keyboard is down we fall back to the bottom
-  // safe-area inset (gesture-nav bar / home indicator).
+  // the whole thread up by it — works under forced edge-to-edge and on iOS.
+  //
+  // CRITICAL: when IME is open, pad by IME height ONLY. When closed, pad by
+  // safe-area only. Math.max(ime, inset) double-counts nav/IME on some OEMs and
+  // leaves a blank band between the last bubble and the composer.
   const keyboard = useAnimatedKeyboard();
+  const safeBottom = insets.bottom;
   const keyboardStyle = useAnimatedStyle(() => ({
-    paddingBottom: Math.max(keyboard.height.value, insets.bottom),
+    paddingBottom: threadColumnBottomPad(keyboard.height.value, safeBottom),
   }));
 
   const [uid, setUid] = useState<string | null>(null);
@@ -346,8 +357,10 @@ function ChatScreenInner() {
   // Floating "jump to latest" button appears once the user scrolls up an inverted list.
   const [atBottom, setAtBottom] = useState(true);
   // Ref mirror so the keyboard-show listener can read "am I at the bottom?" at
-  // fire time without re-subscribing every scroll.
+  // fire time without re-subscribing every scroll. Tight slack (16px) — a wide
+  // threshold left a visible empty band while still counting as "at bottom".
   const atBottomRef = useRef(true);
+  const composerHRef = useRef(0);
 
   const [polls, setPolls] = useState<Poll[]>([]);
   const [pollVotes, setPollVotes] = useState<Map<string, PollVote[]>>(new Map());
@@ -382,17 +395,52 @@ function ChatScreenInner() {
   /** After loading deep history, scroll to oldest once the list lays out. */
   const scrollToOldestPending = useRef(false);
 
-  // Covers open/close, emoji keyboard, and height changes (each fires a fresh
-  // show event); rotation re-runs via new metrics.
-  useEffect(() => {
-    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const onShow = Keyboard.addListener(showEvt, () => {
-      if (atBottomRef.current) {
-        requestAnimationFrame(() => listRef.current?.scrollToOffset({ offset: 0, animated: true }));
+  // Re-pin newest messages when IME opens/closes or emoji keyboard resizes.
+  // Without re-pin, inverted lists can leave a blank band above the composer.
+  const pinToLatest = useCallback((animated: boolean) => {
+    if (!atBottomRef.current) return;
+    requestAnimationFrame(() => {
+      try {
+        listRef.current?.scrollToOffset({ offset: 0, animated });
+      } catch {
+        /* list unmounted */
       }
     });
-    return () => onShow.remove();
   }, []);
+
+  useEffect(() => {
+    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const onShow = Keyboard.addListener(showEvt, () => pinToLatest(true));
+    const onHide = Keyboard.addListener(hideEvt, () => pinToLatest(false));
+    return () => {
+      onShow.remove();
+      onHide.remove();
+    };
+  }, [pinToLatest]);
+
+  // App resume: clear any residual scroll offset that looks like a bottom gap.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (s) => {
+      if (s === 'active') pinToLatest(false);
+    });
+    return () => sub.remove();
+  }, [pinToLatest]);
+
+  const onComposerLayout = useCallback(
+    (e: { nativeEvent: { layout: { height: number } } }) => {
+      const h = e.nativeEvent.layout.height;
+      if (!composerHeightChanged(composerHRef.current, h)) return;
+      composerHRef.current = h;
+      if (shouldRepinToLatestOnComposerResize(atBottomRef.current)) {
+        pinToLatest(false);
+      }
+    },
+    [pinToLatest],
+  );
+
+  const listContentPad = useMemo(() => invertedListContentPadding(), []);
+  const composerPadBottom = composerInnerBottomPad();
 
   const loadPolls = useCallback(async () => {
     const ps = await getPolls(supabase, conversationId);
@@ -2365,17 +2413,22 @@ function ChatScreenInner() {
 
       <FlatList
         ref={listRef}
+        style={styles.list}
         data={inverted}
         inverted
         keyExtractor={(it) => it.id}
         renderItem={renderItem}
-        contentContainerStyle={styles.listContent}
-        // "handled" (not the default "never") lets a long-press on a bubble land
-        // WHILE the keyboard is open: without it the list swallows the first
-        // touch to dismiss the keyboard, so the bubble never sees it and the
-        // user had to close the keyboard before the actions menu would open.
-        // Taps on empty list space still dismiss the keyboard as before.
+        // inverted: paddingTop = near composer (keep tiny); paddingBottom = thread top.
+        // Never flexGrow:1 here — it creates a permanent blank band above the composer.
+        contentContainerStyle={[styles.listContent, listContentPad]}
+        // "handled" lets long-press land while the keyboard is open (WhatsApp parity).
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+        // iOS: do not auto-inset for nav bars — we own bottom chrome via keyboardStyle.
+        {...(Platform.OS === 'ios'
+          ? { contentInsetAdjustmentBehavior: 'never' as const }
+          : null)}
+        // Footer is at the VISUAL TOP of an inverted list (encryption notice).
         ListFooterComponent={
           <View style={styles.encNote}>
             <Ionicons name="lock-closed" size={11} color={colors.textMuted} />
@@ -2386,9 +2439,10 @@ function ChatScreenInner() {
         maxToRenderPerBatch={listPerf.messageList.maxToRenderPerBatch}
         windowSize={listPerf.messageList.windowSize}
         updateCellsBatchingPeriod={listPerf.messageList.updateCellsBatchingPeriod}
-        removeClippedSubviews={listPerf.messageList.removeClippedSubviews}
+        // inverted + removeClippedSubviews blanks cells near the composer on Android.
+        removeClippedSubviews={false}
         onScroll={(e) => {
-          const bottom = e.nativeEvent.contentOffset.y < 240;
+          const bottom = isInvertedAtLatest(e.nativeEvent.contentOffset.y);
           // Only re-render when the jump-to-latest FAB visibility flips.
           if (atBottomRef.current !== bottom) {
             atBottomRef.current = bottom;
@@ -2399,17 +2453,48 @@ function ChatScreenInner() {
         scrollEventThrottle={16}
         onContentSizeChange={() => {
           // Reliable jump after deep history load ("Go to first message").
-          if (!scrollToOldestPending.current) return;
-          scrollToOldestPending.current = false;
-          try {
-            listRef.current?.scrollToEnd({ animated: true });
-          } catch {
-            try { listRef.current?.scrollToOffset({ offset: 999999, animated: true }); } catch { /* ignore */ }
+          if (scrollToOldestPending.current) {
+            scrollToOldestPending.current = false;
+            try {
+              listRef.current?.scrollToEnd({ animated: true });
+            } catch {
+              try {
+                listRef.current?.scrollToOffset({ offset: 999999, animated: true });
+              } catch {
+                /* ignore */
+              }
+            }
+            return;
+          }
+          // New/deleted message while following latest → keep last bubble glued.
+          if (atBottomRef.current) {
+            try {
+              listRef.current?.scrollToOffset({ offset: 0, animated: false });
+            } catch {
+              /* ignore */
+            }
+          }
+        }}
+        onLayout={() => {
+          if (atBottomRef.current) {
+            try {
+              listRef.current?.scrollToOffset({ offset: 0, animated: false });
+            } catch {
+              /* ignore */
+            }
           }
         }}
         onScrollToIndexFailed={(info) => {
           setTimeout(() => {
-            try { listRef.current?.scrollToIndex({ index: info.index, animated: true, viewPosition: 0.5 }); } catch { /* give up */ }
+            try {
+              listRef.current?.scrollToIndex({
+                index: info.index,
+                animated: true,
+                viewPosition: 0.5,
+              });
+            } catch {
+              /* give up */
+            }
           }, 120);
         }}
       />
@@ -2450,7 +2535,10 @@ function ChatScreenInner() {
 
       {/* Composer — hold mic to record; slide left to cancel (WhatsApp-class). */}
       {recording ? (
-        <View style={[styles.composer, styles.recordingComposer, { paddingBottom: 6 }]}>
+        <View
+          style={[styles.composer, styles.recordingComposer, { paddingBottom: composerPadBottom }]}
+          onLayout={onComposerLayout}
+        >
           <Ionicons
             name={recCanceling ? 'trash' : 'mic'}
             size={22}
@@ -2466,7 +2554,10 @@ function ChatScreenInner() {
           </View>
         </View>
       ) : (
-        <View style={[styles.composer, { paddingBottom: 6 }]}>
+        <View
+          style={[styles.composer, { paddingBottom: composerPadBottom }]}
+          onLayout={onComposerLayout}
+        >
           <Pressable
             onPress={() => { Keyboard.dismiss(); setAttachOpen(true); }}
             hitSlop={8}
@@ -2947,10 +3038,13 @@ const makeStyles = (colors: Palette) =>
   StyleSheet.create({
     flex: { flex: 1, backgroundColor: colors.bg },
     center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg },
-    listContent: { paddingVertical: 6 },
+    // Must fill space above the composer so inverted content can hug the bottom.
+    list: { flex: 1 },
+    // Padding values come from invertedListContentPadding() at render time.
+    listContent: { flexGrow: 0 },
     encNote: {
       flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-      gap: 5, paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4, opacity: 0.72,
+      gap: 5, paddingHorizontal: 16, paddingTop: 10, paddingBottom: 6, opacity: 0.72,
     },
     encNoteText: { color: colors.textMuted, fontSize: font.tiny },
     daySep: { alignItems: 'center', marginVertical: 8 },
