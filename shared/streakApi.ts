@@ -58,6 +58,41 @@ export function nextTier(score: number): StreakTier | null {
   return STREAK_TIERS[idx + 1] ?? null;
 }
 
+/**
+ * Shareable streak blurb (WhatsApp-style plain text "card").
+ * Pure — safe for unit tests; no network, no RN runtime.
+ */
+export function formatStreakShareText(opts: {
+  score: number;
+  /** Tier emoji from DB or emojiForScore. */
+  emoji?: string | null;
+  peerName?: string | null;
+  successfulDays?: number | null;
+  /** App name line; default Lumixo. */
+  appName?: string;
+}): string {
+  const score = Number.isFinite(opts.score) ? Math.max(0, Math.floor(opts.score)) : 0;
+  const emoji = (opts.emoji && opts.emoji.trim()) || emojiForScore(score) || '🔥';
+  const who = (opts.peerName && opts.peerName.trim()) || 'my friend';
+  const days =
+    opts.successfulDays != null && Number.isFinite(opts.successfulDays)
+      ? Math.max(0, Math.floor(opts.successfulDays))
+      : score;
+  const app = (opts.appName && opts.appName.trim()) || 'Lumixo';
+  const lines = [
+    `${emoji} ${app} streak`,
+    '',
+    `${score} with ${who}`,
+  ];
+  if (days > 0) {
+    lines.push(
+      `${days} successful day${days === 1 ? '' : 's'} of showing up for each other.`,
+    );
+  }
+  lines.push('', 'Keep friendships alive on Lumixo.');
+  return lines.join('\n');
+}
+
 // ── Reads ───────────────────────────────────────────────────────────────────
 
 /** All of the caller's streaks (one round-trip). Powers the chat-list emojis. */

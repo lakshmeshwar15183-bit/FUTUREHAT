@@ -1,17 +1,19 @@
 // Lumixo mobile — one pair's streak detail: big tier emoji, score, progress to
 // the next tier, milestone history, and the recent score-change ledger (Streak
 // History). Server-authoritative reads via get_streak(). Loading/empty/error.
+// Share uses plain-text "card" (no new native deps) so messaging/calls stay untouched.
 import React, { useCallback, useMemo, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, Share, StyleSheet, Text, View } from 'react-native';
 import SafeScrollView from '../ui/SafeScrollView';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRoute, type RouteProp } from '@react-navigation/native';
 
 import { supabase } from '../lib/supabase';
-import { getStreak, nextTier, tierForScore } from '../lib/shared';
+import { formatStreakShareText, getStreak, nextTier, tierForScore } from '../lib/shared';
 import type { StreakDetail } from '../lib/shared';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import type { RootStackParamList } from '../navigation/types';
+import { APP_NAME } from '../branding';
 
 type R = RouteProp<RootStackParamList, 'StreakDetail'>;
 
@@ -54,6 +56,23 @@ export default function StreakDetailScreen() {
   const pct = next && next.max !== Infinity
     ? Math.min(1, Math.max(0, (score - (tier?.min ?? 0)) / ((next.min) - (tier?.min ?? 0))))
     : 1;
+  const peerTitle = route.params?.title?.trim() || 'my friend';
+
+  const shareStreak = useCallback(async () => {
+    if (score <= 0) return;
+    const message = formatStreakShareText({
+      score,
+      emoji: tier?.emoji ?? data?.streak?.tier,
+      peerName: peerTitle,
+      successfulDays: data?.streak?.successful_days ?? score,
+      appName: APP_NAME,
+    });
+    try {
+      await Share.share({ message });
+    } catch {
+      /* user cancelled */
+    }
+  }, [score, tier?.emoji, data?.streak?.tier, data?.streak?.successful_days, peerTitle]);
 
   if (loading && !data) {
     return <View style={[styles.container, styles.center]}><ActivityIndicator color={colors.primary} /></View>;
@@ -84,6 +103,18 @@ export default function StreakDetailScreen() {
               {next.max === Infinity ? 'Top tier reached 🏆' : `${next.min - score} to ${next.emoji} ${next.label}`}
             </Text>
           </View>
+        )}
+
+        {score > 0 && (
+          <Pressable
+            style={({ pressed }) => [styles.shareBtn, pressed && { opacity: 0.88 }]}
+            onPress={() => { void shareStreak(); }}
+            accessibilityRole="button"
+            accessibilityLabel="Share streak"
+          >
+            <Ionicons name="share-outline" size={18} color="#fff" />
+            <Text style={styles.shareBtnText}>Share streak</Text>
+          </Pressable>
         )}
       </View>
 
@@ -146,6 +177,17 @@ const makeStyles = (colors: Palette) =>
     heroScore: { color: colors.text, fontSize: 44, fontWeight: '800', marginTop: spacing(2) },
     heroTier: { color: colors.text, fontSize: font.heading, fontWeight: '600', marginTop: 2 },
     heroDays: { color: colors.textMuted, fontSize: font.small, marginTop: 2 },
+    shareBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginTop: spacing(5),
+      backgroundColor: colors.primary,
+      paddingHorizontal: spacing(5),
+      paddingVertical: spacing(2.5),
+      borderRadius: radius.pill,
+    },
+    shareBtnText: { color: '#fff', fontSize: font.body, fontWeight: '700' },
     progressWrap: { width: '80%', marginTop: spacing(5) },
     progressTrack: { height: 8, borderRadius: 4, backgroundColor: colors.surfaceAlt, overflow: 'hidden' },
     progressFill: { height: 8, borderRadius: 4, backgroundColor: colors.primary },

@@ -117,6 +117,8 @@ import {
   getMyGroupRole,
   getPinnedMessageIds,
   pinGroupMessage,
+  getStreak,
+  emojiForScore,
   unpinGroupMessage,
   canPinMessages,
   canSendInGroup,
@@ -983,6 +985,9 @@ function ChatScreenInner() {
   // Direct chats prefer the peer avatar; groups use conversation avatar.
   const [peerNickname, setPeerNickname] = useState<string | null>(null);
   const [headerTitle, setHeaderTitle] = useState(params.title);
+  // Relationship streak (DMs only) — additive header badge; never blocks chat load.
+  const [streakScore, setStreakScore] = useState(0);
+  const [streakEmoji, setStreakEmoji] = useState('');
 
   // Load local nickname + never let a weak network peer wipe the nav title.
   useEffect(() => {
@@ -1007,6 +1012,38 @@ function ChatScreenInner() {
     return () => { alive = false; };
   }, [uid, peers, isGroup, params.title]);
 
+  // Streak badge: read-only, DM-only, best-effort. Failures leave score 0 (hidden).
+  // Does not call processMyStreaks — list screen already does catch-up.
+  useFocusEffect(
+    useCallback(() => {
+      if (isGroup) {
+        setStreakScore(0);
+        setStreakEmoji('');
+        return;
+      }
+      let alive = true;
+      getStreak(supabase, conversationId)
+        .then((d) => {
+          if (!alive) return;
+          const score = d?.streak?.score ?? 0;
+          setStreakScore(score > 0 ? score : 0);
+          setStreakEmoji(
+            score > 0
+              ? (d?.streak?.tier && d.streak.tier.trim()) || emojiForScore(score)
+              : '',
+          );
+        })
+        .catch(() => {
+          if (!alive) return;
+          setStreakScore(0);
+          setStreakEmoji('');
+        });
+      return () => {
+        alive = false;
+      };
+    }, [conversationId, isGroup]),
+  );
+
   const headerAvatarUri = isGroup
     ? chatAvatarUrl
     : (resolveAvatarUrl(peers[0], chatAvatarUrl));
@@ -1020,6 +1057,14 @@ function ChatScreenInner() {
     } else if (peers[0]) {
       navigation.navigate('Profile', { userId: peers[0].id, conversationId });
     }
+  }
+
+  function openHeaderStreak() {
+    if (isGroup || streakScore <= 0) return;
+    navigation.navigate('StreakDetail', {
+      conversationId,
+      title: headerTitle || params.title || 'Streak',
+    });
   }
 
   useEffect(() => {
@@ -1273,6 +1318,22 @@ function ChatScreenInner() {
               >
                 {headerTitle || params.title}
               </Text>
+              {!isGroup && streakScore > 0 && !!streakEmoji && (
+                <Pressable
+                  onPress={openHeaderStreak}
+                  hitSlop={8}
+                  style={styles.headerStreak}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Streak ${streakScore}. Open streak details.`}
+                >
+                  <Text style={styles.headerStreakEmoji} allowFontScaling={false}>
+                    {streakEmoji}
+                  </Text>
+                  <Text style={styles.headerStreakScore} allowFontScaling={false}>
+                    {streakScore > 999 ? '999+' : streakScore}
+                  </Text>
+                </Pressable>
+              )}
               {disappearSecs > 0 && (
                 <Ionicons
                   name="timer-outline"
@@ -1344,7 +1405,7 @@ function ChatScreenInner() {
       headerShadowVisible: false,
       contentStyle: { backgroundColor: chatCanvasBg },
     } as any);
-  }, [navigation, params.title, headerTitle, headerAvatarName, subtitle, peers, colors, styles, selectionMode, selectedIds, isGroup, ghost, disappearSecs, conversationId, headerAvatarUri, typingName, chatMuted, chatLock, starredIds, peerNickname, headerOnGreen, chatCanvasBg, myGroupRole, groupPerms, pinnedIds]);
+  }, [navigation, params.title, headerTitle, headerAvatarName, subtitle, peers, colors, styles, selectionMode, selectedIds, isGroup, ghost, disappearSecs, conversationId, headerAvatarUri, typingName, chatMuted, chatLock, starredIds, peerNickname, headerOnGreen, chatCanvasBg, myGroupRole, groupPerms, pinnedIds, streakScore, streakEmoji]);
 
   function placeCall(kind: 'audio' | 'video') {
     // Only reachable from direct chats (call buttons are hidden in groups).
@@ -4159,6 +4220,24 @@ const makeStyles = (colors: Palette) =>
       minWidth: 0,
     },
     headerTitleRow: { flexDirection: 'row', alignItems: 'center', minWidth: 0 },
+    headerStreak: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginLeft: 6,
+      flexShrink: 0,
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      borderRadius: 10,
+      backgroundColor: 'rgba(0,0,0,0.18)',
+      gap: 2,
+    },
+    headerStreakEmoji: { fontSize: 12, lineHeight: 14 },
+    headerStreakScore: {
+      color: '#FFFFFF',
+      fontSize: 11,
+      fontWeight: '700',
+      letterSpacing: -0.2,
+    },
     headerSub: {
       color: 'rgba(255,255,255,0.88)',
       fontSize: font.tiny,
