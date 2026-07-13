@@ -12,11 +12,11 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
-  View,
+  View
 } from 'react-native';
+import SafeScrollView from '../ui/SafeScrollView';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import NetInfo from '@react-native-community/netinfo';
@@ -267,7 +267,7 @@ export default function PremiumScreen() {
 
   return (
     <>
-      <ScrollView
+      <SafeScrollView
         style={styles.container}
         contentContainerStyle={{ paddingBottom: spacing(10) }}
         // Preserve scroll while activation banner updates global premium.
@@ -438,7 +438,7 @@ export default function PremiumScreen() {
             );
           })}
         </View>
-      </ScrollView>
+      </SafeScrollView>
 
       <RazorpayCheckoutModal
         visible={checkoutPhase === 'checkout' && !!checkoutParams}

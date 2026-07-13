@@ -5,12 +5,12 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
-  ScrollView,
   StyleSheet,
   Switch,
   Text,
-  View,
+  View
 } from 'react-native';
+import SafeScrollView from '../ui/SafeScrollView';
 import * as FileSystem from 'expo-file-system';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -158,7 +158,7 @@ export default function StorageDataScreen() {
   const used = mediaBytes + tmpBytes;
 
   return (
-    <ScrollView style={styles.container}>
+    <SafeScrollView style={styles.container}>
       <Text style={styles.sectionLabel}>STORAGE USED</Text>
       <View style={styles.group}>
         <View style={styles.row}>
@@ -350,7 +350,7 @@ export default function StorageDataScreen() {
       </View>
 
       <View style={{ height: spacing(10) }} />
-    </ScrollView>
+    </SafeScrollView>
   );
 }
 

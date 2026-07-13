@@ -2,7 +2,8 @@
 // verification (Supabase TOTP), login history, and account deletion with a
 // 30-day recovery window. Standalone; persists via accountApi + Supabase auth.
 import React, { useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import SafeScrollView from '../ui/SafeScrollView';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { useNavigation } from '@react-navigation/native';
@@ -181,7 +182,7 @@ export default function AccountSecurityScreen() {
   }
 
   return (
-    <ScrollView style={styles.container}>
+    <SafeScrollView style={styles.container}>
       <Text style={styles.sectionLabel}>EMAIL</Text>
       {!!currentEmail && (
         <View style={styles.group}>
@@ -294,7 +295,7 @@ export default function AccountSecurityScreen() {
         <Pressable style={styles.btnDanger} onPress={confirmDelete}><Text style={styles.btnDangerText}>Delete my account</Text></Pressable>
       )}
       <View style={{ height: spacing(10) }} />
-    </ScrollView>
+    </SafeScrollView>
   );
 }
 

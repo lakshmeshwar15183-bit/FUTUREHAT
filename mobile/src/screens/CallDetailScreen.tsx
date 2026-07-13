@@ -5,7 +5,8 @@
 // Actions: Voice / Video call (CallContext.startCall), Delete this call log
 // (delete-for-me, offline-first), Block, Report, Contact Info.
 import React, { useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import SafeScrollView from '../ui/SafeScrollView';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -190,7 +191,7 @@ export default function CallDetailScreen() {
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: spacing(10) }}>
+    <SafeScrollView style={styles.container} contentContainerStyle={{ paddingBottom: spacing(10) }}>
       <View style={styles.head}>
         <ProfileAvatar
           uri={params.avatarUrl}
@@ -257,7 +258,7 @@ export default function CallDetailScreen() {
           Alert.alert(error ? 'Error' : 'Reported', error ? error.message : 'Thanks — our safety team will review it.');
         }}
       />
-    </ScrollView>
+    </SafeScrollView>
   );
 }
 

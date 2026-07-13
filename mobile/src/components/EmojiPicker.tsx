@@ -19,6 +19,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { sheetBottomPad } from '../lib/safeLayout';
 
 import {
   EMOJI_CATEGORIES,
@@ -170,7 +171,7 @@ export default function EmojiPicker({
         presentation === 'tray' && {
           height: trayHeight ?? Math.min(320, Math.round(winH * 0.42)),
         },
-        presentation === 'modal' && { paddingBottom: Math.max(insets.bottom, 8) },
+        presentation === 'modal' && { paddingBottom: sheetBottomPad(insets, 0) },
       ]}
     >
       {presentation === 'modal' && <View style={styles.handle} />}

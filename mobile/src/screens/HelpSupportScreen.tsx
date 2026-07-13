@@ -7,13 +7,13 @@ import {
   Linking,
   Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   UIManager,
-  View,
+  View
 } from 'react-native';
+import SafeScrollView from '../ui/SafeScrollView';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 
@@ -222,7 +222,7 @@ export default function HelpSupportScreen() {
             <Text style={styles.backText}>My tickets</Text>
           </Pressable>
         </View>
-        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <SafeScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
           <View style={styles.ticketCard}>
             <View style={styles.ticketHead}>
               <Text style={styles.ticketId}>{tid}</Text>
@@ -298,13 +298,13 @@ export default function HelpSupportScreen() {
               <Text style={styles.contactSub}>Opens your email app · Ticket {tid}</Text>
             </View>
           </Pressable>
-        </ScrollView>
+        </SafeScrollView>
       </View>
     );
   }
 
   return (
-    <ScrollView
+    <SafeScrollView
       style={styles.container}
       contentContainerStyle={styles.content}
       keyboardShouldPersistTaps="handled"
@@ -478,7 +478,7 @@ export default function HelpSupportScreen() {
           <Text style={styles.credit}>{CREDIT}</Text>
         </>
       )}
-    </ScrollView>
+    </SafeScrollView>
   );
 }
 

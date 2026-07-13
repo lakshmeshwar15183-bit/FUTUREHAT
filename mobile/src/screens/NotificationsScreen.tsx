@@ -4,7 +4,8 @@
 // use the DEVICE SYSTEM DEFAULT sound; the tone rows open Android's per-channel
 // settings for native customization (no bundled sounds, no in-app picker).
 import React, { useCallback, useMemo, useState } from 'react';
-import { Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Linking, Platform, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
+import SafeScrollView from '../ui/SafeScrollView';
 import { Alert } from '../ui/dialog';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
@@ -108,7 +109,7 @@ export default function NotificationsScreen() {
   );
 
   return (
-    <ScrollView style={styles.container}>
+    <SafeScrollView style={styles.container}>
       {/* SYSTEM — required for killed-app delivery */}
       <Text style={styles.sectionLabel}>SYSTEM</Text>
       <View style={styles.group}>
@@ -266,7 +267,7 @@ export default function NotificationsScreen() {
         vibration and light (LED) in Android settings. Preferences sync to your account.
       </Text>
       <View style={{ height: spacing(8) }} />
-    </ScrollView>
+    </SafeScrollView>
   );
 }
 

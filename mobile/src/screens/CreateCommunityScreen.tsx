@@ -5,19 +5,17 @@ import {
   ActivityIndicator,
   Image,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
-  View,
+  View
 } from 'react-native';
+import SafeScrollView from '../ui/SafeScrollView';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-
 import { supabase } from '../lib/supabase';
 import { createCommunity, createChannel } from '../lib/shared';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
@@ -32,7 +30,6 @@ const STEPS = ['Details', 'About', 'Review'] as const;
 export default function CreateCommunityScreen() {
   const navigation = useNavigation<Nav>();
   const colors = useColors();
-  const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
   const [step, setStep] = useState<Step>(0);
@@ -141,7 +138,7 @@ export default function CreateCommunityScreen() {
   }
 
   return (
-    <View style={[styles.container, { paddingBottom: insets.bottom + 12 }]}>
+    <View style={styles.container}>
       {/* Step dots */}
       <View style={styles.steps}>
         {STEPS.map((label, i) => (
@@ -164,7 +161,7 @@ export default function CreateCommunityScreen() {
         ))}
       </View>
 
-      <ScrollView
+      <SafeScrollView
         contentContainerStyle={styles.scroll}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
@@ -252,7 +249,7 @@ export default function CreateCommunityScreen() {
             </View>
           </>
         )}
-      </ScrollView>
+      </SafeScrollView>
 
       <View style={styles.footer}>
         <Pressable style={styles.backBtn} onPress={back} disabled={busy}>

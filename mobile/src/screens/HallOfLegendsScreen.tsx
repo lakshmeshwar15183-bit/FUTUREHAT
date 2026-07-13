@@ -2,7 +2,8 @@
 // authoritative eligibility (get_hall_of_legends), keyset pagination, offline cache,
 // and loading / empty / error states.
 import React, { useCallback, useMemo, useState } from 'react';
-import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import SafeFlatList from '../ui/SafeFlatList';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 
@@ -96,7 +97,7 @@ export default function HallOfLegendsScreen() {
   }
 
   return (
-    <FlatList
+    <SafeFlatList
       style={styles.container}
       data={items}
       keyExtractor={(x) => x.streak_id}

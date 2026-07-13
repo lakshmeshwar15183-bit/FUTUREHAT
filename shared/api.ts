@@ -57,6 +57,10 @@ export {
   deletedMessageLabel,
   deletedReplyLabel,
   deletedListPreview,
+  canUnsendMessage,
+  canDeleteMessageForEveryone,
+  shouldOmitDeletedFromTimeline,
+  UNSEND_TOMBSTONE,
   type MessageDeletedKind,
 } from './messageDeletion.js';
 
@@ -712,25 +716,43 @@ export async function editMessage(
   return { message: data, error };
 }
 
-// Soft-delete a message (keeps the row so threads/realtime stay consistent).
-// System messages are immutable in DB; filter client-side too.
-// deleted_kind = 'user' so clients show a tombstone (not a moderation line).
+/**
+ * Telegram-style "delete for everyone": hard-delete the row for all participants.
+ * No tombstone — the message disappears completely. Only the original sender
+ * may call this (enforced by RPC + RLS). Idempotent if already gone.
+ * Prefer RPC; falls back to direct DELETE if migration 0064 not applied.
+ */
+export async function deleteMessageForEveryone(
+  client: SupabaseClient,
+  messageId: UUID,
+): Promise<{ error: Error | null }> {
+  const user = await getCurrentUser(client);
+  if (!user) return { error: new Error('not authenticated') };
+
+  const { error: rpcErr } = await client.rpc('delete_message_for_everyone', {
+    p_message: messageId,
+  });
+  if (!rpcErr) return { error: null };
+
+  // Fallback: direct delete (policy "delete own messages" from 0064).
+  const { error } = await client
+    .from('messages')
+    .delete()
+    .eq('id', messageId)
+    .eq('sender_id', user.id)
+    .neq('type', 'system');
+  if (error) {
+    return { error: new Error(rpcErr.message || error.message) };
+  }
+  return { error: null };
+}
+
+/** @deprecated Prefer deleteMessageForEveryone — same hard-delete semantics. */
 export async function deleteMessage(
   client: SupabaseClient,
   messageId: UUID,
 ): Promise<{ error: Error | null }> {
-  const { error } = await client
-    .from('messages')
-    .update({
-      is_deleted: true,
-      deleted_kind: 'user',
-      content: null,
-      media_url: null,
-      media_meta: {},
-    })
-    .eq('id', messageId)
-    .neq('type', 'system');
-  return { error };
+  return deleteMessageForEveryone(client, messageId);
 }
 
 // Forward an existing message into another conversation as a new message.
@@ -860,6 +882,8 @@ export function subscribeToMessages(
   conversationId: UUID,
   onInsert: (message: Message) => void,
   onUpdate?: (message: Message) => void,
+  /** Hard-delete for everyone (Telegram) — row removed; no tombstone. */
+  onDelete?: (messageId: UUID) => void,
 ): RealtimeChannel {
   const channel = client
     .channel(`messages:${conversationId}`)
@@ -873,6 +897,21 @@ export function subscribeToMessages(
       'postgres_changes',
       { event: 'UPDATE', schema: 'public', table: 'messages', filter: `conversation_id=eq.${conversationId}` },
       (payload: any) => onUpdate(payload.new),
+    );
+  }
+  if (onDelete) {
+    channel.on(
+      'postgres_changes',
+      {
+        event: 'DELETE',
+        schema: 'public',
+        table: 'messages',
+        filter: `conversation_id=eq.${conversationId}`,
+      },
+      (payload: any) => {
+        const id = (payload.old as { id?: string } | null)?.id;
+        if (id) onDelete(id as UUID);
+      },
     );
   }
   return channel.subscribe();

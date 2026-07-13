@@ -7,12 +7,12 @@ import {
   PixelRatio,
   Platform,
   Pressable,
-  ScrollView,
   Share,
   StyleSheet,
   Text,
-  View,
+  View
 } from 'react-native';
+import SafeScrollView from '../ui/SafeScrollView';
 import NetInfo from '@react-native-community/netinfo';
 import { useFocusEffect } from '@react-navigation/native';
 
@@ -111,7 +111,7 @@ export default function DiagnosticsScreen() {
   }
 
   return (
-    <ScrollView style={styles.container}>
+    <SafeScrollView style={styles.container}>
       <View style={styles.group}>
         {Object.entries(info).map(([k, v], i, arr) => (
           <View key={k} style={[styles.row, i === arr.length - 1 && styles.rowLast]}>
@@ -132,7 +132,7 @@ export default function DiagnosticsScreen() {
       )}
       <Pressable style={styles.btn} onPress={shareReport}><Text style={styles.btnText}>Share diagnostic report</Text></Pressable>
       <Text style={styles.note}>The report is generated locally and only shared if you choose to send it. Critical health lines (TURN, auth redirect) must be OK before public release.</Text>
-    </ScrollView>
+    </SafeScrollView>
   );
 }
 

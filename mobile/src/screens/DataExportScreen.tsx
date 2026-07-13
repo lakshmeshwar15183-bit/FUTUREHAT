@@ -1,7 +1,8 @@
 // Lumixo mobile — Export my data. Gathers the user's own data via shared APIs
 // and writes a JSON file, then opens the native share sheet. Standalone.
 import React, { useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
+import SafeScrollView from '../ui/SafeScrollView';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 
@@ -56,7 +57,7 @@ export default function DataExportScreen() {
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={{ padding: spacing(4) }}>
+    <SafeScrollView style={styles.container} contentContainerStyle={{ padding: spacing(4) }}>
       <Text style={styles.title}>Export my data</Text>
       <Text style={styles.desc}>Download a copy of your Lumixo data — profile, preferences, subscription, conversations, communities and support history — as a JSON file.</Text>
       <View style={styles.row}>
@@ -68,7 +69,7 @@ export default function DataExportScreen() {
       </Pressable>
       {status && <Text style={styles.status}>{status}</Text>}
       <Text style={styles.note}>Your data is gathered on your device and only shared if you choose to.</Text>
-    </ScrollView>
+    </SafeScrollView>
   );
 }
 

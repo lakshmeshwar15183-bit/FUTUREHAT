@@ -5,12 +5,12 @@ import {
   Linking,
   Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Switch,
   Text,
-  View,
+  View
 } from 'react-native';
+import SafeScrollView from '../ui/SafeScrollView';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -62,7 +62,7 @@ export default function CallSettingsScreen() {
   };
 
   return (
-    <ScrollView
+    <SafeScrollView
       style={styles.container}
       contentContainerStyle={{ paddingBottom: spacing(10) }}
       keyboardShouldPersistTaps="handled"
@@ -170,7 +170,7 @@ export default function CallSettingsScreen() {
         Call preferences save to your account. Noise suppression and echo cancellation are applied when the
         device and WebRTC stack support them.
       </Text>
-    </ScrollView>
+    </SafeScrollView>
   );
 }
 

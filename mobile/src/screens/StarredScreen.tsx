@@ -3,7 +3,8 @@
 // get_starred_messages() RPC (0014). Mirrors web StarredMessagesModal. Tapping a
 // row opens that conversation. Degrades to an empty state if the RPC isn't applied.
 import React, { useCallback, useMemo, useState } from 'react';
-import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import SafeFlatList from '../ui/SafeFlatList';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -77,7 +78,7 @@ export default function StarredScreen() {
   }
 
   return (
-    <FlatList
+    <SafeFlatList
       style={styles.container}
       data={items}
       keyExtractor={(m) => m.message_id}

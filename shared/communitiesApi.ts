@@ -111,7 +111,7 @@ function previewFromMessage(m: {
   is_deleted?: boolean | null;
 } | null | undefined): string {
   if (!m) return '';
-  if (m.is_deleted) return 'This message was deleted';
+  if (m.is_deleted) return 'This message was removed by Lumixo.';
   if (m.type === 'image') return '📷 Photo';
   if (m.type === 'video') return '🎥 Video';
   if (m.type === 'audio') return '🎤 Voice message';

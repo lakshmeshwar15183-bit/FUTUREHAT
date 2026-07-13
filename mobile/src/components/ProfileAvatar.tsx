@@ -20,6 +20,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { sheetBottomPad } from '../lib/safeLayout';
 
 import Avatar from './Avatar';
 import StatusRing, { type StatusRingState } from './status/StatusRing';
@@ -161,7 +162,7 @@ export default function ProfileAvatar({
       >
         <Pressable style={styles.sheetScrim} onPress={() => setChoiceOpen(false)}>
           <View
-            style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 16) + 8 }]}
+            style={[styles.sheet, { paddingBottom: sheetBottomPad(insets, 8) }]}
             // prevent scrim close when tapping card area
             onStartShouldSetResponder={() => true}
           >

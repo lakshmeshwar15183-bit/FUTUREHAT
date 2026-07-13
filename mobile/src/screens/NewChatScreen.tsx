@@ -9,13 +9,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  FlatList,
   Pressable,
   StyleSheet,
   Text,
   TextInput,
-  View,
+  View
 } from 'react-native';
+import SafeFlatList from '../ui/SafeFlatList';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -254,10 +254,11 @@ export default function NewChatScreen() {
         </View>
       </Pressable>
 
-      <FlatList
+      <SafeFlatList
         data={isSearching ? results : [...phoneProfiles.map((p) => p as Profile), ...recentProfiles.filter((r) => !phoneMatches.some((m) => m.userId === r.id))]}
         keyExtractor={(p) => p.id}
         keyboardShouldPersistTaps="handled"
+        contentContainerStyle={{ paddingBottom: spacing(4) }}
         ListHeaderComponent={
           !isSearching ? (
             <>

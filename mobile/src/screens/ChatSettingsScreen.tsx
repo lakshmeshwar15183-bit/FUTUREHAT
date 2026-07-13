@@ -2,7 +2,8 @@
 // upload quality, auto-download, voice transcripts. Standalone; persists via
 // privacyApi chat-settings (user_preferences.extra.chat).
 import React, { useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Switch, Text, View } from 'react-native';
+import SafeScrollView from '../ui/SafeScrollView';
 import { Ionicons } from '@expo/vector-icons';
 
 import { supabase } from '../lib/supabase';
@@ -54,7 +55,7 @@ export default function ChatSettingsScreen() {
   const qualityLabel: Record<MediaQuality, string> = { auto: 'Auto', high: 'High', data_saver: 'Data saver' };
 
   return (
-    <ScrollView style={styles.container}>
+    <SafeScrollView style={styles.container}>
       {c && (
         <View style={styles.group}>
           <View style={styles.row}>
@@ -109,7 +110,7 @@ export default function ChatSettingsScreen() {
         </View>
       )}
       <View style={{ height: spacing(8) }} />
-    </ScrollView>
+    </SafeScrollView>
   );
 }
 

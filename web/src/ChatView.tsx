@@ -14,7 +14,7 @@ import {
   getMessages, sendMessage, subscribeToMessages, markMessageAsRead, markMessageAsDelivered,
   markMessagesAsDelivered, uploadMedia,
   getReceipts, subscribeToReceipts, getReactions, toggleReaction, subscribeToReactions,
-  createTypingChannel, editMessage, deleteMessage, forwardMessage, getMyConversations,
+  createTypingChannel, editMessage, deleteMessageForEveryone, forwardMessage, getMyConversations,
   messageMatchesKind, messageExpired, nextMessageExpiry, purgeExpiredMessages, getDisappearing, type SearchKind,
   markViewOnceSeen, getViewOnceState,
   buildTickMap, applyReceiptToTickMap, computeOutboundTick, tickGlyph, tickIsRead,
@@ -22,6 +22,8 @@ import {
   deletedMessageLabel,
   deletedReplyLabel,
   isModerationRemoved,
+  canDeleteMessageForEveryone,
+  shouldOmitDeletedFromTimeline,
   type TickStatus,
 } from '@shared/api';
 import { getNickname } from './lib/nicknames';
@@ -133,6 +135,12 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
   const [myGroupRole, setMyGroupRole] = useState<ParticipantRole | null>(null);
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
   const [groupSendBlocked, setGroupSendBlocked] = useState(false);
+  const [deletePrompt, setDeletePrompt] = useState<{
+    ids: string[];
+    allowForEveryone: boolean;
+    everyoneLabel: string;
+  } | null>(null);
+  const [deleteAlsoEveryone, setDeleteAlsoEveryone] = useState(false);
 
   // compose modes
   const [replyTo, setReplyTo] = useState<Message | null>(null);
@@ -305,7 +313,16 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
           if (!ghostRef.current) void markMessageAsRead(supabase, newMsg.id).catch(() => {});
         }
       },
-      (updated) => setMessages((prev) => prev.map((m) => (m.id === updated.id ? updated : m))),
+      (updated) => {
+        if (shouldOmitDeletedFromTimeline(updated)) {
+          setMessages((prev) => prev.filter((m) => m.id !== updated.id));
+          return;
+        }
+        setMessages((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
+      },
+      (deletedId) => {
+        setMessages((prev) => prev.filter((m) => m.id !== deletedId));
+      },
     );
     const receiptChannel = subscribeToReceipts(supabase, convId, (r) => {
       setTickMap((prev) => applyReceiptToTickMap(prev, r, profile?.id));
@@ -559,18 +576,62 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
   // ── Message actions ──────────────────────────────────────────────────────────
   function startReply(m: Message) { setActionFor(null); setEditing(null); setReplyTo(m); }
   function startEdit(m: Message) { setActionFor(null); setReplyTo(null); setEditing(m); setInput(m.content ?? ''); }
-  async function doDelete(m: Message) {
+
+  /** Open Telegram-style delete dialog for one message. */
+  function promptDelete(m: Message) {
     setActionFor(null);
-    const prev = messages;
-    setMessages((cur) =>
-      cur.map((x) =>
-        x.id === m.id
-          ? { ...x, is_deleted: true, deleted_kind: 'user' as const, content: null, media_url: null }
-          : x,
-      ),
-    );
-    const { error } = await deleteMessage(supabase, m.id);
-    if (error) { setMessages(prev); setToast(error.message); }
+    const allowForEveryone = canDeleteMessageForEveryone(m, profile?.id);
+    const peerName = otherUser
+      ? resolveDisplayName(otherUser, { fallback: 'recipient' })
+      : 'recipient';
+    const everyoneLabel = isGroup
+      ? 'Also delete for everyone'
+      : `Also delete for ${peerName}`;
+    setDeleteAlsoEveryone(false);
+    setDeletePrompt({
+      ids: [m.id],
+      allowForEveryone,
+      everyoneLabel,
+    });
+  }
+
+  async function confirmWebDelete() {
+    if (!deletePrompt) return;
+    const { ids, allowForEveryone } = deletePrompt;
+    const alsoEveryone = deleteAlsoEveryone && allowForEveryone;
+    setDeletePrompt(null);
+    if (alsoEveryone) {
+      const snapshot = messagesRef.current.filter((x) => ids.includes(x.id));
+      setMessages((cur) => cur.filter((x) => !ids.includes(x.id)));
+      const results = await Promise.all(
+        ids.map(async (id) => {
+          const { error } = await deleteMessageForEveryone(supabase, id);
+          return { id, error };
+        }),
+      );
+      const failed = results.filter((r) => r.error);
+      if (failed.length) {
+        setMessages((cur) => {
+          const map = new Map(cur.map((m) => [m.id, m]));
+          for (const s of snapshot) {
+            if (failed.some((f) => f.id === s.id)) map.set(s.id, s);
+          }
+          return [...map.values()].sort((a, b) =>
+            a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0,
+          );
+        });
+        setToast(failed[0]?.error?.message || 'Could not delete for everyone');
+      }
+    } else {
+      for (const id of ids) {
+        const m = messagesRef.current.find((x) => x.id === id);
+        if (m) await deleteForMe(m);
+        else {
+          await hideMessageForMe(supabase, id);
+          setHiddenMsgIds((prev) => new Set(prev).add(id));
+        }
+      }
+    }
   }
   async function copyText(m: Message) {
     setActionFor(null);
@@ -820,11 +881,16 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
   // WhatsApp-style search: keep the whole thread visible and jump between
   // matches rather than filtering. A kind filter (media/links/docs/voice) can
   // narrow the set, with or without a text query.
-  // Soft-deleted messages stay in the timeline as tombstones (user unsend or
-  // Lumixo moderation). delete-for-me (hiddenMsgIds) and expired disappearing
-  // messages are still fully hidden.
+  // delete-for-me + user hard/soft-unsend: fully hidden (Telegram, no ghost).
+  // Moderation soft-deletes remain as tombstones. Expired disappearing hidden.
   const displayMessages = useMemo(
-    () => messages.filter((m) => !hiddenMsgIds.has(m.id) && !messageExpired(m, now)),
+    () =>
+      messages.filter(
+        (m) =>
+          !hiddenMsgIds.has(m.id) &&
+          !messageExpired(m, now) &&
+          !shouldOmitDeletedFromTimeline(m),
+      ),
     [messages, hiddenMsgIds, now],
   );
   const searchActive = searchOpen && (!!search || searchKind !== 'all');
@@ -1235,8 +1301,9 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
                       )}
                       {msg.content && <button type="button" onClick={() => copyText(msg)}><CopyIcon size={16} /> Copy</button>}
                       {isMine && msg.type === 'text' && <button type="button" onClick={() => startEdit(msg)}><EditIcon size={16} /> Edit</button>}
-                      <button type="button" onClick={() => deleteForMe(msg)}><TrashIcon size={16} /> Delete for me</button>
-                      {isMine && <button type="button" className="danger" onClick={() => doDelete(msg)}><TrashIcon size={16} /> Unsend</button>}
+                      <button type="button" className="danger" onClick={() => promptDelete(msg)}>
+                        <TrashIcon size={16} /> Delete
+                      </button>
                     </div>
                   )}
                 </div>
@@ -1248,6 +1315,34 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
         {uploading && <div className="message mine"><div className="message-bubble uploading">Uploading...</div></div>}
         <div ref={messagesEndRef} />
       </div>
+
+      {deletePrompt && (
+        <div className="modal-backdrop delete-dlg-backdrop" onClick={() => setDeletePrompt(null)}>
+          <div className="delete-dlg glass" onClick={(e) => e.stopPropagation()} role="dialog" aria-labelledby="delete-dlg-title">
+            <h3 id="delete-dlg-title">Delete message?</h3>
+            <p>
+              Are you sure you want to delete the selected message
+              {deletePrompt.ids.length > 1 ? 's' : ''}?
+            </p>
+            {deletePrompt.allowForEveryone && (
+              <label className="delete-dlg-check">
+                <input
+                  type="checkbox"
+                  checked={deleteAlsoEveryone}
+                  onChange={(e) => setDeleteAlsoEveryone(e.target.checked)}
+                />
+                <span>{deletePrompt.everyoneLabel}</span>
+              </label>
+            )}
+            <div className="delete-dlg-actions">
+              <button type="button" onClick={() => setDeletePrompt(null)}>Cancel</button>
+              <button type="button" className="danger" onClick={() => void confirmWebDelete()}>
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <AnimatePresence>
         {showJump && (

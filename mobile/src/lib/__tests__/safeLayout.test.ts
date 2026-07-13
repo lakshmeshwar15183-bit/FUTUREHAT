@@ -4,10 +4,17 @@
 import {
   TAB_BAR_CONTENT_HEIGHT,
   MIN_BOTTOM_PAD,
+  DEFAULT_SCROLL_EXTRA,
+  DEFAULT_SHEET_EXTRA,
   bottomInset,
   topInset,
   fabBottom,
   tabBarSafeStyle,
+  scrollBottomPad,
+  sheetBottomPad,
+  footerBottomPad,
+  dialogVerticalPad,
+  mergeScrollBottomPad,
 } from '../safeLayout';
 
 describe('bottomInset / topInset', () => {
@@ -57,5 +64,66 @@ describe('tabBarSafeStyle', () => {
     expect(a.paddingBottom).not.toBe(6);
     expect(b.height).not.toBe(84);
     expect(b.paddingBottom).not.toBe(28);
+  });
+});
+
+describe('scrollBottomPad', () => {
+  it('adds system inset + extra', () => {
+    expect(scrollBottomPad({ bottom: 48 }, 24)).toBe(72);
+    expect(scrollBottomPad({ bottom: 0 }, DEFAULT_SCROLL_EXTRA)).toBe(DEFAULT_SCROLL_EXTRA);
+  });
+
+  it('uses live 3-button height (not a constant)', () => {
+    expect(scrollBottomPad({ bottom: 48 })).toBe(48 + DEFAULT_SCROLL_EXTRA);
+    expect(scrollBottomPad({ bottom: 16 })).toBe(16 + DEFAULT_SCROLL_EXTRA);
+  });
+});
+
+describe('sheetBottomPad', () => {
+  it('floors at MIN_BOTTOM_PAD + extra', () => {
+    expect(sheetBottomPad({ bottom: 0 }, 12)).toBe(MIN_BOTTOM_PAD + 12);
+    expect(sheetBottomPad({ bottom: 48 }, DEFAULT_SHEET_EXTRA)).toBe(48 + DEFAULT_SHEET_EXTRA);
+  });
+});
+
+describe('footerBottomPad', () => {
+  it('sums inset and extra', () => {
+    expect(footerBottomPad({ bottom: 48 }, 12)).toBe(60);
+  });
+});
+
+describe('dialogVerticalPad', () => {
+  it('uses top and bottom system insets with min floor', () => {
+    expect(dialogVerticalPad({ top: 44, bottom: 48 }, 16)).toEqual({
+      paddingTop: 44,
+      paddingBottom: 48,
+    });
+    expect(dialogVerticalPad({ top: 0, bottom: 0 }, 16)).toEqual({
+      paddingTop: 16,
+      paddingBottom: 16,
+    });
+  });
+});
+
+describe('mergeScrollBottomPad', () => {
+  it('creates style when none provided', () => {
+    expect(mergeScrollBottomPad(undefined, 40)).toEqual({ paddingBottom: 40 });
+  });
+
+  it('merges into object keeping the larger paddingBottom', () => {
+    expect(mergeScrollBottomPad({ padding: 16, paddingBottom: 20 }, 48)).toEqual({
+      padding: 16,
+      paddingBottom: 48,
+    });
+    expect(mergeScrollBottomPad({ paddingBottom: 80 }, 48)).toEqual({
+      paddingBottom: 80,
+    });
+  });
+
+  it('appends to arrays', () => {
+    expect(mergeScrollBottomPad([{ padding: 8 }], 40)).toEqual([
+      { padding: 8 },
+      { paddingBottom: 40 },
+    ]);
   });
 });

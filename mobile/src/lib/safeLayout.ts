@@ -4,7 +4,7 @@
  * Never hardcode bottom padding for the system navigation bar, gesture
  * indicator, home indicator, or display cutouts. Derive from live insets
  * (react-native-safe-area-context → Android WindowInsets / iOS safe area)
- * so OEM 3-button bars, gesture nav, notches, and foldables all work.
+ * so OEM 3-button bars, gesture nav, 2-button nav, notches, and foldables all work.
  *
  * Pure functions only in this module (Jest-friendly). Hooks live in safeLayoutHooks.ts.
  */
@@ -22,6 +22,12 @@ export const TAB_BAR_CONTENT_HEIGHT = 52;
 
 /** Minimum breathing room when system inset is 0 (rare, e.g. some emulators). */
 export const MIN_BOTTOM_PAD = 8;
+
+/** Default extra content padding below the last item (above the system inset). */
+export const DEFAULT_SCROLL_EXTRA = 24;
+
+/** Default sheet chrome pad on top of the system bottom inset. */
+export const DEFAULT_SHEET_EXTRA = 12;
 
 /** Bottom system inset, never less than `min`. */
 export function bottomInset(insets: Pick<InsetEdges, 'bottom'>, min = 0): number {
@@ -65,4 +71,81 @@ export function tabBarSafeStyle(
     paddingTop: 6,
     paddingBottom: pad,
   };
+}
+
+/**
+ * ScrollView / FlatList contentContainerStyle.paddingBottom.
+ * Always includes the live system navigation-bar inset so the last item
+ * scrolls fully above 3-button / gesture / 2-button bars.
+ *
+ * @param extra additional content breathing room above the inset (not the nav bar itself)
+ */
+export function scrollBottomPad(
+  insets: Pick<InsetEdges, 'bottom'>,
+  extra: number = DEFAULT_SCROLL_EXTRA,
+): number {
+  return bottomInset(insets) + Math.max(0, extra);
+}
+
+/**
+ * Bottom-sheet padding (action sheets, menus, pickers).
+ * System inset + chrome so Cancel / last action never sits under the nav bar.
+ */
+export function sheetBottomPad(
+  insets: Pick<InsetEdges, 'bottom'>,
+  extra: number = DEFAULT_SHEET_EXTRA,
+): number {
+  // Floor at MIN_BOTTOM_PAD so a zero-inset OEM still gets a touch of pad.
+  return Math.max(bottomInset(insets), MIN_BOTTOM_PAD) + Math.max(0, extra);
+}
+
+/**
+ * Fixed footer / sticky bottom action bar padding.
+ */
+export function footerBottomPad(
+  insets: Pick<InsetEdges, 'bottom'>,
+  extra: number = 12,
+): number {
+  return bottomInset(insets) + Math.max(0, extra);
+}
+
+/**
+ * Centered dialog vertical margins so the card never collides with
+ * status bar / cutout or the system navigation bar.
+ */
+export function dialogVerticalPad(
+  insets: Pick<InsetEdges, 'top' | 'bottom'>,
+  min = 16,
+): { paddingTop: number; paddingBottom: number } {
+  return {
+    paddingTop: Math.max(topInset(insets), min),
+    paddingBottom: Math.max(bottomInset(insets), min),
+  };
+}
+
+/**
+ * Merge a computed bottom pad into an existing contentContainerStyle value
+ * (object, array, or undefined). Preserves caller paddingBottom when larger.
+ */
+export function mergeScrollBottomPad(
+  contentContainerStyle: unknown,
+  bottomPad: number,
+): unknown {
+  const base = contentContainerStyle;
+  if (base == null) {
+    return { paddingBottom: bottomPad };
+  }
+  if (Array.isArray(base)) {
+    return [...base, { paddingBottom: bottomPad }];
+  }
+  if (typeof base === 'object') {
+    const prev = (base as { paddingBottom?: number }).paddingBottom;
+    const merged =
+      typeof prev === 'number' && Number.isFinite(prev)
+        ? Math.max(prev, bottomPad)
+        : bottomPad;
+    return { ...(base as object), paddingBottom: merged };
+  }
+  // Style number / falsy — wrap as array so RN StyleSheet can flatten.
+  return [base, { paddingBottom: bottomPad }];
 }

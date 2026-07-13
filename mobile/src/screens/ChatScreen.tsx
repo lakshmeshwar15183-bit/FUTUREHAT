@@ -43,7 +43,7 @@ import {
   sendMessage,
   clearRemoteChatNotification,
   editMessage,
-  deleteMessage,
+  deleteMessageForEveryone,
   forwardMessage,
   markMessageAsRead,
   markMessageAsDelivered,
@@ -87,6 +87,8 @@ import {
   hideMessageForMe,
   clearChatMessagesForMe,
   deleteConversationForMe,
+  canDeleteMessageForEveryone,
+  shouldOmitDeletedFromTimeline,
   reportMessage,
   REPORT_REASONS,
   getChatSettings,
@@ -126,6 +128,7 @@ import {
   getCachedMessages,
   cacheMessages,
   upsertCachedMessage,
+  removeCachedMessages,
   getCachedConversations,
   getPendingMessages,
   enqueueOutbox,
@@ -151,7 +154,10 @@ import {
   isInvertedAtLatest,
   shouldRepinToLatestOnComposerResize,
   composerHeightChanged,
+  threadColumnBottomPad,
+  composerTrayHeight,
 } from '../lib/chatThreadLayout';
+import { sheetBottomPad } from '../lib/safeLayout';
 import MessageBubble, { type TickStatus, replySummary } from '../components/MessageBubble';
 import SwipeToReply from '../components/SwipeToReply';
 import MediaViewer, { type ViewerItem } from '../components/MediaViewer';
@@ -288,18 +294,27 @@ function ChatScreenInner() {
     return () => { alive = false; };
   }, [conversationId]);
 
-  // Keyboard pad without Reanimated roots (Reanimated Animated.View as screen
-  // root caused translucent/washed chat on Realme — Main list showed through).
-  // Plain View + Keyboard events = full opacity, no worklet crash path.
+  // Keyboard / IME — no Reanimated root (was translucent on some Realme OEMs).
+  // Android uses adjustResize: the OS shrinks the window. We must NOT also add
+  // keyboard height as paddingBottom (that was the huge empty gap bug).
+  // iOS does not resize the same way — pad by keyboard height when open.
   const safeBottom = insets.bottom;
   const [imePad, setImePad] = useState(0);
+  /** Last real keyboard height — emoji/sticker tray matches this (WhatsApp). */
+  const [lastImeHeight, setLastImeHeight] = useState(280);
+  const winH = Dimensions.get('window').height;
   useEffect(() => {
     const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
     const onShow = Keyboard.addListener(showEvt, (e) => {
       const h = e?.endCoordinates?.height ?? 0;
       // Ignore tiny residuals (nav-bar ghost heights on OEMs).
-      setImePad(h > 80 ? h : 0);
+      if (h > 40) {
+        setImePad(h);
+        setLastImeHeight(h);
+      } else {
+        setImePad(0);
+      }
     });
     const onHide = Keyboard.addListener(hideEvt, () => setImePad(0));
     return () => {
@@ -310,8 +325,14 @@ function ChatScreenInner() {
   // Opaque paper canvas — never translucent over Main tabs.
   const chatCanvasBg =
     wallpaperColor ?? (colors.isLight ? '#EFEAE2' : colors.bg);
-  // When IME open: pad by IME only. When closed: safe-area only.
-  const columnPadBottom = imePad > 0 ? imePad : safeBottom;
+  // Android resize: pad 0 while keyboard open. iOS: pad keyboard height.
+  // Keyboard closed: safe-area only (gesture / 3-button nav).
+  const columnPadBottom = threadColumnBottomPad(
+    imePad,
+    safeBottom,
+    Platform.OS === 'android' ? 'android-resize' : 'manual',
+  );
+  const trayH = composerTrayHeight(lastImeHeight, winH);
   // Green header chrome: always white glyphs (not muted palette text).
   const headerOnGreen = '#FFFFFF';
 
@@ -383,6 +404,14 @@ function ChatScreenInner() {
   const [now, setNow] = useState<number>(() => Date.now());
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  /** Telegram delete sheet: optional “Also delete for everyone” checkbox. */
+  const [deletePrompt, setDeletePrompt] = useState<{
+    ids: string[];
+    allowForEveryone: boolean;
+    everyoneLabel: string;
+  } | null>(null);
+  /** When true → also delete for everyone (hard delete). Default false. */
+  const [deleteAlsoEveryone, setDeleteAlsoEveryone] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
   /** Modal sticker picker (from attach sheet). */
   const [stickersOpen, setStickersOpen] = useState(false);
@@ -794,6 +823,11 @@ function ChatScreenInner() {
   useEffect(() => {
     if (!uid) return;
 
+    const removeLocally = (id: string) => {
+      setMsgs((prev) => prev.filter((m) => m.id !== id));
+      removeCachedMessages(conversationId, [id]).catch(() => {});
+    };
+
     const msgChannel = subscribeToMessages(
       supabase,
       conversationId,
@@ -819,8 +853,16 @@ function ChatScreenInner() {
         requestAnimationFrame(() => listRef.current?.scrollToOffset({ offset: 0, animated: true }));
       },
       (updated) => {
+        // Legacy soft user-unsend → remove row (Telegram: no tombstone).
+        if (shouldOmitDeletedFromTimeline(updated)) {
+          removeLocally(updated.id);
+          return;
+        }
         setMsgs((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
         upsertCachedMessage(conversationId, updated).catch(() => {});
+      },
+      (deletedId) => {
+        removeLocally(deletedId);
       },
     );
 
@@ -961,120 +1003,207 @@ function ChatScreenInner() {
   }
 
   useEffect(() => {
+    const winW = Dimensions.get('window').width;
+    // Reserve right chrome so the title never runs under call/menu icons.
+    // 1:1 = voice + video + ⋮ ; group = ⋮ only. Left back ≈ 52.
+    const rightReserve = isGroup ? 52 : 132;
+    const titleMax = Math.max(120, winW - 52 - rightReserve - 8);
+
     if (selectionMode) {
-      // Call-history-only selection → WhatsApp-style Delete + Info (no copy/forward).
+      // WhatsApp selection chrome:
+      //   Left  = back + "N selected" (never under icons)
+      //   Right = Copy? · Forward · ⋮ · Delete  (secondary actions in overflow)
       const selectedMsgs = messagesRef.current.filter((m) => selectedIds.has(m.id));
       const onlyCallHistory =
         selectedMsgs.length > 0 && selectedMsgs.every((m) => isCallHistoryMessage(m));
       const single = selectedMsgs.length === 1 ? selectedMsgs[0] : null;
+      // Copy only when every selected message is plain text with body.
+      const canCopy =
+        selectedMsgs.length > 0 &&
+        selectedMsgs.every(
+          (m) =>
+            !m.is_deleted &&
+            m.type === 'text' &&
+            !!(m.content && m.content.trim()),
+        );
+      // Right cluster: up to 4 × 40px icons — reserve so left count never collides.
+      const selRightIcons = onlyCallHistory
+        ? 2
+        : (canCopy ? 1 : 0) + 3; // forward + more + delete
+      const selRightW = selRightIcons * 40 + 8;
+      const selLeftMax = Math.max(100, winW - selRightW - 16);
+
+      const openSelectionMore = () => {
+        const actions: Parameters<typeof showSheet>[0]['actions'] = [];
+        if (single) {
+          actions.push({
+            text: 'Message info',
+            icon: 'info',
+            onPress: () => showInfoForMessage(single),
+          });
+        }
+        if (!onlyCallHistory) {
+          actions.push({
+            text: 'Star',
+            icon: 'star',
+            onPress: () => starSelectedMany(),
+          });
+        }
+        if (single && !single.is_deleted && !onlyCallHistory) {
+          actions.push({
+            text: 'Reply',
+            icon: 'reply',
+            onPress: () => {
+              setEditing(null);
+              setReply(single);
+              exitSelection();
+            },
+          });
+        }
+        if (
+          isGroup &&
+          single &&
+          !single.is_deleted &&
+          canPinMessages(myGroupRole, groupPerms)
+        ) {
+          const pinned = pinnedIds.has(single.id);
+          const pinTarget = single;
+          actions.push({
+            text: pinned ? 'Unpin' : 'Pin',
+            icon: 'pin',
+            onPress: () => {
+              exitSelection();
+              void (async () => {
+                const res = pinned
+                  ? await unpinGroupMessage(supabase, conversationId, pinTarget.id)
+                  : await pinGroupMessage(supabase, conversationId, pinTarget.id);
+                if (res.error) {
+                  Alert.alert('Pin', res.error.message);
+                  return;
+                }
+                setPinnedIds((prev) => {
+                  const next = new Set(prev);
+                  if (pinned) next.delete(pinTarget.id);
+                  else next.add(pinTarget.id);
+                  return next;
+                });
+              })();
+            },
+          });
+        }
+        actions.push({
+          text: 'Select all',
+          icon: 'select',
+          onPress: () => {
+            const all = messagesRef.current
+              .filter((m) => m.type !== 'system' || isCallHistoryMessage(m))
+              .map((m) => m.id);
+            setSelectedIds(new Set(all));
+          },
+        });
+        if (single && !single.is_deleted && !onlyCallHistory) {
+          actions.push({
+            text: 'More…',
+            onPress: () => {
+              const t = single;
+              exitSelection();
+              requestAnimationFrame(() => setSelected(t));
+            },
+          });
+        }
+        showSheet({ title: `${selectedIds.size} selected`, actions });
+      };
 
       navigation.setOptions({
-        headerTitle: () => (
-          <Text style={styles.headerTitle}>
-            {selectedIds.size} selected
-          </Text>
-        ),
+        // Empty center title — count lives next to back (no overlap with actions).
+        headerTitle: () => null,
+        headerTitleContainerStyle: { width: 0, maxWidth: 0, overflow: 'hidden' },
+        headerLeftContainerStyle: {
+          flexGrow: 1,
+          flexShrink: 1,
+          maxWidth: selLeftMax,
+          marginRight: 4,
+        },
+        headerRightContainerStyle: {
+          flexGrow: 0,
+          flexShrink: 0,
+          marginLeft: 4,
+        },
         headerLeft: () => (
-          <Pressable
-            hitSlop={8}
-            onPress={exitSelection}
-            accessibilityLabel="Cancel selection"
-          >
-            <Ionicons name="close" size={24} color={headerOnGreen} />
-          </Pressable>
+          <View style={[styles.selLeft, { maxWidth: selLeftMax }]}>
+            <Pressable
+              hitSlop={10}
+              onPress={exitSelection}
+              accessibilityLabel="Cancel selection"
+              style={styles.headerIconBtn}
+            >
+              <Ionicons name="arrow-back" size={24} color={headerOnGreen} />
+            </Pressable>
+            <Text
+              style={styles.selCount}
+              numberOfLines={1}
+              ellipsizeMode="tail"
+              maxFontSizeMultiplier={1.3}
+              accessibilityRole="header"
+            >
+              {selectedIds.size} selected
+            </Text>
+          </View>
         ),
         headerRight: () => (
-          <View style={styles.headerActions}>
+          <View style={styles.selRight}>
             {onlyCallHistory ? (
               <>
-                {single && (
-                  <Pressable
-                    hitSlop={8}
-                    onPress={() => showInfoForMessage(single)}
-                    accessibilityLabel="Message info"
-                    style={{ marginLeft: 4 }}
-                  >
-                    <Ionicons name="information-circle-outline" size={23} color={headerOnGreen} />
-                  </Pressable>
-                )}
+                <Pressable
+                  hitSlop={8}
+                  onPress={openSelectionMore}
+                  accessibilityLabel="More"
+                  style={styles.headerIconBtn}
+                >
+                  <Ionicons name="ellipsis-vertical" size={20} color={headerOnGreen} />
+                </Pressable>
                 <Pressable
                   hitSlop={8}
                   onPress={() => deleteMany([...selectedIds])}
                   accessibilityLabel="Delete"
-                  style={{ marginLeft: 18 }}
+                  style={styles.headerIconBtn}
                 >
                   <Ionicons name="trash-outline" size={21} color={colors.danger} />
                 </Pressable>
               </>
             ) : (
               <>
-                {single && !single.is_deleted && (
+                {canCopy && (
                   <Pressable
                     hitSlop={8}
-                    onPress={() => {
-                      setEditing(null);
-                      setReply(single);
-                      exitSelection();
-                    }}
-                    accessibilityLabel="Reply"
+                    onPress={copySelected}
+                    accessibilityLabel="Copy"
+                    style={styles.headerIconBtn}
                   >
-                    <Ionicons name="arrow-undo-outline" size={22} color={headerOnGreen} />
+                    <Ionicons name="copy-outline" size={21} color={headerOnGreen} />
                   </Pressable>
                 )}
-                <Pressable
-                  hitSlop={8}
-                  onPress={copySelected}
-                  accessibilityLabel="Copy"
-                  style={{ marginLeft: 14 }}
-                >
-                  <Ionicons name="copy-outline" size={21} color={headerOnGreen} />
-                </Pressable>
                 <Pressable
                   hitSlop={8}
                   onPress={forwardSelectedMany}
                   accessibilityLabel="Forward"
-                  style={{ marginLeft: 14 }}
+                  style={styles.headerIconBtn}
                 >
-                  <Ionicons name="arrow-redo-outline" size={22} color={headerOnGreen} />
+                  <Ionicons name="arrow-redo-outline" size={21} color={headerOnGreen} />
                 </Pressable>
                 <Pressable
                   hitSlop={8}
-                  onPress={starSelectedMany}
-                  accessibilityLabel="Star"
-                  style={{ marginLeft: 14 }}
+                  onPress={openSelectionMore}
+                  accessibilityLabel="More options"
+                  style={styles.headerIconBtn}
                 >
-                  <Ionicons name="star-outline" size={21} color={headerOnGreen} />
+                  <Ionicons name="ellipsis-vertical" size={20} color={headerOnGreen} />
                 </Pressable>
-                {single && (
-                  <Pressable
-                    hitSlop={8}
-                    onPress={() => showInfoForMessage(single)}
-                    accessibilityLabel="Message info"
-                    style={{ marginLeft: 14 }}
-                  >
-                    <Ionicons name="information-circle-outline" size={23} color={headerOnGreen} />
-                  </Pressable>
-                )}
-                {single && !single.is_deleted && (
-                  <Pressable
-                    hitSlop={8}
-                    onPress={() => {
-                      // Open full single-message menu (React, Edit, Report…).
-                      const t = single;
-                      exitSelection();
-                      requestAnimationFrame(() => setSelected(t));
-                    }}
-                    accessibilityLabel="More"
-                    style={{ marginLeft: 14 }}
-                  >
-                    <Ionicons name="ellipsis-vertical" size={20} color={headerOnGreen} />
-                  </Pressable>
-                )}
                 <Pressable
                   hitSlop={8}
                   onPress={() => deleteMany([...selectedIds])}
                   accessibilityLabel="Delete"
-                  style={{ marginLeft: 14 }}
+                  style={styles.headerIconBtn}
                 >
                   <Ionicons name="trash-outline" size={21} color={colors.danger} />
                 </Pressable>
@@ -1082,13 +1211,26 @@ function ChatScreenInner() {
             )}
           </View>
         ),
-      });
+      } as any);
       return;
     }
     navigation.setOptions({
       headerLeft: undefined,
+      headerTitleAlign: 'left',
+      // Pin title left of trailing icons so long names ellipsize, never overlap.
+      headerTitleContainerStyle: {
+        flex: 1,
+        maxWidth: titleMax,
+        marginHorizontal: 0,
+        paddingRight: 4,
+      },
+      headerRightContainerStyle: {
+        flexGrow: 0,
+        flexShrink: 0,
+        paddingLeft: 0,
+      },
       headerTitle: () => (
-        <View style={styles.headerPerson}>
+        <View style={[styles.headerPerson, { maxWidth: titleMax }]}>
           <ProfileAvatar
             uri={headerAvatarUri}
             name={headerAvatarName}
@@ -1096,17 +1238,36 @@ function ChatScreenInner() {
             userId={isGroup ? null : peers[0]?.id}
             mode="auto"
           />
-          <Pressable onPress={openHeaderProfile} style={styles.headerTextCol} accessibilityRole="button" accessibilityLabel="Open contact info">
+          <Pressable
+            onPress={openHeaderProfile}
+            style={styles.headerTextCol}
+            accessibilityRole="button"
+            accessibilityLabel="Open contact info"
+          >
             <View style={styles.headerTitleRow}>
-              <Text style={styles.headerTitle} numberOfLines={1}>
+              <Text
+                style={styles.headerTitle}
+                numberOfLines={1}
+                ellipsizeMode="tail"
+                maxFontSizeMultiplier={1.35}
+              >
                 {headerTitle || params.title}
               </Text>
-              {/* Disappearing-messages indicator (WhatsApp parity). */}
               {disappearSecs > 0 && (
-                <Ionicons name="timer-outline" size={14} color="rgba(255,255,255,0.9)" style={{ marginLeft: 5 }} />
+                <Ionicons
+                  name="timer-outline"
+                  size={13}
+                  color="rgba(255,255,255,0.9)"
+                  style={{ marginLeft: 4, flexShrink: 0 }}
+                />
               )}
               {ghost && (
-                <Ionicons name="eye-off-outline" size={13} color="rgba(255,255,255,0.9)" style={{ marginLeft: 5 }} />
+                <Ionicons
+                  name="eye-off-outline"
+                  size={12}
+                  color="rgba(255,255,255,0.9)"
+                  style={{ marginLeft: 4, flexShrink: 0 }}
+                />
               )}
             </View>
             {!!subtitle && (
@@ -1117,6 +1278,8 @@ function ChatScreenInner() {
                   { color: typingName ? '#B8F5E0' : 'rgba(255,255,255,0.88)' },
                 ]}
                 numberOfLines={1}
+                ellipsizeMode="tail"
+                maxFontSizeMultiplier={1.3}
               >
                 {subtitle}
               </Text>
@@ -1124,34 +1287,33 @@ function ChatScreenInner() {
           </Pressable>
         </View>
       ),
-      // Call buttons (1:1) + overflow ⋮ menu (WhatsApp-class chat options).
       headerRight: () => (
         <View style={styles.headerActions}>
           {!isGroup && (
             <>
               <Pressable
-                hitSlop={10}
+                hitSlop={8}
                 onPress={() => placeCall('audio')}
                 accessibilityLabel="Voice call"
-                style={{ marginLeft: 12 }}
+                style={styles.headerIconBtn}
               >
                 <Ionicons name="call-outline" size={22} color={headerOnGreen} />
               </Pressable>
               <Pressable
-                hitSlop={10}
+                hitSlop={8}
                 onPress={() => placeCall('video')}
                 accessibilityLabel="Video call"
-                style={{ marginLeft: 14 }}
+                style={styles.headerIconBtn}
               >
                 <Ionicons name="videocam-outline" size={23} color={headerOnGreen} />
               </Pressable>
             </>
           )}
           <Pressable
-            hitSlop={10}
+            hitSlop={8}
             onPress={openChatMenu}
             accessibilityLabel="More options"
-            style={{ marginLeft: 12, padding: 2 }}
+            style={styles.headerIconBtn}
           >
             <Ionicons name="ellipsis-vertical" size={20} color={headerOnGreen} />
           </Pressable>
@@ -1160,10 +1322,9 @@ function ChatScreenInner() {
       headerTintColor: headerOnGreen,
       headerStyle: { backgroundColor: colors.header },
       headerShadowVisible: false,
-      // Solid content under the native header (prevents list bleed during push).
       contentStyle: { backgroundColor: chatCanvasBg },
-    });
-  }, [navigation, params.title, headerTitle, headerAvatarName, subtitle, peers, colors, styles, selectionMode, selectedIds, isGroup, ghost, disappearSecs, conversationId, headerAvatarUri, typingName, chatMuted, chatLock, starredIds, peerNickname, headerOnGreen, chatCanvasBg]);
+    } as any);
+  }, [navigation, params.title, headerTitle, headerAvatarName, subtitle, peers, colors, styles, selectionMode, selectedIds, isGroup, ghost, disappearSecs, conversationId, headerAvatarUri, typingName, chatMuted, chatLock, starredIds, peerNickname, headerOnGreen, chatCanvasBg, myGroupRole, groupPerms, pinnedIds]);
 
   function placeCall(kind: 'audio' | 'video') {
     // Only reachable from direct chats (call buttons are hidden in groups).
@@ -2389,46 +2550,77 @@ function ChatScreenInner() {
     }
   }
 
-  /** WhatsApp delete flow: close action sheet first, then a single confirm dialog. */
+  /** Hard-delete for everyone (optimistic remove; rollback if server rejects). */
+  async function deleteMessagesForEveryone(ids: string[]) {
+    const snapshot = messagesRef.current.filter((m) => ids.includes(m.id));
+    // Optimistic: disappear immediately (Telegram).
+    setMsgs((prev) => prev.filter((m) => !ids.includes(m.id)));
+    removeCachedMessages(conversationId, ids).catch(() => {});
+    const results = await Promise.all(
+      ids.map(async (id) => {
+        const { error } = await deleteMessageForEveryone(supabase, id);
+        return { id, error };
+      }),
+    );
+    const failed = results.filter((r) => r.error);
+    if (failed.length) {
+      // Rollback rows that failed.
+      setMsgs((prev) => {
+        const map = new Map(prev.map((m) => [m.id, m]));
+        for (const s of snapshot) {
+          if (failed.some((f) => f.id === s.id)) map.set(s.id, s);
+        }
+        return [...map.values()].sort((a, b) =>
+          a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0,
+        );
+      });
+      for (const s of snapshot) {
+        if (failed.some((f) => f.id === s.id)) {
+          upsertCachedMessage(conversationId, s).catch(() => {});
+        }
+      }
+      Alert.alert(
+        'Could not delete',
+        failed[0]?.error?.message || 'Some messages could not be deleted for everyone.',
+      );
+    }
+  }
+
+  function openDeletePrompt(ids: string[]) {
+    if (!ids.length) return;
+    const rows = messagesRef.current.filter((m) => ids.includes(m.id));
+    const allowForEveryone =
+      rows.length > 0 && rows.every((m) => canDeleteMessageForEveryone(m, uid));
+    const peerName =
+      !isGroup && peers[0]
+        ? resolveDisplayName(peers[0], { nickname: peerNickname, fallback: 'recipient' })
+        : null;
+    const everyoneLabel = isGroup
+      ? 'Also delete for everyone'
+      : `Also delete for ${peerName || 'recipient'}`;
+    setDeleteAlsoEveryone(false);
+    setDeletePrompt({ ids, allowForEveryone, everyoneLabel });
+  }
+
+  async function confirmDeletePrompt() {
+    if (!deletePrompt) return;
+    const { ids, allowForEveryone } = deletePrompt;
+    const alsoEveryone = deleteAlsoEveryone && allowForEveryone;
+    setDeletePrompt(null);
+    if (selectionMode) exitSelection();
+    if (alsoEveryone) {
+      await deleteMessagesForEveryone(ids);
+    } else {
+      ids.forEach((id) => hideOneMessage(id));
+    }
+  }
+
+  /** Telegram delete flow: close action sheet first, then confirm dialog. */
   function doDelete() {
     if (!selected) return;
     const target = selected;
-    const mine = target.sender_id === uid && !target.is_deleted;
     afterMessageSheetClosed(() => {
-      const buttons: Array<{
-        text: string;
-        style?: 'cancel' | 'destructive' | 'default';
-        onPress?: () => void | Promise<void>;
-      }> = [{ text: 'Cancel', style: 'cancel' }];
-      // Always available: delete for me only.
-      buttons.push({
-        text: 'Delete for me',
-        onPress: () => hideOneMessage(target.id),
-      });
-      // Own messages only: delete for everyone (unsend).
-      if (mine) {
-        buttons.push({
-          text: 'Delete for everyone',
-          style: 'destructive',
-          onPress: async () => {
-            await deleteMessage(supabase, target.id);
-            setMsgs((prev) =>
-              prev.map((m) =>
-                m.id === target.id
-                  ? { ...m, is_deleted: true, deleted_kind: 'user' as const, content: null, media_url: null }
-                  : m,
-              ),
-            );
-          },
-        });
-      }
-      Alert.alert(
-        'Delete message?',
-        mine
-          ? 'Delete for me removes it from your chat only. Delete for everyone removes it for all participants.'
-          : 'This message will be removed from your chat only. Media already saved on your device is not deleted.',
-        buttons,
-      );
+      openDeletePrompt([target.id]);
     });
   }
 
@@ -2455,44 +2647,7 @@ function ChatScreenInner() {
       );
       return;
     }
-
-    const mineIds = selected
-      .filter((m) => m.sender_id === uid && !m.is_deleted && m.type !== 'system')
-      .map((m) => m.id);
-    const onlyMine = mineIds.length === ids.length && ids.length > 0;
-    Alert.alert(
-      onlyMine ? 'Delete messages?' : 'Delete for me?',
-      onlyMine
-        ? `Delete ${ids.length} message${ids.length === 1 ? '' : 's'} for everyone, or for you only?`
-        : `Remove ${ids.length} message${ids.length === 1 ? '' : 's'} from your chat only.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete for me',
-          onPress: () => {
-            exitSelection();
-            ids.forEach((id) => hideOneMessage(id));
-          },
-        },
-        ...(onlyMine
-          ? [{
-              text: 'Delete for everyone',
-              style: 'destructive' as const,
-              onPress: async () => {
-                exitSelection();
-                await Promise.all(ids.map((id) => deleteMessage(supabase, id).catch(() => {})));
-                setMsgs((prev) =>
-                  prev.map((m) =>
-                    ids.includes(m.id)
-                      ? { ...m, is_deleted: true, deleted_kind: 'user' as const, content: null, media_url: null }
-                      : m,
-                  ),
-                );
-              },
-            }]
-          : []),
-      ],
-    );
+    openDeletePrompt(ids);
   }
 
   async function openForward() {
@@ -2512,36 +2667,8 @@ function ChatScreenInner() {
   function deleteFromViewer(item: ViewerItem) {
     const msg = messageById.get(item.id);
     if (!msg) return;
-    const mine = msg.sender_id === uid && !msg.is_deleted;
     setViewerUrl(null);
-    setTimeout(() => {
-      const buttons: Array<{
-        text: string;
-        style?: 'cancel' | 'destructive' | 'default';
-        onPress?: () => void | Promise<void>;
-      }> = [{ text: 'Cancel', style: 'cancel' }];
-      buttons.push({
-        text: 'Delete for me',
-        onPress: () => hideOneMessage(msg.id),
-      });
-      if (mine) {
-        buttons.push({
-          text: 'Delete for everyone',
-          style: 'destructive',
-          onPress: async () => {
-            await deleteMessage(supabase, msg.id);
-            setMsgs((prev) =>
-              prev.map((m) =>
-                m.id === msg.id
-                  ? { ...m, is_deleted: true, deleted_kind: 'user' as const, content: null, media_url: null }
-                  : m,
-              ),
-            );
-          },
-        });
-      }
-      Alert.alert('Delete message?', undefined, buttons);
-    }, motion.sheetCloseMs + 30);
+    setTimeout(() => openDeletePrompt([msg.id]), motion.sheetCloseMs + 30);
   }
 
   // Forward the queued source messages to every chosen target (multi-recipient).
@@ -2575,10 +2702,15 @@ function ChatScreenInner() {
     const merged: TimelineItem[] = [
       ...messages
         // delete-for-me (hiddenIds): never show to this user.
-        // Soft-deleted (is_deleted): KEEP as a tombstone so timeline position
-        // stays intact — user unsend or Lumixo moderation placeholder.
+        // User soft-deletes (legacy): omit entirely (Telegram — no tombstone).
+        // Moderation soft-deletes: keep tombstone.
         // messageExpired: disappearing message past expiry — hide instantly.
-        .filter((m) => !hiddenIds.has(m.id) && !messageExpired(m, now))
+        .filter(
+          (m) =>
+            !hiddenIds.has(m.id) &&
+            !messageExpired(m, now) &&
+            !shouldOmitDeletedFromTimeline(m),
+        )
         .map((m): TimelineItem => ({ kind: 'msg', id: m.id, at: m.created_at, message: m })),
       ...polls.map((p): TimelineItem => ({ kind: 'poll', id: `poll:${p.id}`, at: p.created_at, poll: p })),
     ];
@@ -2835,7 +2967,23 @@ function ChatScreenInner() {
       );
     }
     const mine = msg.sender_id === uid;
-    const replyTo = msg.reply_to ? messageById.get(msg.reply_to) ?? null : null;
+    // Hard-deleted parents vanish; mark reply quote unavailable without crashing.
+    const replyTo = msg.reply_to
+      ? messageById.get(msg.reply_to) ??
+        ({
+          id: msg.reply_to,
+          conversation_id: conversationId,
+          sender_id: '',
+          type: 'text',
+          content: null,
+          media_url: null,
+          reply_to: null,
+          is_deleted: true,
+          deleted_kind: 'user',
+          created_at: msg.created_at,
+          edited_at: null,
+        } as Message)
+      : null;
     const senderName = isGroup ? peerNameById.get(msg.sender_id) ?? null : null;
     const interactive = !msg.is_deleted;
     return (
@@ -3236,7 +3384,7 @@ function ChatScreenInner() {
         </View>
       )}
 
-      {/* Composer — hold mic to record; slide left to cancel (WhatsApp-class). */}
+      {/* Composer — holds above keyboard; WhatsApp-class pill field + aligned icons. */}
       {recording ? (
         <View
           style={[styles.composer, styles.recordingComposer, { paddingBottom: composerPadBottom }]}
@@ -3263,59 +3411,63 @@ function ChatScreenInner() {
         >
           <Pressable
             onPress={() => { Keyboard.dismiss(); setAttachOpen(true); }}
-            hitSlop={8}
+            hitSlop={6}
             accessibilityRole="button"
             accessibilityLabel="Attach"
+            style={styles.composerSideBtn}
           >
-            <Ionicons name="add-circle-outline" size={28} color={colors.textMuted} />
+            <Ionicons name="add" size={28} color={colors.textMuted} />
           </Pressable>
-          {!text.trim() && (
+          <View style={styles.inputPill}>
             <Pressable
-              onPress={() => { Keyboard.dismiss(); void pickImage(true); }}
-              hitSlop={8}
-              style={{ marginLeft: 2 }}
+              onPress={() => {
+                if (composerTray === 'emoji') {
+                  closeComposerTray();
+                } else if (composerTray === 'stickers') {
+                  setComposerTray('emoji');
+                } else {
+                  openComposerEmoji();
+                }
+              }}
+              hitSlop={6}
+              style={styles.composerEmojiBtn}
               accessibilityRole="button"
-              accessibilityLabel="Camera"
+              accessibilityLabel={composerTray === 'emoji' ? 'Show keyboard' : 'Emoji'}
             >
-              <Ionicons name="camera-outline" size={26} color={colors.textMuted} />
+              <Ionicons
+                name={composerTray === 'emoji' ? 'keypad-outline' : 'happy-outline'}
+                size={24}
+                color={composerTray !== 'none' ? colors.primary : colors.textMuted}
+              />
             </Pressable>
-          )}
-          <TextInput
-            ref={inputRef}
-            style={styles.input}
-            placeholder="Message"
-            placeholderTextColor={colors.textFaint}
-            accessibilityLabel="Message"
-            value={text}
-            onChangeText={onChangeText}
-            onKeyPress={onInputKeyPress}
-            onSubmitEditing={enterToSend ? handleSend : undefined}
-            onFocus={hideComposerTrayOnly}
-            blurOnSubmit={false}
-            returnKeyType={enterToSend ? 'send' : 'default'}
-            multiline
-          />
-          <Pressable
-            onPress={() => {
-              if (composerTray === 'emoji') {
-                closeComposerTray();
-              } else if (composerTray === 'stickers') {
-                setComposerTray('emoji');
-              } else {
-                openComposerEmoji();
-              }
-            }}
-            hitSlop={8}
-            style={{ marginRight: 4 }}
-            accessibilityRole="button"
-            accessibilityLabel={composerTray === 'emoji' ? 'Show keyboard' : 'Emoji'}
-          >
-            <Ionicons
-              name={composerTray === 'emoji' ? 'keypad-outline' : 'happy-outline'}
-              size={26}
-              color={composerTray !== 'none' ? colors.primary : colors.textMuted}
+            <TextInput
+              ref={inputRef}
+              style={styles.input}
+              placeholder="Message"
+              placeholderTextColor={colors.textFaint}
+              accessibilityLabel="Message"
+              value={text}
+              onChangeText={onChangeText}
+              onKeyPress={onInputKeyPress}
+              onSubmitEditing={enterToSend ? handleSend : undefined}
+              onFocus={hideComposerTrayOnly}
+              blurOnSubmit={false}
+              returnKeyType={enterToSend ? 'send' : 'default'}
+              multiline
+              textAlignVertical="center"
             />
-          </Pressable>
+            {!text.trim() && (
+              <Pressable
+                onPress={() => { Keyboard.dismiss(); void pickImage(true); }}
+                hitSlop={6}
+                style={styles.composerEmojiBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Camera"
+              >
+                <Ionicons name="camera-outline" size={24} color={colors.textMuted} />
+              </Pressable>
+            )}
+          </View>
           {text.trim().length > 0 ? (
             <Pressable
               onPress={handleSend}
@@ -3331,8 +3483,9 @@ function ChatScreenInner() {
               onPressIn={onMicPressIn}
               onPressOut={onMicPressOut}
               onTouchMove={onMicTouchMove}
-              // Fallback tap still starts/stops if press-in path fails on some OEMs.
               delayLongPress={400}
+              accessibilityRole="button"
+              accessibilityLabel="Record voice message"
               style={({ pressed }) => [styles.sendBtn, pressed && styles.sendBtnPressed]}
             >
               <Ionicons name="mic" size={20} color="#fff" />
@@ -3341,10 +3494,51 @@ function ChatScreenInner() {
         </View>
       )}
 
+      {/* Telegram-style delete: optional “Also delete for everyone” checkbox */}
+      <Modal
+        visible={!!deletePrompt}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setDeletePrompt(null)}
+      >
+        <Pressable style={styles.deleteBackdrop} onPress={() => setDeletePrompt(null)}>
+          <Pressable style={styles.deleteCard} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.deleteTitle}>Delete message?</Text>
+            <Text style={styles.deleteBody}>
+              Are you sure you want to delete the selected message
+              {(deletePrompt?.ids.length ?? 0) > 1 ? 's' : ''}?
+            </Text>
+            {deletePrompt?.allowForEveryone && (
+              <Pressable
+                style={styles.deleteCheckRow}
+                onPress={() => setDeleteAlsoEveryone((v) => !v)}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: deleteAlsoEveryone }}
+              >
+                <Ionicons
+                  name={deleteAlsoEveryone ? 'checkbox' : 'square-outline'}
+                  size={24}
+                  color={deleteAlsoEveryone ? colors.primary : colors.textMuted}
+                />
+                <Text style={styles.deleteCheckLabel}>{deletePrompt.everyoneLabel}</Text>
+              </Pressable>
+            )}
+            <View style={styles.deleteActions}>
+              <Pressable onPress={() => setDeletePrompt(null)} hitSlop={8} style={styles.deleteBtn}>
+                <Text style={styles.deleteBtnCancel}>Cancel</Text>
+              </Pressable>
+              <Pressable onPress={() => void confirmDeletePrompt()} hitSlop={8} style={styles.deleteBtn}>
+                <Text style={styles.deleteBtnGo}>Delete</Text>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
       {/* Attachment sheet — primary grid + demoted premium actions */}
       <Modal visible={attachOpen} transparent animationType="slide" onRequestClose={() => setAttachOpen(false)}>
         <Pressable style={styles.backdrop} onPress={() => setAttachOpen(false)}>
-          <Pressable style={[styles.sheet, { paddingBottom: insets.bottom + 16 }]} onPress={(e) => e.stopPropagation()}>
+          <Pressable style={[styles.sheet, { paddingBottom: sheetBottomPad(insets, 16) }]} onPress={(e) => e.stopPropagation()}>
             <Text style={styles.sheetTitle}>Share</Text>
             <View style={styles.attachGrid}>
               <AttachTile icon="image" label="Gallery" color="#5B6EF5" onPress={openMediaPicker} />
@@ -3455,7 +3649,7 @@ function ChatScreenInner() {
       {/* Poll builder */}
       <Modal visible={pollBuilder} transparent animationType="slide" onRequestClose={() => setPollBuilder(false)}>
         <Pressable style={styles.backdrop} onPress={() => setPollBuilder(false)}>
-          <Pressable style={[styles.sheet, styles.pollSheet, { paddingBottom: insets.bottom + 16 }]} onPress={(e) => e.stopPropagation()}>
+          <Pressable style={[styles.sheet, styles.pollSheet, { paddingBottom: sheetBottomPad(insets, 16) }]} onPress={(e) => e.stopPropagation()}>
             <Text style={styles.sheetTitle}>New poll</Text>
             <TextInput
               style={styles.pollInput}
@@ -3498,7 +3692,7 @@ function ChatScreenInner() {
       {/* Message action sheet */}
       <Modal visible={!!selected} transparent animationType="slide" onRequestClose={() => setSelected(null)}>
         <Pressable style={styles.msgBackdrop} onPress={() => setSelected(null)}>
-          <Pressable style={[styles.msgSheet, { paddingBottom: insets.bottom + 10 }]} onPress={() => {}}>
+          <Pressable style={[styles.msgSheet, { paddingBottom: sheetBottomPad(insets, 10) }]} onPress={() => {}}>
             <View style={styles.grabber} />
 
             {/* Reaction bar — compact rounded pill; reactions work exactly as before. */}
@@ -3578,7 +3772,7 @@ function ChatScreenInner() {
       {/* Report-message reason picker (step 2 of the report flow). */}
       <Modal visible={!!reportTarget} transparent animationType="slide" onRequestClose={() => setReportTarget(null)}>
         <Pressable style={styles.backdrop} onPress={() => !reportBusy && setReportTarget(null)}>
-          <Pressable style={[styles.sheet, { paddingBottom: insets.bottom + 12 }]} onPress={() => {}}>
+          <Pressable style={[styles.sheet, { paddingBottom: sheetBottomPad(insets, 12) }]} onPress={() => {}}>
             <Text style={styles.reportTitle}>Report message</Text>
             <Text style={styles.reportSubtitle}>Why are you reporting this message?</Text>
             {REPORT_REASONS.map((r) => (
@@ -3623,9 +3817,9 @@ function ChatScreenInner() {
         }}
       />
 
-      {/* Composer emoji / sticker tray — replaces keyboard (WhatsApp parity) */}
+      {/* Composer emoji / sticker tray — same height band as last keyboard */}
       {composerTray === 'emoji' && (
-        <View>
+        <View style={[styles.composerTray, { height: trayH }]} onLayout={() => pinToLatest(false)}>
           <View style={styles.traySwitch}>
             <Pressable
               style={[styles.traySwitchBtn, styles.traySwitchOn]}
@@ -3645,13 +3839,14 @@ function ChatScreenInner() {
             mode="composer"
             presentation="tray"
             title="Emoji"
+            trayHeight={Math.max(160, trayH - 40)}
             onClose={closeComposerTray}
             onSelect={(e) => onChangeText(textRef.current + e)}
           />
         </View>
       )}
       {composerTray === 'stickers' && (
-        <View>
+        <View style={[styles.composerTray, { height: trayH }]} onLayout={() => pinToLatest(false)}>
           <View style={styles.traySwitch}>
             <Pressable
               style={styles.traySwitchBtn}
@@ -3669,6 +3864,7 @@ function ChatScreenInner() {
           <StickerPicker
             visible
             presentation="tray"
+            trayHeight={Math.max(160, trayH - 40)}
             onClose={closeComposerTray}
             onSelect={(s) => { void sendSticker(s); }}
           />
@@ -3891,13 +4087,39 @@ const makeStyles = (colors: Palette) =>
       shadowOffset: { width: 0, height: 1 },
       elevation: 1,
     },
-    headerPerson: { flexDirection: 'row', alignItems: 'center', maxWidth: 220 },
-    headerTextCol: { marginLeft: 9, flexShrink: 1, minWidth: 0 },
+    headerPerson: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      flex: 1,
+      minWidth: 0,
+      maxWidth: '100%',
+    },
+    headerTextCol: { marginLeft: 9, flex: 1, flexShrink: 1, minWidth: 0 },
     // White on green header (WhatsApp) — never palette text (was washed-out).
-    headerTitle: { color: '#FFFFFF', fontSize: font.heading, fontWeight: '600', flexShrink: 1, letterSpacing: -0.15 },
-    headerTitleRow: { flexDirection: 'row', alignItems: 'center' },
-    headerSub: { color: 'rgba(255,255,255,0.88)', fontSize: font.tiny, marginTop: 0 },
+    headerTitle: {
+      color: '#FFFFFF',
+      fontSize: font.heading,
+      fontWeight: '600',
+      flexShrink: 1,
+      letterSpacing: -0.15,
+      minWidth: 0,
+    },
+    headerTitleRow: { flexDirection: 'row', alignItems: 'center', minWidth: 0 },
+    headerSub: {
+      color: 'rgba(255,255,255,0.88)',
+      fontSize: font.tiny,
+      marginTop: 0,
+      flexShrink: 1,
+      minWidth: 0,
+    },
     headerSubTyping: { color: '#B8F5E0', fontWeight: '600' },
+    headerIconBtn: {
+      width: 40,
+      height: 40,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginLeft: 0,
+    },
     systemNotice: { alignItems: 'center', marginVertical: 6, paddingHorizontal: 24 },
     systemPill: {
       flexDirection: 'row', alignItems: 'center', maxWidth: '90%',
@@ -3930,7 +4152,39 @@ const makeStyles = (colors: Palette) =>
       backgroundColor: colors.primary, paddingHorizontal: 20, paddingVertical: 11, borderRadius: radius.pill,
     },
     lockGateBtnText: { color: '#fff', fontSize: font.body, fontWeight: '700' },
-    headerActions: { flexDirection: 'row', alignItems: 'center' },
+    headerActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      flexShrink: 0,
+      gap: 2,
+      paddingRight: 2,
+    },
+    /** Selection mode: left cluster (back + count) — never under right icons. */
+    selLeft: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      flexShrink: 1,
+      minWidth: 0,
+      paddingRight: 4,
+    },
+    selCount: {
+      color: '#FFFFFF',
+      fontSize: 17,
+      fontWeight: '600',
+      letterSpacing: -0.2,
+      marginLeft: 4,
+      flexShrink: 1,
+      minWidth: 0,
+    },
+    /** Selection mode: right actions — fixed, no flex grow into title. */
+    selRight: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      flexShrink: 0,
+      flexGrow: 0,
+      gap: 0,
+      paddingRight: 2,
+    },
     searchBar: {
       backgroundColor: colors.surface, paddingHorizontal: 12, paddingTop: 7, paddingBottom: 7,
       borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, gap: 6,
@@ -3969,12 +4223,40 @@ const makeStyles = (colors: Palette) =>
     composer: {
       flexDirection: 'row',
       alignItems: 'flex-end',
-      paddingHorizontal: 8,
-      paddingTop: 5,
+      paddingHorizontal: 6,
+      paddingTop: 6,
+      gap: 4,
       // Fully opaque bar — never let chat paper show through icons/input.
       backgroundColor: colors.isLight ? '#F0F2F5' : colors.surface,
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: colors.isLight ? 'rgba(0,0,0,0.08)' : colors.border,
+    },
+    composerSideBtn: {
+      width: 40,
+      height: 44,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    composerEmojiBtn: {
+      width: 36,
+      height: 40,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    inputPill: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'flex-end',
+      minHeight: 44,
+      maxHeight: 120,
+      borderRadius: 24,
+      backgroundColor: colors.isLight ? '#FFFFFF' : colors.surfaceAlt,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.isLight ? 'rgba(0,0,0,0.08)' : colors.border,
+      paddingLeft: 2,
+      paddingRight: 4,
+      paddingVertical: 2,
+      minWidth: 0,
     },
     searchNoResults: { color: colors.textMuted, fontSize: font.small, paddingTop: 6, paddingBottom: 2 },
     jumpLatest: {
@@ -3998,26 +4280,94 @@ const makeStyles = (colors: Palette) =>
     input: {
       flex: 1,
       color: colors.text,
-      backgroundColor: colors.surfaceAlt,
-      borderRadius: 20,
-      paddingHorizontal: 14,
-      paddingTop: Platform.OS === 'ios' ? 9 : 6,
-      paddingBottom: Platform.OS === 'ios' ? 9 : 6,
-      marginHorizontal: 6,
+      backgroundColor: 'transparent',
+      paddingHorizontal: 4,
+      paddingTop: Platform.OS === 'ios' ? 10 : 8,
+      paddingBottom: Platform.OS === 'ios' ? 10 : 8,
       maxHeight: 110,
+      minHeight: 40,
       fontSize: font.body,
       lineHeight: 20,
+      minWidth: 0,
     },
     sendBtn: {
-      width: 42,
-      height: 42,
-      borderRadius: 21,
+      width: 44,
+      height: 44,
+      borderRadius: 22,
       backgroundColor: colors.primary,
       alignItems: 'center',
       justifyContent: 'center',
+      marginLeft: 2,
     },
     sendBtnPressed: { transform: [{ scale: 0.94 }], opacity: 0.9 },
     recordingComposer: { alignItems: 'center', paddingHorizontal: 14, minHeight: 48 },
+    deleteBackdrop: {
+      flex: 1,
+      backgroundColor: 'rgba(0,0,0,0.5)',
+      justifyContent: 'center',
+      paddingHorizontal: 28,
+    },
+    deleteCard: {
+      backgroundColor: colors.surface,
+      borderRadius: 16,
+      paddingTop: 20,
+      paddingBottom: 8,
+      paddingHorizontal: 8,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+    },
+    deleteTitle: {
+      color: colors.text,
+      fontSize: 18,
+      fontWeight: '700',
+      paddingHorizontal: 16,
+      marginBottom: 8,
+      letterSpacing: -0.2,
+    },
+    deleteBody: {
+      color: colors.textMuted,
+      fontSize: font.body,
+      paddingHorizontal: 16,
+      marginBottom: 12,
+      lineHeight: 21,
+    },
+    deleteCheckRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      gap: 12,
+      minHeight: 48,
+    },
+    deleteCheckLabel: {
+      flex: 1,
+      color: colors.text,
+      fontSize: font.body,
+      fontWeight: '500',
+      minWidth: 0,
+    },
+    deleteRadioRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      gap: 12,
+      minHeight: 52,
+    },
+    deleteRadioText: { flex: 1, minWidth: 0 },
+    deleteRadioLabel: { color: colors.text, fontSize: font.body, fontWeight: '600' },
+    deleteRadioHint: { color: colors.textMuted, fontSize: font.small, marginTop: 2, lineHeight: 17 },
+    deleteActions: {
+      flexDirection: 'row',
+      justifyContent: 'flex-end',
+      paddingTop: 8,
+      paddingBottom: 4,
+      paddingHorizontal: 8,
+      gap: 4,
+    },
+    deleteBtn: { paddingHorizontal: 16, paddingVertical: 12, minHeight: 44, justifyContent: 'center' },
+    deleteBtnCancel: { color: colors.textMuted, fontSize: 15, fontWeight: '600' },
+    deleteBtnGo: { color: colors.danger, fontSize: 15, fontWeight: '700' },
     recordingPill: { flex: 1, flexDirection: 'row', alignItems: 'center', marginHorizontal: 10 },
     recDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: colors.danger, marginRight: 8 },
     recText: { color: colors.textMuted, fontSize: font.small, fontWeight: '600' },
@@ -4072,6 +4422,13 @@ const makeStyles = (colors: Palette) =>
       color: colors.text, fontSize: font.body, backgroundColor: colors.surfaceAlt,
       borderRadius: radius.md, paddingHorizontal: 12, paddingVertical: 10, marginTop: 8,
       minHeight: 44, maxHeight: 100,
+    },
+    composerTray: {
+      width: '100%',
+      backgroundColor: colors.isLight ? '#F0F2F5' : colors.surface,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: colors.isLight ? 'rgba(0,0,0,0.08)' : colors.border,
+      overflow: 'hidden',
     },
     traySwitch: {
       flexDirection: 'row',

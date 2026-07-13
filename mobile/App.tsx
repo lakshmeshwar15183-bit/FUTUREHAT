@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, Platform, StyleSheet, Text, View } from 'react-native';
 import * as Linking from 'expo-linking';
-import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaProvider, useSafeAreaInsets, initialWindowMetrics } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { NavigationContainer, DefaultTheme, useNavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -496,7 +496,11 @@ export default function App() {
   return (
     <ErrorBoundary label="App">
       <GestureHandlerRootView style={{ flex: 1 }}>
-        <SafeAreaProvider>
+        {/* initialWindowMetrics: first paint already has correct system bar
+            insets (3-button / gesture / cutout) so content never flashes under
+            the nav bar before the provider measures. Live updates still flow
+            when the user changes navigation mode. */}
+        <SafeAreaProvider initialMetrics={initialWindowMetrics}>
           {/* Premium outside Theme so theme gates update instantly on purchase. */}
           <PremiumProvider>
             <ThemeProvider>

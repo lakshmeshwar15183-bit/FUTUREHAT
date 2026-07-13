@@ -10,6 +10,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import Animated, { FadeIn, SlideInDown, SlideOutDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { sheetBottomPad } from '../lib/safeLayout';
 
 import type { ConversationSummary } from '../lib/shared';
 import { useColors, radius, type Palette } from '../theme';
@@ -126,7 +127,7 @@ export default function ForwardSheet({ visible, onClose, conversations, onConfir
         <Animated.View
           entering={SlideInDown.springify().damping(18).stiffness(180)}
           exiting={SlideOutDown.duration(180)}
-          style={[styles.sheet, { paddingBottom: insets.bottom + 12 }]}
+          style={[styles.sheet, { paddingBottom: sheetBottomPad(insets, 12) }]}
         >
           <View style={styles.handle} />
           {/* Header */}

@@ -7,11 +7,11 @@ import React, { useCallback, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
-  View,
+  View
 } from 'react-native';
+import SafeScrollView from '../../ui/SafeScrollView';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -100,7 +100,7 @@ export default function AdminUserDetailScreen() {
 
   return (
     <>
-      <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: spacing(10) }}>
+      <SafeScrollView style={styles.container} contentContainerStyle={{ paddingBottom: spacing(10) }}>
         {/* Header */}
         <View style={styles.head}>
           <Avatar uri={u.avatar_url} name={u.display_name ?? u.username} size={60} />
@@ -237,7 +237,7 @@ export default function AdminUserDetailScreen() {
             ))}
           </Group>
         )}
-      </ScrollView>
+      </SafeScrollView>
 
       {/* Prompt modals for the reason/duration inputs */}
       <InputModal

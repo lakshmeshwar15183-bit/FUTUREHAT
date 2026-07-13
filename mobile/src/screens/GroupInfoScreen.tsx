@@ -7,14 +7,15 @@ import {
   Image,
   Modal,
   Pressable,
-  ScrollView,
   Share,
   StyleSheet,
   Switch,
   Text,
   TextInput,
+  ScrollView,
   View,
 } from 'react-native';
+import SafeScrollView from '../ui/SafeScrollView';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -553,7 +554,7 @@ export default function GroupInfoScreen() {
 
   return (
     <View style={styles.container}>
-      <ScrollView showsVerticalScrollIndicator={false}>
+      <SafeScrollView showsVerticalScrollIndicator={false}>
         {/* Header */}
         <View style={styles.groupHeader}>
           <View>
@@ -873,7 +874,7 @@ export default function GroupInfoScreen() {
         </View>
 
         <View style={{ height: spacing(10) }} />
-      </ScrollView>
+      </SafeScrollView>
 
       {busy && (
         <View style={styles.busyOverlay}>
@@ -1047,7 +1048,7 @@ export default function GroupInfoScreen() {
             <Text style={styles.modalTitle}>Group permissions</Text>
             <View style={{ width: 26 }} />
           </View>
-          <ScrollView contentContainerStyle={{ padding: spacing(4) }}>
+          <SafeScrollView contentContainerStyle={{ padding: spacing(4) }}>
             <PermToggle
               label="Send messages"
               hint="Only admins can send messages"
@@ -1102,7 +1103,7 @@ export default function GroupInfoScreen() {
             <Text style={[styles.fieldLabel, { marginTop: 12 }]}>
               Edit group admins is restricted to the group owner only (promote / demote).
             </Text>
-          </ScrollView>
+          </SafeScrollView>
         </View>
       </Modal>
 

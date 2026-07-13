@@ -2,7 +2,8 @@
 // the next tier, milestone history, and the recent score-change ledger (Streak
 // History). Server-authoritative reads via get_streak(). Loading/empty/error.
 import React, { useCallback, useMemo, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import SafeScrollView from '../ui/SafeScrollView';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRoute, type RouteProp } from '@react-navigation/native';
 
@@ -67,7 +68,7 @@ export default function StreakDetailScreen() {
   }
 
   return (
-    <ScrollView style={styles.container}>
+    <SafeScrollView style={styles.container}>
       <View style={styles.hero}>
         <Text style={styles.heroEmoji} allowFontScaling={false}>{tier?.emoji ?? '🎏'}</Text>
         <Text style={styles.heroScore}>{score}</Text>
@@ -131,7 +132,7 @@ export default function StreakDetailScreen() {
         </View>
       )}
       <View style={{ height: spacing(8) }} />
-    </ScrollView>
+    </SafeScrollView>
   );
 }
 

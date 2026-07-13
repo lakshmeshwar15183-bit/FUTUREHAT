@@ -33,6 +33,7 @@ import Animated, {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useColors, motion, ease, radius as sysRadius, type Palette } from '../../theme';
+import { dialogVerticalPad, sheetBottomPad } from '../../lib/safeLayout';
 import { bindDialogHost } from './controller';
 import { ioniconFor, inferIcon } from './icons';
 import type {
@@ -263,7 +264,8 @@ export default function DialogHost() {
       <Animated.View
         style={[
           styles.sheet,
-          { paddingBottom: Math.max(insets.bottom, 10) + 6 },
+          // Live system nav inset (3-button / gesture / 2-button) + chrome.
+          { paddingBottom: sheetBottomPad(insets, 6) },
           sheetStyle,
         ]}
         pointerEvents={kind === 'sheet' && open ? 'auto' : 'none'}
@@ -328,7 +330,10 @@ export default function DialogHost() {
 
       {/* ── Alert / confirm card ─────────────────────────────────────────── */}
       {kind === 'alert' && alertOpts && (
-        <View style={styles.centerWrap} pointerEvents="box-none">
+        <View
+          style={[styles.centerWrap, dialogVerticalPad(insets)]}
+          pointerEvents="box-none"
+        >
           <Animated.View style={[styles.card, cardStyle]}>
             <AlertBody
               styles={styles}
@@ -344,7 +349,7 @@ export default function DialogHost() {
       {/* ── Prompt card ──────────────────────────────────────────────────── */}
       {kind === 'prompt' && promptOpts && (
         <KeyboardAvoidingView
-          style={styles.centerWrap}
+          style={[styles.centerWrap, dialogVerticalPad(insets)]}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           pointerEvents="box-none"
         >

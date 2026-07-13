@@ -6,6 +6,63 @@
   height: 100%;
 }
 
+/* Telegram-style delete dialog */
+.delete-dlg {
+  width: min(360px, 92vw);
+  padding: 20px 20px 14px;
+  border-radius: 14px;
+  background: var(--fh-panel, #202c33);
+  color: var(--fh-text, #e9edef);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+}
+.delete-dlg h3 {
+  margin: 0 0 8px;
+  font-size: 18px;
+  font-weight: 700;
+}
+.delete-dlg p {
+  margin: 0 0 14px;
+  font-size: 14px;
+  color: var(--fh-muted, #8696a0);
+  line-height: 1.4;
+}
+.delete-dlg-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  margin-bottom: 16px;
+  cursor: pointer;
+  user-select: none;
+}
+.delete-dlg-check input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--fh-accent, #00a884);
+}
+.delete-dlg-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.delete-dlg-actions button {
+  border: none;
+  background: transparent;
+  color: var(--fh-muted, #8696a0);
+  font-weight: 600;
+  font-size: 14px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.delete-dlg-actions button.danger {
+  color: #f15c6d;
+  font-weight: 700;
+}
+.delete-dlg-actions button:hover {
+  background: rgba(127, 127, 127, 0.12);
+}
+
 /* @mention picker above composer */
 .mention-menu {
   position: absolute;

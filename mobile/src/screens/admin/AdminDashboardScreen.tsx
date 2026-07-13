@@ -6,14 +6,15 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  FlatList,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
-  View,
+  ScrollView,
+  View
 } from 'react-native';
+import SafeFlatList from '../../ui/SafeFlatList';
+import SafeScrollView from '../../ui/SafeScrollView';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -186,7 +187,7 @@ export default function AdminDashboardScreen() {
       {error ? <Text style={styles.warn}>{error}</Text> : null}
 
       {tab === 'overview' && (
-        <ScrollView contentContainerStyle={styles.grid}>
+        <SafeScrollView contentContainerStyle={styles.grid}>
           {STAT_CARDS.map((c) => (
             <View key={String(c.key)} style={styles.stat}>
               <Text style={styles.statIcon}>{c.icon}</Text>
@@ -194,7 +195,7 @@ export default function AdminDashboardScreen() {
               <Text style={styles.statLabel}>{c.label}</Text>
             </View>
           ))}
-        </ScrollView>
+        </SafeScrollView>
       )}
 
       {tab === 'users' && <UsersTab isOwner={isOwner} colors={colors} styles={styles} />}
@@ -208,7 +209,7 @@ export default function AdminDashboardScreen() {
       {tab === 'streaks' && <StreakAuditTab colors={colors} styles={styles} />}
 
       {tab === 'reports' && (
-        <FlatList
+        <SafeFlatList
           data={reports}
           keyExtractor={(r) => r.report_id}
           ListEmptyComponent={<Text style={styles.empty}>No reports in queue.</Text>}
@@ -319,7 +320,7 @@ export default function AdminDashboardScreen() {
       )}
 
       {tab === 'tickets' && (
-        <FlatList
+        <SafeFlatList
           data={tickets}
           keyExtractor={(t) => t.id}
           ListEmptyComponent={<Text style={styles.empty}>No tickets.</Text>}
@@ -380,7 +381,7 @@ function UsersTab({ isOwner, colors, styles }: { isOwner: boolean; colors: Palet
         </Pressable>
       </View>
       {msg ? <Text style={styles.warn}>{msg}</Text> : null}
-      <FlatList
+      <SafeFlatList
         data={results}
         keyExtractor={(r) => r.id}
         contentContainerStyle={styles.listPad}
@@ -418,7 +419,7 @@ function CallsTab({ colors, styles }: { colors: Palette; styles: Styles }) {
     ['TURN calls', s.turn_calls], ['Avg duration', `${s.avg_duration_s}s`],
   ];
   return (
-    <ScrollView contentContainerStyle={{ paddingBottom: spacing(8) }}>
+    <SafeScrollView contentContainerStyle={{ paddingBottom: spacing(8) }}>
       <View style={styles.grid}>
         {cards.map(([l, v]) => <View key={l} style={styles.stat}><Text style={styles.statNum}>{String(v)}</Text><Text style={styles.statLabel}>{l}</Text></View>)}
       </View>
@@ -436,7 +437,7 @@ function CallsTab({ colors, styles }: { colors: Palette; styles: Styles }) {
           <Text style={styles.rowMeta}>{new Date(c.started_at).toLocaleString()}</Text>
         </View>
       ))}
-    </ScrollView>
+    </SafeScrollView>
   );
 }
 
@@ -475,7 +476,7 @@ function MessagesTab({ colors, styles }: { colors: Palette; styles: Styles }) {
     }
   }
   return (
-    <ScrollView contentContainerStyle={{ paddingBottom: spacing(8) }}>
+    <SafeScrollView contentContainerStyle={{ paddingBottom: spacing(8) }}>
       <View style={styles.grid}>
         {cards.map(([l, v]) => (
           <View key={l} style={styles.stat}>
@@ -536,7 +537,7 @@ function MessagesTab({ colors, styles }: { colors: Palette; styles: Styles }) {
           </View>
         </>
       )}
-    </ScrollView>
+    </SafeScrollView>
   );
 }
 
@@ -566,7 +567,7 @@ function SearchTab({ colors, styles }: { colors: Palette; styles: Styles }) {
       </View>
       {err ? <Text style={styles.warn}>{err}</Text> : null}
       {res && (
-        <ScrollView contentContainerStyle={styles.listPad}>
+        <SafeScrollView contentContainerStyle={styles.listPad}>
           <Text style={styles.subhead}>Users ({res.users.length})</Text>
           {res.users.map((u) => <View key={u.id} style={styles.compactRow}><Text style={styles.rowTitle}>{u.display_name || u.username}</Text><Text style={styles.rowMeta}>{u.email}</Text><Text style={styles.rowStatus}>{u.account_status}</Text></View>)}
           <Text style={styles.subhead}>Communities ({res.communities.length})</Text>
@@ -577,7 +578,7 @@ function SearchTab({ colors, styles }: { colors: Palette; styles: Styles }) {
           {res.messages.map((m) => <View key={m.id} style={styles.compactRow}><Text style={styles.rowBody} numberOfLines={1}>{m.content?.slice(0, 60) || `[${m.type}]`}</Text><MiniBtn label="Delete" danger onPress={() => confirmDelMsg(m.id)} colors={colors} /></View>)}
           <Text style={styles.subhead}>Reports ({res.reports.length})</Text>
           {res.reports.map((r) => <View key={r.id} style={styles.compactRow}><Text style={styles.tag}>{r.target_type}</Text><Text style={styles.rowBody}>{r.reason}</Text><Text style={styles.rowStatus}>{r.status}</Text></View>)}
-        </ScrollView>
+        </SafeScrollView>
       )}
     </View>
   );
@@ -622,14 +623,14 @@ function HealthTab({ colors, styles }: { colors: Palette; styles: Styles }) {
     ['Oldest queued scheduled', h?.oldest_pending_scheduled ? new Date(h.oldest_pending_scheduled).toLocaleString() : 'none'],
   ];
   return (
-    <ScrollView contentContainerStyle={styles.listPad}>
+    <SafeScrollView contentContainerStyle={styles.listPad}>
       {rows.map(([k, v]) => (
         <View key={k} style={styles.healthRow}>
           <Text style={styles.rowTitle}>{k}</Text>
           <Text style={[styles.healthVal, v === 'ok' && { color: colors.primary }, v === 'error' && { color: colors.danger }]}>{v}</Text>
         </View>
       ))}
-    </ScrollView>
+    </SafeScrollView>
   );
 }
 
@@ -645,7 +646,7 @@ function FlagsTab({ colors, styles }: { colors: Palette; styles: Styles }) {
     catch (e: any) { Alert.alert('Error', e.message); } finally { setBusy(null); }
   }
   return (
-    <ScrollView contentContainerStyle={styles.listPad}>
+    <SafeScrollView contentContainerStyle={styles.listPad}>
       <Text style={styles.hint}>Toggle features live for all clients — no app release required.</Text>
       {flags.map((f) => (
         <View key={f.key} style={styles.flagRow}>
@@ -655,7 +656,7 @@ function FlagsTab({ colors, styles }: { colors: Palette; styles: Styles }) {
           </Pressable>
         </View>
       ))}
-    </ScrollView>
+    </SafeScrollView>
   );
 }
 
@@ -703,7 +704,7 @@ function AppTab({ colors, styles }: { colors: Palette; styles: Styles }) {
     ]);
   }
   return (
-    <ScrollView contentContainerStyle={styles.listPad}>
+    <SafeScrollView contentContainerStyle={styles.listPad}>
       <Text style={styles.subhead}>Broadcast to all users</Text>
       <View style={styles.chipRow}>
         {KINDS.map((k) => (
@@ -740,7 +741,7 @@ function AppTab({ colors, styles }: { colors: Palette; styles: Styles }) {
           <Text style={styles.rowMeta}>{new Date(a.created_at).toLocaleDateString()}</Text>
         </View>
       ))}
-    </ScrollView>
+    </SafeScrollView>
   );
 }
 
@@ -751,7 +752,7 @@ function AuditTab({ colors, styles }: { colors: Palette; styles: Styles }) {
   useEffect(() => { adminAuditLog(supabase, 300).then(setRows).catch((e) => setErr(e.message)); }, []);
   if (err) return <Text style={styles.warn}>{err}</Text>;
   return (
-    <FlatList
+    <SafeFlatList
       data={rows}
       keyExtractor={(r) => r.id}
       contentContainerStyle={styles.listPad}
@@ -781,7 +782,7 @@ function StreakAuditTab({ colors, styles }: { colors: Palette; styles: Styles })
   if (!data) return <View style={styles.center}><ActivityIndicator color={colors.primary} /></View>;
   const kindLabel = (k: string) => k === 'diamond' ? '💎 Diamond' : k === 'hall_of_legends' ? '🏆 Hall of Legends' : '🛡 Mod milestone';
   return (
-    <ScrollView contentContainerStyle={styles.listPad}>
+    <SafeScrollView contentContainerStyle={styles.listPad}>
       <Text style={styles.subhead}>Milestones & rewards ({data.milestones.length})</Text>
       {data.milestones.length === 0 && <Text style={styles.empty}>None yet.</Text>}
       {data.milestones.map((m, i) => (
@@ -817,7 +818,7 @@ function StreakAuditTab({ colors, styles }: { colors: Palette; styles: Styles })
           </View>
         </View>
       ))}
-    </ScrollView>
+    </SafeScrollView>
   );
 }
 

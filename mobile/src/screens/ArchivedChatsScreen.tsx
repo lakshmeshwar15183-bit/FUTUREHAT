@@ -1,7 +1,8 @@
 // Lumixo mobile — Archived chats. Lists archived conversations with unarchive
 // and open. Standalone; backed by 0010 archived_conversations + accountApi.
 import React, { useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import SafeScrollView from '../ui/SafeScrollView';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
@@ -88,7 +89,7 @@ export default function ArchivedChatsScreen() {
   }
 
   return (
-    <ScrollView style={styles.container}>
+    <SafeScrollView style={styles.container}>
       <Text style={styles.subtitle}>Archived chats stay hidden from your main list. They reappear there when a new message arrives.</Text>
       {loading ? (
         <Text style={styles.empty}>Loading…</Text>
@@ -109,7 +110,7 @@ export default function ArchivedChatsScreen() {
           <Pressable onPress={() => unarchive(c.conversation.id)}><Text style={styles.unarchive}>Unarchive</Text></Pressable>
         </View>
       ))}
-    </ScrollView>
+    </SafeScrollView>
   );
 }
 

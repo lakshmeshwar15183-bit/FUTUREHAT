@@ -604,7 +604,7 @@ function AppInner() {
   function previewBody(conv: ConversationSummary): string {
     const m = conv.lastMessage;
     if (!m) return 'Tap to start chatting';
-    if (m.is_deleted) return 'This message was deleted';
+    if (m.is_deleted) return 'This message was removed by Lumixo.';
     // System notices (disappearing-messages on/off) show verbatim, no "You:" prefix.
     if (m.type === 'system') return m.content ?? '';
     if (m.type === 'image') return /\.gif(\?|#|$)/i.test(m.media_url ?? '') ? '🎞️ GIF' : '📷 Photo';

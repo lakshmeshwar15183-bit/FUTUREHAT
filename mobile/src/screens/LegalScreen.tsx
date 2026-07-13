@@ -1,7 +1,8 @@
 // Lumixo mobile — Legal center: Terms, Privacy Policy, Community Guidelines.
 // Original Lumixo content. Standalone.
 import React, { useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import SafeScrollView from '../ui/SafeScrollView';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import { CREDIT, APP_VERSION, SUPPORT_EMAIL, GRIEVANCE_TEAM } from '../branding';
 
@@ -21,7 +22,7 @@ export default function LegalScreen() {
           </Pressable>
         ))}
       </View>
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: spacing(4) }}>
+      <SafeScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: spacing(4) }}>
         {tab === 'terms' && (
           <>
             <Text style={styles.h}>Terms of Service</Text>
@@ -96,7 +97,7 @@ export default function LegalScreen() {
           </>
         )}
         <Text style={styles.foot}>Lumixo v{APP_VERSION} · {CREDIT}</Text>
-      </ScrollView>
+      </SafeScrollView>
     </View>
   );
 }

@@ -2,7 +2,8 @@
 // Levels, Rewards, Penalties & demotions, Restrictions & anti-abuse, Moderator
 // selection). Data-driven so every page shares the Lumixo design language.
 import React, { useMemo } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
+import SafeScrollView from '../ui/SafeScrollView';
 import { useRoute, type RouteProp } from '@react-navigation/native';
 
 import { STREAK_TIERS } from '../lib/shared';
@@ -92,7 +93,7 @@ export default function StreakInfoScreen() {
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={{ padding: spacing(4), paddingBottom: spacing(10) }}>
+    <SafeScrollView style={styles.container} contentContainerStyle={{ padding: spacing(4), paddingBottom: spacing(10) }}>
       {page === 'levels' ? (
         <View>
           <Text style={styles.p}>Your tier is decided by your current score:</Text>
@@ -123,7 +124,7 @@ export default function StreakInfoScreen() {
           </View>
         ))
       )}
-    </ScrollView>
+    </SafeScrollView>
   );
 }
 

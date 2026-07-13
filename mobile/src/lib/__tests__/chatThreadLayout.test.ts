@@ -8,31 +8,58 @@ import {
   isInvertedAtLatest,
   shouldRepinToLatestOnComposerResize,
   composerHeightChanged,
+  composerTrayHeight,
   KEYBOARD_CLOSED_EPSILON_PX,
 } from '../chatThreadLayout';
 
-describe('threadColumnBottomPad', () => {
+describe('threadColumnBottomPad (manual / iOS)', () => {
   it('uses IME height only when keyboard is open (no double-count with inset)', () => {
-    expect(threadColumnBottomPad(320, 34)).toBe(320);
-    expect(threadColumnBottomPad(300, 0)).toBe(300);
+    expect(threadColumnBottomPad(320, 34, 'manual')).toBe(320);
+    expect(threadColumnBottomPad(300, 0, 'manual')).toBe(300);
   });
 
   it('uses safe-area only when keyboard is closed', () => {
-    expect(threadColumnBottomPad(0, 34)).toBe(34);
-    expect(threadColumnBottomPad(0, 0)).toBe(0);
+    expect(threadColumnBottomPad(0, 34, 'manual')).toBe(34);
+    expect(threadColumnBottomPad(0, 0, 'manual')).toBe(0);
   });
 
   it('treats residual IME noise as closed', () => {
-    expect(threadColumnBottomPad(KEYBOARD_CLOSED_EPSILON_PX, 34)).toBe(34);
-    expect(threadColumnBottomPad(1, 20)).toBe(20);
+    expect(threadColumnBottomPad(KEYBOARD_CLOSED_EPSILON_PX, 34, 'manual')).toBe(34);
+    expect(threadColumnBottomPad(1, 20, 'manual')).toBe(20);
   });
 
   it('never returns Math.max(ime, inset) while IME is clearly open', () => {
-    // Historical bug: Math.max(300, 34) is fine, but Math.max(40, 34) when 40
-    // is a partial IME + inset double-count left a phantom band.
-    const pad = threadColumnBottomPad(40, 34);
+    const pad = threadColumnBottomPad(40, 34, 'manual');
     expect(pad).toBe(40);
     expect(pad).not.toBe(40 + 34);
+  });
+});
+
+describe('threadColumnBottomPad (android-resize)', () => {
+  it('returns 0 when keyboard is open — OS already resized the window', () => {
+    // This is the critical fix for the huge blank gap above the composer.
+    expect(threadColumnBottomPad(320, 34, 'android-resize')).toBe(0);
+    expect(threadColumnBottomPad(280, 0, 'android-resize')).toBe(0);
+  });
+
+  it('uses safe-area only when keyboard is closed', () => {
+    expect(threadColumnBottomPad(0, 34, 'android-resize')).toBe(34);
+    expect(threadColumnBottomPad(0, 0, 'android-resize')).toBe(0);
+  });
+
+  it('treats residual IME noise as closed', () => {
+    expect(threadColumnBottomPad(1, 24, 'android-resize')).toBe(24);
+  });
+});
+
+describe('composerTrayHeight', () => {
+  it('matches last keyboard height within bounds', () => {
+    expect(composerTrayHeight(300, 800)).toBe(300);
+  });
+
+  it('falls back on tiny/zero keyboard height', () => {
+    const h = composerTrayHeight(0, 800);
+    expect(h).toBeGreaterThanOrEqual(240);
   });
 });
 
@@ -63,7 +90,6 @@ describe('isInvertedAtLatest', () => {
   });
 
   it('uses tight slack so a 100px gap is NOT “at latest”', () => {
-    // Old code used < 240 which allowed a large empty band.
     expect(isInvertedAtLatest(100)).toBe(false);
     expect(isInvertedAtLatest(10)).toBe(true);
     expect(isInvertedAtLatest(20)).toBe(false);
@@ -90,13 +116,13 @@ describe('source contract: ChatScreen must not reintroduce gap bugs', () => {
     'utf8',
   );
 
-  it('keyboard pad uses Keyboard events (no Reanimated root opacity bugs)', () => {
-    // Must not reintroduce Math.max(ime, inset) which leaves a blank band on OEMs.
+  it('uses threadColumnBottomPad with android-resize on Android', () => {
+    expect(src).toMatch(/threadColumnBottomPad/);
+    expect(src).toMatch(/android-resize/);
+    // Must not reintroduce Math.max(ime, inset).
     expect(src).not.toMatch(/Math\.max\(\s*keyboard\.height/);
-    // No Reanimated useAnimatedKeyboard on chat root (was translucent on OEMs).
     expect(src).not.toMatch(/useAnimatedKeyboard/);
     expect(src).toMatch(/keyboardDidShow|keyboardWillShow/);
-    expect(src).toMatch(/columnPadBottom|imePad/);
   });
 
   it('paints an opaque chat canvas (no Main tab bleed-through)', () => {
@@ -107,7 +133,7 @@ describe('source contract: ChatScreen must not reintroduce gap bugs', () => {
 
   it('uses white header chrome on green header', () => {
     expect(src).toMatch(/headerOnGreen/);
-    expect(src).toMatch(/headerTitle:.*#FFFFFF/);
+    expect(src).toMatch(/headerTitle:[\s\S]*?#FFFFFF/);
   });
 
   it('gives FlatList explicit flex:1 list style', () => {
@@ -126,7 +152,6 @@ describe('source contract: ChatScreen must not reintroduce gap bugs', () => {
   });
 
   it('never flexGrow:1 content container (inverted gap source)', () => {
-    // listContent may set flexGrow: 0 explicitly; must not be 1.
     expect(src).not.toMatch(/listContent:[^}]*flexGrow:\s*1/);
     expect(src).toMatch(/flexGrow:\s*0/);
   });

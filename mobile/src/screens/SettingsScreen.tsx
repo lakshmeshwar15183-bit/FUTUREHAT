@@ -6,17 +6,15 @@ import {
   LayoutAnimation,
   Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   UIManager,
-  View,
+  View
 } from 'react-native';
+import SafeScrollView from '../ui/SafeScrollView';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-
 import { supabase } from '../lib/supabase';
 import {
   getCurrentUser,
@@ -86,7 +84,6 @@ const ICON = {
 export default function SettingsScreen() {
   const navigation = useNavigation<Nav>();
   const colors = useColors();
-  const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const { isPremium: premium } = usePremium();
 
@@ -456,12 +453,16 @@ export default function SettingsScreen() {
     setQuery(t);
   }, []);
 
-  const footerPad = Math.max(spacing(10), insets.bottom + spacing(8));
+  // Tab root: tab bar already owns the system nav inset via tabBarSafeStyle.
+  // Only add content breathing room here — SafeScrollView with includeBottomInset
+  // would double-count and leave a large empty band above the tab bar.
+  const footerPad = spacing(10);
 
   return (
-    <ScrollView
+    <SafeScrollView
       style={styles.container}
       contentContainerStyle={{ paddingBottom: footerPad }}
+      includeBottomInset={false}
       keyboardShouldPersistTaps="handled"
       keyboardDismissMode="on-drag"
       showsVerticalScrollIndicator={false}
@@ -604,7 +605,7 @@ export default function SettingsScreen() {
           </Pressable>
         </View>
       )}
-    </ScrollView>
+    </SafeScrollView>
   );
 }
 

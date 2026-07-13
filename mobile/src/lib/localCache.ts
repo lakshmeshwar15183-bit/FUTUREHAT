@@ -172,6 +172,18 @@ export async function upsertCachedMessage(convId: string, message: Message): Pro
   });
 }
 
+/** Remove hard-deleted messages from the local thread cache (Telegram unsend). */
+export async function removeCachedMessages(convId: string, messageIds: string[]): Promise<void> {
+  if (!messageIds.length) return;
+  const drop = new Set(messageIds);
+  return withMsgCacheLock(convId, async () => {
+    const cur = await getCachedMessages(convId);
+    const next = cur.filter((m) => !drop.has(m.id));
+    if (next.length === cur.length) return;
+    await writeJSON(K.msgs(convId), next);
+  });
+}
+
 // ── Profiles ──────────────────────────────────────────────────────────────────
 
 export async function getCachedProfile(id: string): Promise<Profile | null> {

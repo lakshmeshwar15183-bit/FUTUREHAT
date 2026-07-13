@@ -3,12 +3,12 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
-  View,
+  View
 } from 'react-native';
+import SafeScrollView from '../ui/SafeScrollView';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { useNavigation } from '@react-navigation/native';
@@ -110,7 +110,7 @@ export default function EditProfileScreen() {
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={{ padding: spacing(5) }}>
+    <SafeScrollView style={styles.container} contentContainerStyle={{ padding: spacing(5) }}>
       <Pressable style={styles.avatarWrap} onPress={changeAvatar}>
         <Avatar uri={avatarUrl} name={displayName} size={110} />
         <View style={styles.cameraBadge}>
@@ -149,7 +149,7 @@ export default function EditProfileScreen() {
       <Pressable style={styles.saveBtn} onPress={save} disabled={saving}>
         {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveText}>Save</Text>}
       </Pressable>
-    </ScrollView>
+    </SafeScrollView>
   );
 }
 

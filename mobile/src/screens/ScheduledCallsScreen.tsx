@@ -4,14 +4,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  FlatList,
   Modal,
   Pressable,
   StyleSheet,
   Text,
   TextInput,
-  View,
+  View
 } from 'react-native';
+import SafeFlatList from '../ui/SafeFlatList';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 
@@ -22,9 +22,9 @@ import {
 } from '../lib/shared';
 import type { ScheduledCall, ConversationSummary, CallType } from '../lib/shared';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { fabBottom, sheetBottomPad } from '../lib/safeLayout';
 import Avatar from '../components/Avatar';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
-import { fabBottom } from '../lib/safeLayout';
 import { Alert } from '../ui/dialog';
 
 const PRESETS: { label: string; ms: number }[] = [
@@ -87,7 +87,7 @@ export default function ScheduledCallsScreen() {
 
   return (
     <View style={styles.container}>
-      <FlatList
+      <SafeFlatList
         data={rows}
         keyExtractor={(r) => r.id}
         contentContainerStyle={rows.length === 0 ? { flex: 1 } : { paddingVertical: spacing(2), paddingBottom: 96 }}
@@ -143,7 +143,7 @@ function ComposeModal({
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <Pressable style={styles.sheetBackdrop} onPress={onClose}>
         <Pressable
-          style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 12) + 16 }]}
+          style={[styles.sheet, { paddingBottom: sheetBottomPad(insets, 16) }]}
           onPress={(e) => e.stopPropagation()}
         >
           <Text style={styles.sheetTitle}>Schedule a call</Text>
@@ -153,7 +153,7 @@ function ComposeModal({
                 <Ionicons name="search" size={18} color={colors.textFaint} />
                 <TextInput style={styles.searchInput} value={q} onChangeText={setQ} placeholder="Choose a contact" placeholderTextColor={colors.textFaint} autoCapitalize="none" />
               </View>
-              <FlatList
+              <SafeFlatList
                 data={filtered}
                 keyExtractor={(c) => c.conversation.id}
                 style={{ maxHeight: 320 }}

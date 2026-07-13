@@ -4,7 +4,8 @@
 // Everyday streak +1 / tier / penalty events are silent (0032) — this screen
 // stays a clean, WhatsApp/Telegram-style inbox instead of a debug log.
 import React, { useCallback, useMemo, useState } from 'react';
-import { ActivityIndicator, FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import SafeFlatList from '../ui/SafeFlatList';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 
@@ -92,7 +93,7 @@ export default function MailboxScreen() {
   if (error) return <View style={styles.center}><Text style={styles.warn}>{error}</Text></View>;
 
   return (
-    <FlatList
+    <SafeFlatList
       style={styles.container}
       data={items}
       keyExtractor={(m) => m.id}

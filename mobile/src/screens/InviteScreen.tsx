@@ -2,7 +2,8 @@
 // link carries an optional ?ref=username. QR generation is deferred (needs a QR
 // lib). Standalone.
 import React, { useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import { Pressable, Share, StyleSheet, Text, View } from 'react-native';
+import SafeScrollView from '../ui/SafeScrollView';
 import * as Clipboard from 'expo-clipboard';
 
 import { supabase } from '../lib/supabase';
@@ -27,7 +28,7 @@ export default function InviteScreen() {
   function share() { Share.share({ message }); }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={{ padding: spacing(4) }}>
+    <SafeScrollView style={styles.container} contentContainerStyle={{ padding: spacing(4) }}>
       <Text style={styles.title}>Invite friends</Text>
       <Text style={styles.desc}>Share {APP_NAME} with the people you want to chat with.</Text>
 
@@ -36,7 +37,7 @@ export default function InviteScreen() {
       <Pressable style={styles.btn} onPress={share}><Text style={styles.btnText}>Invite through apps</Text></Pressable>
 
       <Text style={styles.note}>Anyone with this link can create an account and start chatting with you.</Text>
-    </ScrollView>
+    </SafeScrollView>
   );
 }
 

@@ -7,26 +7,49 @@
  *  - contentContainerStyle.paddingTop  → visual gap ABOVE the composer (near last msg)
  *  - contentContainerStyle.paddingBottom → visual gap at the TOP of the thread
  *  - Outer paddingBottom lifts list+composer for IME / home indicator together
+ *
+ * CRITICAL — Android gap bug:
+ *  With windowSoftInputMode=adjustResize the OS already shrinks the window by
+ *  the keyboard height. Adding keyboard height as paddingBottom AGAIN creates
+ *  a huge empty band between the last message and the composer. Use mode
+ *  `android-resize` so open-keyboard pad is 0 on Android.
  */
 
 /** Max residual IME height treated as “keyboard closed” (OEM noise). */
 export const KEYBOARD_CLOSED_EPSILON_PX = 2;
 
 /**
+ * How the host window interacts with the IME.
+ * - `manual` — iOS / adjustPan: pad by keyboard height when open.
+ * - `android-resize` — adjustResize: window already excludes IME; do not re-pad.
+ */
+export type KeyboardPadMode = 'manual' | 'android-resize';
+
+/**
  * Bottom padding for the thread column (list + composer).
- * - Keyboard open: pad by IME height only (covers home indicator).
- * - Keyboard closed: pad by safe-area inset only.
- * Never Math.max(ime, inset) while IME is open — that double-counts on some OEMs.
+ * - Keyboard closed: safe-area inset only.
+ * - Keyboard open (manual): IME height only (covers home indicator).
+ * - Keyboard open (android-resize): 0 — OS already resized the window.
+ * Never Math.max(ime, inset) while IME is open — double-counts on OEMs.
  */
 export function threadColumnBottomPad(
   keyboardHeight: number,
   safeAreaBottom: number,
+  mode: KeyboardPadMode = 'manual',
 ): number {
   // Callable from Reanimated UI worklets (ChatScreen keyboard pad). Pure math only.
   'worklet';
   const kb = Number.isFinite(keyboardHeight) ? Math.max(0, keyboardHeight) : 0;
   const inset = Number.isFinite(safeAreaBottom) ? Math.max(0, safeAreaBottom) : 0;
-  if (kb > KEYBOARD_CLOSED_EPSILON_PX) return kb;
+  const open = kb > KEYBOARD_CLOSED_EPSILON_PX;
+
+  if (mode === 'android-resize') {
+    // Window already excludes the keyboard. Extra pad = blank gap (the reported bug).
+    return open ? 0 : inset;
+  }
+
+  // iOS / pan: lift the whole column by the keyboard height.
+  if (open) return kb;
   return inset;
 }
 
@@ -82,4 +105,21 @@ export function composerHeightChanged(
   thresholdPx = 1,
 ): boolean {
   return Math.abs(prev - next) > thresholdPx;
+}
+
+/**
+ * Height for emoji/sticker tray so it matches the last keyboard height
+ * (WhatsApp: switching emoji ↔ keyboard does not jump).
+ */
+export function composerTrayHeight(
+  lastKeyboardHeight: number,
+  windowHeight: number,
+  fallbackFraction = 0.38,
+): number {
+  const fallback = Math.round(windowHeight * fallbackFraction);
+  const kb = Number.isFinite(lastKeyboardHeight) ? lastKeyboardHeight : 0;
+  if (kb < 180) return Math.max(240, fallback);
+  // Cap so small phones still show a few messages above the tray.
+  const max = Math.round(windowHeight * 0.5);
+  return Math.min(Math.max(kb, 240), max);
 }

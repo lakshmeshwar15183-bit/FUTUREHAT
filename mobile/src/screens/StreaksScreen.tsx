@@ -3,7 +3,8 @@
 // info pages, and Hall of Legends. Offline-first: hydrates from local cache, then
 // refreshes in the background. Loading / empty / error states included.
 import React, { useCallback, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import SafeScrollView from '../ui/SafeScrollView';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -76,7 +77,7 @@ export default function StreaksScreen() {
   const sorted = useMemo(() => [...items].sort((a, b) => b.score - a.score), [items]);
 
   return (
-    <ScrollView
+    <SafeScrollView
       style={styles.container}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} tintColor={colors.primary} />}
     >
@@ -151,7 +152,7 @@ export default function StreaksScreen() {
         </View>
       )}
       <View style={{ height: spacing(8) }} />
-    </ScrollView>
+    </SafeScrollView>
   );
 }
 

@@ -1,7 +1,8 @@
 // Lumixo mobile — view a user's profile. Shows avatar/name/username/about
 // and contextual actions (message / call, or edit when it's me).
 import React, { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Image, Linking, Modal, Pressable, ScrollView, Share, StyleSheet, Switch, Text, View } from 'react-native';
+import { ActivityIndicator, Image, Linking, Modal, Pressable, Share, StyleSheet, Switch, Text, View } from 'react-native';
+import SafeScrollView from '../ui/SafeScrollView';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -238,7 +239,7 @@ export default function ProfileScreen() {
   }
 
   return (
-    <ScrollView style={styles.container}>
+    <SafeScrollView style={styles.container}>
       <View style={styles.header}>
         <View>
           <ProfileAvatar
@@ -440,7 +441,7 @@ export default function ProfileScreen() {
           </Pressable>
         </Pressable>
       </Modal>
-    </ScrollView>
+    </SafeScrollView>
   );
 }
 

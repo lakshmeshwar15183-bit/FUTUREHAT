@@ -23,13 +23,14 @@ describe('messageDeletion', () => {
     );
   });
 
-  it('uses user unsend copy for user deletes', () => {
-    expect(deletedMessageLabel(userDel)).toBe('This message was deleted');
+  it('uses Lumixo unsend tombstone for user deletes', () => {
+    expect(deletedMessageLabel(userDel)).toBe('This message was removed by Lumixo.');
   });
 
   it('reply and list previews never leak original body', () => {
     expect(deletedReplyLabel(modDel)).toBe('Removed by Lumixo');
+    expect(deletedReplyLabel(userDel)).toBe('Original message unavailable');
     expect(deletedListPreview(modDel)).toBe('Message removed by Lumixo');
-    expect(deletedListPreview(userDel)).toBe('This message was deleted');
+    expect(deletedListPreview(userDel)).toBe('This message was removed by Lumixo.');
   });
 });

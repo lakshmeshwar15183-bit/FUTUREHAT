@@ -8,11 +8,11 @@ import {
   ActivityIndicator,
   Image,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
-  View,
+  View
 } from 'react-native';
+import SafeScrollView from '../ui/SafeScrollView';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -215,7 +215,7 @@ export default function AppearanceScreen() {
   const showUpsell = previewThemeLocked || previewWallLocked;
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={{ padding: spacing(4), paddingBottom: spacing(10) }}>
+    <SafeScrollView style={styles.container} contentContainerStyle={{ padding: spacing(4), paddingBottom: spacing(10) }}>
       {/* ── Live preview ─────────────────────────────────────────────────── */}
       <ChatPreview c={previewColors} wall={previewWallColor} bubble={bubblePref} />
       {showUpsell && (
@@ -428,7 +428,7 @@ export default function AppearanceScreen() {
           <ActivityIndicator color={colors.primary} />
         </View>
       )}
-    </ScrollView>
+    </SafeScrollView>
   );
 }
 

@@ -93,7 +93,7 @@ export interface Message {
   is_deleted: boolean;
   /**
    * Soft-delete provenance (0061).
-   * - `user` — sender unsend (“This message was deleted”)
+   * - `user` — sender unsend (“This message was removed by Lumixo.”)
    * - `moderation` — admin/moderator removal (“Removed by Lumixo…”)
    * Optional so pre-migration clients still type-check.
    */

@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { sheetBottomPad } from '../lib/safeLayout';
 
 import {
   STICKER_PACKS,
@@ -161,7 +162,7 @@ export default function StickerPicker({
         presentation === 'tray' && {
           height: trayHeight ?? Math.min(320, Math.round(winH * 0.42)),
         },
-        presentation === 'modal' && { paddingBottom: Math.max(insets.bottom, 8), maxHeight: '78%' },
+        presentation === 'modal' && { paddingBottom: sheetBottomPad(insets, 0), maxHeight: '78%' },
       ]}
     >
       {presentation === 'modal' && <View style={styles.handle} />}

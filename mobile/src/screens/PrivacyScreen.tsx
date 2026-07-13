@@ -3,7 +3,8 @@
 // contacts manager. Standalone screen; persists via privacyApi / supportApi.
 // Wire into RootStackParamList + SettingsScreen on recovery (see PHASE4 log).
 import React, { useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Switch, Text, View } from 'react-native';
+import SafeScrollView from '../ui/SafeScrollView';
 import { Ionicons } from '@expo/vector-icons';
 
 import { supabase } from '../lib/supabase';
@@ -93,7 +94,7 @@ export default function PrivacyScreen() {
   }
 
   return (
-    <ScrollView style={styles.container}>
+    <SafeScrollView style={styles.container}>
       <Text style={styles.sectionLabel}>WHO CAN SEE</Text>
       <View style={styles.group}>
         {p && VIS_ROWS.map((row) => {
@@ -196,7 +197,7 @@ export default function PrivacyScreen() {
         ))}
       </View>
       <View style={{ height: spacing(8) }} />
-    </ScrollView>
+    </SafeScrollView>
   );
 }
 

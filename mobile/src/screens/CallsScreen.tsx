@@ -32,6 +32,7 @@ import { useCalls } from '../calls/CallContext';
 import { getCache, setCache } from '../lib/localCache';
 import { formatListTimestamp } from '../lib/time';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { sheetBottomPad } from '../lib/safeLayout';
 import { useColors, spacing, radius, font, listPerf, type Palette } from '../theme';
 import Avatar from '../components/Avatar';
 import ProfileAvatar from '../components/ProfileAvatar';
@@ -321,7 +322,7 @@ function ContactPicker({
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
       <Pressable style={styles.sheetBackdrop} onPress={onClose}>
         <Pressable
-          style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 12) + 16 }]}
+          style={[styles.sheet, { paddingBottom: sheetBottomPad(insets, 16) }]}
           onPress={(e) => e.stopPropagation()}
         >
           <View style={styles.handle} />
