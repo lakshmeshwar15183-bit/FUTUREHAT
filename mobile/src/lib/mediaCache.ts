@@ -349,3 +349,62 @@ export async function clearMediaCache(): Promise<void> {
   } catch { /* ignore */ }
   dirReady = null;
 }
+
+/**
+ * Drop oldest permanent-cache entries until total size ≤ maxBytes.
+ * Never touches cloud / server objects — only local cache files.
+ */
+export async function pruneMediaCache(maxBytes: number): Promise<{ removed: number; bytes: number }> {
+  if (maxBytes <= 0) return { removed: 0, bytes: 0 };
+  const idx = await loadIndex();
+  const entries = Object.entries(idx).map(([k, e]) => ({ k, e }));
+  // Refresh sizes where missing
+  for (const { e } of entries) {
+    if (typeof e.size === 'number') continue;
+    try {
+      const info = await FileSystem.getInfoAsync(e.localUri);
+      if ((info as { size?: number }).size) e.size = (info as { size: number }).size;
+    } catch {
+      /* skip */
+    }
+  }
+  let total = entries.reduce((s, { e }) => s + (e.size ?? 0), 0);
+  if (total <= maxBytes) return { removed: 0, bytes: total };
+
+  entries.sort((a, b) => (a.e.at ?? 0) - (b.e.at ?? 0)); // oldest first
+  let removed = 0;
+  for (const { k, e } of entries) {
+    if (total <= maxBytes) break;
+    try {
+      await FileSystem.deleteAsync(e.localUri, { idempotent: true });
+    } catch {
+      /* ignore */
+    }
+    total -= e.size ?? 0;
+    delete idx[k];
+    mem.delete(k);
+    const mi = memOrder.indexOf(k);
+    if (mi >= 0) memOrder.splice(mi, 1);
+    removed += 1;
+  }
+  indexCache = idx;
+  try {
+    await AsyncStorage.setItem(INDEX_KEY, JSON.stringify(idx));
+  } catch {
+    /* ignore */
+  }
+  return { removed, bytes: Math.max(0, total) };
+}
+
+/**
+ * Prefetch only when explicitly allowed (auto-download policy).
+ * Unlike ensureMediaCached, this is opt-in — never call on full history hydrate.
+ */
+export async function prefetchMediaIfAllowed(
+  urls: Array<string | null | undefined>,
+  allowed: boolean,
+  concurrency = 2,
+): Promise<void> {
+  if (!allowed) return;
+  return prefetchMedia(urls, concurrency);
+}

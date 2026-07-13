@@ -14,7 +14,8 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View, type StyleProp, t
 import { Image, type ImageContentFit, type ImageStyle } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 
-import { useSignedUrl } from '../lib/useSignedUrl';
+import { useSignedUrl, type SignedUrlOptions } from '../lib/useSignedUrl';
+import type { MediaKind } from '../lib/mediaPolicy';
 
 interface Props {
   /** Stored media_url (public link, data URI, sticker, or local uri). */
@@ -38,6 +39,12 @@ interface Props {
    *  Set to 0 to disable. Default 12 s — long enough for slow 3G, short enough
    *  that the user isn't staring at a spinner forever. */
   stallTimeoutMs?: number;
+  /**
+   * Permanent disk cache. Default false (on-demand). Set true after user opens
+   * media, or pass kind for policy-based auto-download.
+   */
+  persist?: boolean;
+  kind?: MediaKind;
 }
 
 export default function SignedImage({
@@ -52,8 +59,11 @@ export default function SignedImage({
   showRetry = true,
   onNaturalSize,
   stallTimeoutMs = 12000,
+  persist = false,
+  kind,
 }: Props) {
-  const { url, loading: resolving, error: signError, retry: retrySign, fromCache } = useSignedUrl(source);
+  const opts: SignedUrlOptions = { persist, kind };
+  const { url, loading: resolving, error: signError, retry: retrySign, fromCache } = useSignedUrl(source, opts);
   // Local/offline hits should not flash a spinner — only network first-loads.
   const [decoding, setDecoding] = useState(!fromCache);
   const [decodeError, setDecodeError] = useState(false);

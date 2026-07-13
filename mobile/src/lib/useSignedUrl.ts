@@ -1,11 +1,12 @@
 // Lumixo mobile — resolve a stored media_url into a displayable uri.
-// Offline-first: permanent disk cache → signed network URL → download for next time.
 //
-// The `media` bucket is PRIVATE, so a public url returns 403. Flow:
-//   1) file:// / data:// / content:// → pass through (already local)
-//   2) permanent media cache hit → return local file:// (NO network)
-//   3) sign private path (if needed) and return signed https URL for display
-//   4) fire-and-forget download into permanent cache for next open
+// Offline-first for ALREADY-CACHED files. Full permanent download is OPT-IN:
+//   • persist: false (default) — never auto-write documentDirectory after reinstall
+//   • persist: true — used after user opens / plays / taps Download
+//   • autoPersistIfPolicyAllows — background cache only when Storage policy says so
+//
+// Display can still use a short-lived signed HTTPS URL (expo-image / AV) without
+// permanently caching the full blob.
 import { useCallback, useEffect, useState } from 'react';
 
 import { invalidateSignedMediaUrl, mediaPathFromUrl, signedMediaUrl } from './shared';
@@ -13,9 +14,27 @@ import { supabase } from './supabase';
 import {
   ensureMediaCached,
   getCachedMediaUri,
-  mediaCacheKey,
   peekCachedMediaUri,
 } from './mediaCache';
+import {
+  hydrateMediaStorageSettings,
+  shouldAutoDownload,
+  type MediaKind,
+} from './mediaPolicy';
+import { getNetworkClass, isRoamingLike } from './mediaNetwork';
+
+export interface SignedUrlOptions {
+  /**
+   * When true, download into permanent media cache after resolve.
+   * Default false — WhatsApp/Telegram on-demand (no reinstall flood).
+   */
+  persist?: boolean;
+  /**
+   * If set, call shouldAutoDownload(kind) and persist only when allowed.
+   * Ignored when persist is forced true.
+   */
+  kind?: MediaKind;
+}
 
 export interface SignedUrlState {
   /** Displayable uri (local file:// preferred, else signed https). */
@@ -27,8 +46,13 @@ export interface SignedUrlState {
   fromCache: boolean;
 }
 
-export function useSignedUrl(source: string | null | undefined): SignedUrlState {
-  // Seed from memory cache so the first paint can be local without waiting.
+export function useSignedUrl(
+  source: string | null | undefined,
+  options: SignedUrlOptions = {},
+): SignedUrlState {
+  const persist = options.persist === true;
+  const kind = options.kind;
+
   const mem = peekCachedMediaUri(source);
   const [url, setUrl] = useState<string | null>(mem);
   const [loading, setLoading] = useState(!mem && !!source);
@@ -54,11 +78,11 @@ export function useSignedUrl(source: string | null | undefined): SignedUrlState 
       return;
     }
 
-    // Already a local / inline asset.
     if (
       source.startsWith('file://') ||
       source.startsWith('data:') ||
-      source.startsWith('content://')
+      source.startsWith('content://') ||
+      source.startsWith('lumixo-sticker://')
     ) {
       setUrl(source);
       setLoading(false);
@@ -67,14 +91,12 @@ export function useSignedUrl(source: string | null | undefined): SignedUrlState 
       return;
     }
 
-    // Instant memory hit.
     const peek = peekCachedMediaUri(source);
     if (peek) {
       setUrl(peek);
       setLoading(false);
       setError(false);
       setFromCache(true);
-      // Still revalidate disk async (noop if present).
       void getCachedMediaUri(source);
       return;
     }
@@ -83,7 +105,10 @@ export function useSignedUrl(source: string | null | undefined): SignedUrlState 
     setError(false);
 
     (async () => {
-      // 1) Disk cache
+      await hydrateMediaStorageSettings();
+      if (!alive) return;
+
+      // 1) Disk cache only (no network if present)
       const local = await getCachedMediaUri(source);
       if (!alive) return;
       if (local) {
@@ -94,7 +119,7 @@ export function useSignedUrl(source: string | null | undefined): SignedUrlState 
         return;
       }
 
-      // 2) Network: sign if private media, else use source as-is (avatars, etc.)
+      // 2) Sign for display (metadata path) — does NOT permanent-cache by default
       const isPrivate = !!mediaPathFromUrl(source);
       let remote: string | null = source;
       if (isPrivate) {
@@ -114,13 +139,17 @@ export function useSignedUrl(source: string | null | undefined): SignedUrlState 
       setError(false);
       setFromCache(false);
 
-      // 3) Background: permanently cache so the next open is offline-instant.
-      void ensureMediaCached(source).then((cached) => {
-        if (!alive || !cached) return;
-        // Prefer local path once download completes (same session).
-        setUrl(cached);
-        setFromCache(true);
-      });
+      // 3) Permanent cache only when user/policy allows
+      const allowPersist =
+        persist ||
+        (kind != null && shouldAutoDownload(kind, getNetworkClass(), isRoamingLike()));
+      if (allowPersist) {
+        void ensureMediaCached(source).then((cached) => {
+          if (!alive || !cached) return;
+          setUrl(cached);
+          setFromCache(true);
+        });
+      }
     })().catch(() => {
       if (!alive) return;
       setUrl(null);
@@ -132,12 +161,11 @@ export function useSignedUrl(source: string | null | undefined): SignedUrlState 
     return () => {
       alive = false;
     };
-  }, [source, nonce]);
+  }, [source, nonce, persist, kind]);
 
   return { url, loading, error, retry, fromCache };
 }
 
-// Re-export helpers for callers that need them without a hook.
 export {
   mediaCacheKey,
   ensureMediaCached,
@@ -147,4 +175,6 @@ export {
   registerLocalMedia,
   clearMediaCache,
   getMediaCacheStats,
+  pruneMediaCache,
+  prefetchMediaIfAllowed,
 } from './mediaCache';

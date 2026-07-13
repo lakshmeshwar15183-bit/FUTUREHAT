@@ -76,7 +76,12 @@ export default function ChatSettingsScreen() {
             <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
           </Pressable>
           <View style={styles.row}>
-            <Text style={styles.rowLabel}>Auto-download media</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rowLabel}>Auto-download media</Text>
+              <Text style={{ color: colors.textFaint, fontSize: 12, marginTop: 2 }}>
+                Prefer Storage &amp; Data for Wi‑Fi / cellular rules. Off by default.
+              </Text>
+            </View>
             <Switch value={c.autoDownload} onValueChange={(v) => update({ autoDownload: v })} trackColor={{ true: colors.primary, false: colors.border }} />
           </View>
           <View style={[styles.row, styles.rowLast]}>

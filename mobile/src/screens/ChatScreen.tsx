@@ -142,7 +142,8 @@ import {
 import MessageBubble, { type TickStatus, replySummary } from '../components/MessageBubble';
 import SwipeToReply from '../components/SwipeToReply';
 import MediaViewer, { type ViewerItem } from '../components/MediaViewer';
-import { ensureMediaCached, prefetchMedia } from '../lib/mediaCache';
+import { ensureMediaCached } from '../lib/mediaCache';
+import { requestMediaDownload } from '../lib/mediaDownloadManager';
 import ForwardSheet, { type ForwardPreview } from '../components/ForwardSheet';
 import PollCard from '../components/PollCard';
 import ScheduleMessageModal from '../components/ScheduleMessageModal';
@@ -615,12 +616,8 @@ function ChatScreenInner() {
         setMsgs(() => mergeById(msgs, pend));
         setLoading(false);
         cacheMessages(conversationId, msgs).catch(() => {});
-        // Offline-first: permanently cache media already in the thread so opens
-        // are instant next time (and work fully offline).
-        void prefetchMedia(
-          msgs.filter((m) => m.media_url && !m.is_deleted).map((m) => m.media_url!),
-          3,
-        );
+        // Do NOT prefetch full media blobs on history sync (WhatsApp/Telegram).
+        // Only message metadata is kept; files download when the user opens them.
 
         const ids = msgs.map((m) => m.id);
         const [rx, rc] = await Promise.all([getReactions(supabase, ids), getReceipts(supabase, ids)]);
@@ -1369,12 +1366,12 @@ function ChatScreenInner() {
     await sendMedia(a.uri, a.name || `file_${Date.now()}`, 'file');
   }
 
-  /** Open a document attachment (cache → share sheet / OS open). */
+  /** Open a document attachment — download only when the user taps. */
   async function openDocument(msg: Message) {
     const url = msg.media_url;
     if (!url) return;
     try {
-      const local = await ensureMediaCached(url);
+      const local = (await requestMediaDownload(url)) ?? (await ensureMediaCached(url));
       const target = local ?? (await signedMediaUrl(supabase, url)) ?? url;
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(target, {

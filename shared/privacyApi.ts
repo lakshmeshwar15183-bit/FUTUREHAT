@@ -40,7 +40,9 @@ export const DEFAULT_PRIVACY: PrivacySettings = {
 
 export const DEFAULT_CHAT: ChatSettings = {
   enterToSend: true, fontSize: 'medium', mediaVisibility: true,
-  mediaUploadQuality: 'auto', autoDownload: true, voiceTranscripts: false,
+  // Default OFF — WhatsApp/Telegram-class: no mass auto-download after reinstall.
+  // Granular Wi‑Fi / cellular rules live in Storage & Data (mediaPolicy).
+  mediaUploadQuality: 'auto', autoDownload: false, voiceTranscripts: false,
 };
 
 function extraOf(prefs: any): Record<string, any> {

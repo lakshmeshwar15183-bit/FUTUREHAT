@@ -46,7 +46,8 @@ import type { MediaMeta } from '../lib/shared';
 import { signedMediaUrl } from '../lib/shared';
 import { supabase } from '../lib/supabase';
 import { useSignedUrl } from '../lib/useSignedUrl';
-import { ensureMediaCached, prefetchMedia } from '../lib/mediaCache';
+import { ensureMediaCached } from '../lib/mediaCache';
+import { requestMediaDownload } from '../lib/mediaDownloadManager';
 import { formatBytes } from '../media/qualityEstimate';
 import {
   isValidScale,
@@ -492,26 +493,24 @@ export default function MediaViewer({ items, index, onClose, onForward, onDelete
 
   const toggleChrome = useCallback(() => setChrome((v) => !v), []);
 
-  // Prefetch neighbours so swipe feels instant (WhatsApp parity).
+  // On open: permanently cache the CURRENT item only (user requested).
+  // Neighbours are not bulk-downloaded (saves storage after reinstall).
   useEffect(() => {
-    const urls: string[] = [];
-    for (let i = Math.max(0, current - 1); i <= Math.min(items.length - 1, current + 2); i++) {
-      if (items[i]?.url) urls.push(items[i].url);
-    }
-    void prefetchMedia(urls, 2);
+    const it = items[current];
+    if (it?.url) void requestMediaDownload(it.url);
   }, [current, items]);
 
   // Resolve the current item's signed url for file operations (download/share).
   const resolveUrl = useCallback(async (it: ViewerItem) => {
-    const cached = await ensureMediaCached(it.url);
+    const cached = await requestMediaDownload(it.url);
     if (cached) return cached;
     const signed = await signedMediaUrl(supabase, it.url);
     return signed ?? it.url;
   }, []);
 
-  // Prefer permanent offline cache; fall back to a one-shot download.
+  // Prefer permanent offline cache after user open; fall back to one-shot download.
   const downloadToCache = useCallback(async (it: ViewerItem): Promise<string> => {
-    const cached = await ensureMediaCached(it.url);
+    const cached = await requestMediaDownload(it.url);
     if (cached) return cached;
     const src = await resolveUrl(it);
     const clean = it.url.split('?')[0];

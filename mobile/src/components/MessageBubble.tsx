@@ -10,8 +10,8 @@ import { formatTime } from '../lib/time';
 import { isStickerUrl, resolveSticker } from '../lib/stickers';
 import { useColors, radius, font, type Palette } from '../theme';
 import AudioMessage from './AudioMessage';
-import SignedImage from './SignedImage';
 import StickerView from './StickerView';
+import ChatMediaTile from './ChatMediaTile';
 
 export type { TickStatus };
 
@@ -227,22 +227,21 @@ function MessageBubble({
               </Pressable>
             );
           }
+          const isGif = /\.gif(\?|#|$)/i.test(message.media_url ?? '');
           return (
             <>
-              <Pressable onPress={() => onOpenImage?.(message.media_url!)}>
-                <SignedImage
-                  source={message.media_url}
-                  containerStyle={styles.image}
-                  contentFit="cover"
-                  tint={colors.primary}
-                />
-                {isVO && (
-                  <View style={styles.viewOnceTag}>
-                    <Ionicons name="eye" size={12} color="#fff" />
-                    <Text style={styles.viewOnceText}>View once</Text>
-                  </View>
-                )}
-              </Pressable>
+              <ChatMediaTile
+                message={message}
+                kind={isGif ? 'gif' : 'image'}
+                onOpen={(u) => onOpenImage?.(u)}
+                tint={colors.primary}
+              />
+              {isVO && (
+                <View style={styles.viewOnceTag}>
+                  <Ionicons name="eye" size={12} color="#fff" />
+                  <Text style={styles.viewOnceText}>View once</Text>
+                </View>
+              )}
               {!!message.content?.trim() &&
                 renderHighlighted(message.content, highlight, [styles.text, { color: tint }], styles.highlightHit)}
             </>
@@ -258,13 +257,12 @@ function MessageBubble({
 
         {message.media_url && isVideoMessage(message) && (
           <>
-            <Pressable
-              onPress={() => onOpenImage?.(message.media_url!)}
-              style={styles.videoTile}
-            >
-              <Ionicons name="play-circle" size={48} color="#fff" />
-              <Text style={styles.videoLabel} numberOfLines={1}>Video</Text>
-            </Pressable>
+            <ChatMediaTile
+              message={message}
+              kind="video"
+              onOpen={(u) => onOpenImage?.(u)}
+              tint={colors.primary}
+            />
             {!!message.content?.trim() &&
               renderHighlighted(message.content, highlight, [styles.text, { color: tint }], styles.highlightHit)}
           </>
@@ -280,9 +278,17 @@ function MessageBubble({
             }
           >
             <Ionicons name="document-outline" size={28} color={tint} />
-            <Text style={[styles.fileName, { color: tint }]} numberOfLines={1}>
-              {message.content || 'Attachment'}
-            </Text>
+            <View style={{ flex: 1, marginLeft: 8 }}>
+              <Text style={[styles.fileName, { color: tint, marginLeft: 0 }]} numberOfLines={1}>
+                {message.content || 'Attachment'}
+              </Text>
+              <Text style={{ color: mine ? colors.bubbleOutMuted : colors.textFaint, fontSize: 11, marginTop: 2 }}>
+                {(() => {
+                  const ext = (message.content || message.media_url || '').split('.').pop()?.toUpperCase();
+                  return ext && ext.length <= 5 ? `${ext} · Tap to download` : 'Tap to download';
+                })()}
+              </Text>
+            </View>
             <Ionicons name="download-outline" size={18} color={tint} style={{ marginLeft: 6 }} />
           </Pressable>
         )}
