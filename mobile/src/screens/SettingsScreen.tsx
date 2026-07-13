@@ -17,6 +17,7 @@ import { useColors, spacing, radius, font, type Palette } from '../theme';
 import { APP_NAME, APP_VERSION, CREDIT } from '../branding';
 import { LumixoCat } from '../components/LumixoCat';
 import Avatar from '../components/Avatar';
+import ProfileAvatar from '../components/ProfileAvatar';
 import type { RootStackParamList } from '../navigation/types';
 import { Alert } from '../ui/dialog';
 
@@ -112,7 +113,13 @@ export default function SettingsScreen() {
         style={styles.profileRow}
         onPress={() => uid && navigation.navigate('Profile', { userId: uid })}
       >
-        <Avatar uri={profile?.avatar_url} name={profile?.display_name} size={56} />
+        <ProfileAvatar
+          uri={profile?.avatar_url}
+          name={profile?.display_name}
+          size={56}
+          userId={uid}
+          mode="choice"
+        />
         <View style={styles.profileBody}>
           <View style={styles.nameRow}>
             <Text style={styles.profileName} numberOfLines={1}>{profile?.display_name ?? 'Your name'}</Text>

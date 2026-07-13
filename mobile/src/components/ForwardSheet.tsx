@@ -14,6 +14,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { ConversationSummary } from '../lib/shared';
 import { useColors, radius, type Palette } from '../theme';
 import Avatar from './Avatar';
+import ProfileAvatar from './ProfileAvatar';
 import SignedImage from './SignedImage';
 
 const SHEET_RADIUS = 20;
@@ -90,7 +91,17 @@ export default function ForwardSheet({ visible, onClose, conversations, onConfir
     const on = selected.has(id);
     return (
       <Pressable style={styles.row} onPress={() => toggle(id)}>
-        <Avatar uri={item.avatarUrl} name={item.title} size={44} />
+        <ProfileAvatar
+          uri={item.avatarUrl}
+          name={item.title}
+          size={44}
+          userId={
+            item.conversation.type === 'direct'
+              ? item.participants.find((p) => p.id)?.id ?? null
+              : null
+          }
+          mode="auto"
+        />
         <View style={styles.rowText}>
           <Text style={styles.rowTitle} numberOfLines={1}>{item.title}</Text>
           <Text style={styles.rowSub} numberOfLines={1}>

@@ -34,6 +34,7 @@ import { formatListTimestamp } from '../lib/time';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors, spacing, radius, font, listPerf, type Palette } from '../theme';
 import Avatar from '../components/Avatar';
+import ProfileAvatar from '../components/ProfileAvatar';
 import { LumixoCat } from '../components/LumixoCat';
 import type { RootStackParamList } from '../navigation/types';
 import { Alert, showSheet } from '../ui/dialog';
@@ -223,7 +224,7 @@ export default function CallsScreen() {
             style={{ marginRight: spacing(2) }}
           />
         )}
-        <Avatar uri={g.peer_avatar} name={g.title} size={48} />
+        <ProfileAvatar uri={g.peer_avatar} name={g.title} size={48} userId={g.peer_id} mode="auto" />
         <View style={styles.body}>
           <Text style={[styles.name, missed && { color: colors.danger }]} numberOfLines={1}>
             {g.title}{g.count > 1 ? ` (${g.count})` : ''}
@@ -336,7 +337,17 @@ function ContactPicker({
             ListEmptyComponent={<Text style={styles.emptySub}>No contacts to call yet.</Text>}
             renderItem={({ item: c }) => (
               <View style={styles.pickRow}>
-                <Avatar uri={c.avatarUrl} name={c.title} size={42} />
+                <ProfileAvatar
+                  uri={c.avatarUrl}
+                  name={c.title}
+                  size={42}
+                  userId={
+                    c.conversation.type === 'direct'
+                      ? c.participants.find((p) => p.id)?.id ?? null
+                      : null
+                  }
+                  mode="auto"
+                />
                 <Text style={styles.pickName} numberOfLines={1}>{c.title}</Text>
                 <Pressable hitSlop={8} onPress={() => onCall(c, 'audio')}><Ionicons name="call" size={22} color={colors.primary} /></Pressable>
                 <Pressable hitSlop={8} onPress={() => onCall(c, 'video')} style={{ marginLeft: spacing(4) }}><Ionicons name="videocam" size={22} color={colors.primary} /></Pressable>

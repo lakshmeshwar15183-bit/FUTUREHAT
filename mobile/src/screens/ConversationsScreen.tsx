@@ -74,6 +74,7 @@ import { formatListTimestamp } from '../lib/time';
 import { useColors, spacing, radius, font, listPerf, animateLayoutSoft, type Palette } from '../theme';
 import { usePremium } from '../premium';
 import Avatar from '../components/Avatar';
+import ProfileAvatar from '../components/ProfileAvatar';
 import StatusStrip from '../components/status/StatusStrip';
 import { useChatLock } from '../security/ChatLock';
 import type { RootStackParamList } from '../navigation/types';
@@ -115,8 +116,18 @@ const ALL_CHIP_LABELS: Record<ChatFilter, string> = {
 function lastPreviewBody(c: ConversationSummary): string {
   const m = c.lastMessage;
   if (!m) return 'Tap to start chatting';
-  if (m.is_deleted) return 'This message was deleted';
-  if (m.type === 'system') return m.content ?? '';
+  if (m.is_deleted) {
+    // Prefer moderation/user tombstone labels when deleted_kind is present.
+    if ((m as { deleted_kind?: string }).deleted_kind === 'moderation') {
+      return 'Message removed by Lumixo';
+    }
+    return 'This message was deleted';
+  }
+  if (m.type === 'system') {
+    const raw = m.content ?? '';
+    // Strip internal call UUID tags from list previews (chat bubble already does this).
+    return raw.replace(/\s*\[call:[0-9a-f-]{36}\]\s*$/i, '').trim() || raw;
+  }
   if (m.type === 'image') return /\.gif(\?|#|$)/i.test(m.media_url ?? '') ? '🎞️ GIF' : '📷 Photo';
   if (m.type === 'audio') return '🎤 Voice message';
   if (m.type === 'video' || isVideoMessage(m)) return '🎥 Video';
@@ -219,6 +230,10 @@ const ChatRow = React.memo(function ChatRow({
   const isGroup = item.conversation.type === 'group';
   const disappearing = (item.conversation.disappear_seconds ?? 0) > 0;
   const mine = lastPreviewMine(item, uid);
+  // DM peer id for status rings — groups open group photo only.
+  const peerUserId = !isGroup
+    ? item.participants.find((p) => p.id && p.id !== uid)?.id ?? null
+    : null;
 
   return (
     <Pressable
@@ -228,7 +243,17 @@ const ChatRow = React.memo(function ChatRow({
       delayLongPress={280}
     >
       <View>
-        <Avatar uri={item.avatarUrl} name={item.title} size={48} />
+        {selectionMode ? (
+          <Avatar uri={item.avatarUrl} name={item.title} size={48} />
+        ) : (
+          <ProfileAvatar
+            uri={item.avatarUrl}
+            name={item.title}
+            size={48}
+            userId={peerUserId}
+            mode="auto"
+          />
+        )}
         {peerOnline && !selected && <View style={styles.onlineDot} />}
         {disappearing && !selected && (
           <View style={styles.disappearBadge}>
@@ -1354,7 +1379,17 @@ export default function ConversationsScreen() {
                         navigation.navigate('Chat', { conversationId: h.conversationId, title: conv.title });
                       }}
                     >
-                      <Avatar uri={conv.avatarUrl} name={conv.title} size={38} />
+                      <ProfileAvatar
+                        uri={conv.avatarUrl}
+                        name={conv.title}
+                        size={38}
+                        userId={
+                          conv.conversation.type === 'direct'
+                            ? conv.participants.find((p) => p.id && p.id !== uid)?.id ?? null
+                            : null
+                        }
+                        mode="auto"
+                      />
                       <View style={styles.hitBody}>
                         <Text style={styles.hitTitle} numberOfLines={1}>{conv.title}</Text>
                         <Text style={styles.hitSnippet} numberOfLines={1}>{h.message.content}</Text>

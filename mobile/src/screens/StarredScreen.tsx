@@ -14,6 +14,7 @@ import type { StarredMessage } from '../lib/shared';
 import { getCache, setCache } from '../lib/localCache';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import Avatar from '../components/Avatar';
+import ProfileAvatar from '../components/ProfileAvatar';
 import { LumixoCat } from '../components/LumixoCat';
 import type { RootStackParamList } from '../navigation/types';
 
@@ -91,7 +92,13 @@ export default function StarredScreen() {
             })
           }
         >
-          <Avatar uri={item.sender_avatar} name={item.sender_name} size={42} />
+          <ProfileAvatar
+            uri={item.sender_avatar}
+            name={item.sender_name}
+            size={42}
+            userId={item.sender_id}
+            mode="auto"
+          />
           <View style={styles.body}>
             <View style={styles.head}>
               <Text style={styles.chat} numberOfLines={1}>{item.conversation_title ?? item.sender_name ?? 'Conversation'}</Text>

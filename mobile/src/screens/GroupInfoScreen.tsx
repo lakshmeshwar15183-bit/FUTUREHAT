@@ -22,6 +22,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as Clipboard from 'expo-clipboard';
 
 import { supabase } from '../lib/supabase';
+import ProfileAvatar from '../components/ProfileAvatar';
 import {
   getGroupConversation,
   getGroupMembers,
@@ -538,18 +539,25 @@ export default function GroupInfoScreen() {
       <ScrollView showsVerticalScrollIndicator={false}>
         {/* Header */}
         <View style={styles.groupHeader}>
-          <Pressable onPress={changePhoto} disabled={busy || !canEdit}>
-            <Avatar
+          <View>
+            <ProfileAvatar
               uri={conversation.avatar_url}
               name={conversation.name}
               size={96}
+              mode="photo"
             />
             {canEdit && (
-              <View style={styles.cameraBadge}>
+              <Pressable
+                style={styles.cameraBadge}
+                onPress={changePhoto}
+                disabled={busy}
+                accessibilityRole="button"
+                accessibilityLabel="Change group photo"
+              >
                 <Ionicons name="camera" size={16} color="#fff" />
-              </View>
+              </Pressable>
             )}
-          </Pressable>
+          </View>
           <Text style={styles.groupName}>{conversation.name}</Text>
           <Text style={styles.memberCount}>
             Group · {members.length} {members.length === 1 ? 'member' : 'members'}
@@ -664,10 +672,12 @@ export default function GroupInfoScreen() {
               onPress={() => openMemberMenu(m)}
               onLongPress={() => openMemberMenu(m)}
             >
-              <Avatar
+              <ProfileAvatar
                 uri={m.profile.avatar_url}
                 name={m.profile.display_name || m.profile.username || 'Contact'}
                 size={44}
+                userId={m.userId}
+                mode="auto"
               />
               <View style={styles.memberInfo}>
                 <Text style={styles.memberName}>
@@ -1149,7 +1159,13 @@ export default function GroupInfoScreen() {
             keyExtractor={(m) => m.userId}
             renderItem={({ item }) => (
               <Pressable style={styles.memberRow} onPress={() => openMemberMenu(item)}>
-                <Avatar uri={item.profile.avatar_url} name={item.profile.display_name} size={44} />
+                <ProfileAvatar
+                  uri={item.profile.avatar_url}
+                  name={item.profile.display_name}
+                  size={44}
+                  userId={item.userId}
+                  mode="auto"
+                />
                 <Text style={[styles.memberName, { marginLeft: 12 }]}>
                   {item.profile.display_name || 'User'}
                 </Text>

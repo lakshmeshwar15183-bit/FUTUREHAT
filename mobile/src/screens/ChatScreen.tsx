@@ -20,6 +20,7 @@ import {
   View,
 } from 'react-native';
 import * as Sharing from 'expo-sharing';
+import { Image } from 'expo-image';
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -129,6 +130,8 @@ import {
 import { flushOutbox, onOutboxSent, onOutboxDeadLetter, queueAction } from '../lib/sync';
 import { guessMime } from '../lib/media';
 import { registerMediaHandler, type MediaSubmission } from '../media/mediaSendBridge';
+import { resolvePickedUri } from '../media/resolveLocalMedia';
+import type { PickedAsset } from './MediaPickerScreen';
 import { formatLastSeen, formatDaySeparator, formatTime } from '../lib/time';
 import { useColors, useTheme, spacing, radius, font, listPerf, motion, type Palette } from '../theme';
 import { usePremium } from '../premium';
@@ -149,6 +152,7 @@ import PollCard from '../components/PollCard';
 import ScheduleMessageModal from '../components/ScheduleMessageModal';
 import ErrorBoundary from '../components/ErrorBoundary';
 import Avatar from '../components/Avatar';
+import ProfileAvatar from '../components/ProfileAvatar';
 import {
   pushRecentSticker,
   stickerMediaMeta,
@@ -403,6 +407,11 @@ function ChatScreenInner() {
   const [sending, setSending] = useState(false);
   // Whether pressing Return sends the message (WhatsApp-style), from Chat settings.
   const [enterToSend, setEnterToSend] = useState(true);
+  /** Double-tap reaction (Chat settings · default ❤️). */
+  const [defaultReaction, setDefaultReaction] = useState('❤️');
+  /** Brief highlight after jump-to-quoted-message (search + reply tap). */
+  const [flashId, setFlashId] = useState<string | null>(null);
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Floating "jump to latest" button appears once the user scrolls up an inverted list.
   const [atBottom, setAtBottom] = useState(true);
   // Ref mirror so the keyboard-show listener can read "am I at the bottom?" at
@@ -936,7 +945,7 @@ function ChatScreenInner() {
             onPress={exitSelection}
             accessibilityLabel="Cancel selection"
           >
-            <Ionicons name="close" size={24} color={colors.text} />
+            <Ionicons name="close" size={24} color={headerOnGreen} />
           </Pressable>
         ),
         headerRight: () => (
@@ -950,7 +959,7 @@ function ChatScreenInner() {
                     accessibilityLabel="Message info"
                     style={{ marginLeft: 4 }}
                   >
-                    <Ionicons name="information-circle-outline" size={23} color={colors.text} />
+                    <Ionicons name="information-circle-outline" size={23} color={headerOnGreen} />
                   </Pressable>
                 )}
                 <Pressable
@@ -964,32 +973,73 @@ function ChatScreenInner() {
               </>
             ) : (
               <>
-                <Pressable hitSlop={8} onPress={copySelected} accessibilityLabel="Copy">
-                  <Ionicons name="copy-outline" size={21} color={colors.text} />
+                {single && !single.is_deleted && (
+                  <Pressable
+                    hitSlop={8}
+                    onPress={() => {
+                      setEditing(null);
+                      setReply(single);
+                      exitSelection();
+                    }}
+                    accessibilityLabel="Reply"
+                  >
+                    <Ionicons name="arrow-undo-outline" size={22} color={headerOnGreen} />
+                  </Pressable>
+                )}
+                <Pressable
+                  hitSlop={8}
+                  onPress={copySelected}
+                  accessibilityLabel="Copy"
+                  style={{ marginLeft: 14 }}
+                >
+                  <Ionicons name="copy-outline" size={21} color={headerOnGreen} />
                 </Pressable>
                 <Pressable
                   hitSlop={8}
                   onPress={forwardSelectedMany}
                   accessibilityLabel="Forward"
-                  style={{ marginLeft: 18 }}
+                  style={{ marginLeft: 14 }}
                 >
-                  <Ionicons name="arrow-redo-outline" size={22} color={colors.text} />
+                  <Ionicons name="arrow-redo-outline" size={22} color={headerOnGreen} />
+                </Pressable>
+                <Pressable
+                  hitSlop={8}
+                  onPress={starSelectedMany}
+                  accessibilityLabel="Star"
+                  style={{ marginLeft: 14 }}
+                >
+                  <Ionicons name="star-outline" size={21} color={headerOnGreen} />
                 </Pressable>
                 {single && (
                   <Pressable
                     hitSlop={8}
                     onPress={() => showInfoForMessage(single)}
                     accessibilityLabel="Message info"
-                    style={{ marginLeft: 18 }}
+                    style={{ marginLeft: 14 }}
                   >
-                    <Ionicons name="information-circle-outline" size={23} color={colors.text} />
+                    <Ionicons name="information-circle-outline" size={23} color={headerOnGreen} />
+                  </Pressable>
+                )}
+                {single && !single.is_deleted && (
+                  <Pressable
+                    hitSlop={8}
+                    onPress={() => {
+                      // Open full single-message menu (React, Edit, Report…).
+                      const t = single;
+                      exitSelection();
+                      requestAnimationFrame(() => setSelected(t));
+                    }}
+                    accessibilityLabel="More"
+                    style={{ marginLeft: 14 }}
+                  >
+                    <Ionicons name="ellipsis-vertical" size={20} color={headerOnGreen} />
                   </Pressable>
                 )}
                 <Pressable
                   hitSlop={8}
                   onPress={() => deleteMany([...selectedIds])}
                   accessibilityLabel="Delete"
-                  style={{ marginLeft: 18 }}
+                  style={{ marginLeft: 14 }}
                 >
                   <Ionicons name="trash-outline" size={21} color={colors.danger} />
                 </Pressable>
@@ -1003,9 +1053,15 @@ function ChatScreenInner() {
     navigation.setOptions({
       headerLeft: undefined,
       headerTitle: () => (
-        <Pressable onPress={openHeaderProfile} style={styles.headerPerson}>
-          <Avatar uri={headerAvatarUri} name={headerAvatarName} size={36} />
-          <View style={styles.headerTextCol}>
+        <View style={styles.headerPerson}>
+          <ProfileAvatar
+            uri={headerAvatarUri}
+            name={headerAvatarName}
+            size={36}
+            userId={isGroup ? null : peers[0]?.id}
+            mode="auto"
+          />
+          <Pressable onPress={openHeaderProfile} style={styles.headerTextCol} accessibilityRole="button" accessibilityLabel="Open contact info">
             <View style={styles.headerTitleRow}>
               <Text style={styles.headerTitle} numberOfLines={1}>
                 {headerTitle || params.title}
@@ -1030,8 +1086,8 @@ function ChatScreenInner() {
                 {subtitle}
               </Text>
             )}
-          </View>
-        </Pressable>
+          </Pressable>
+        </View>
       ),
       // Call buttons (1:1) + overflow ⋮ menu (WhatsApp-class chat options).
       headerRight: () => (
@@ -1082,9 +1138,14 @@ function ChatScreenInner() {
   }
 
   // ── Compose / send ────────────────────────────────────────────────────────
-  // Honour the "Enter to send" chat setting (mirrors web). Defaults to true.
+  // Honour the "Enter to send" + double-tap reaction chat settings.
   useEffect(() => {
-    getChatSettings(supabase).then((s) => setEnterToSend(s.enterToSend)).catch(() => {});
+    getChatSettings(supabase)
+      .then((s) => {
+        setEnterToSend(s.enterToSend);
+        if (s.defaultReaction) setDefaultReaction(s.defaultReaction);
+      })
+      .catch(() => {});
   }, []);
 
   // Ghost mode = premium AND ghost_mode pref. Reacts instantly when premium unlocks.
@@ -1443,13 +1504,14 @@ function ChatScreenInner() {
   }
 
   // Camera capture (photo or short video). Gallery path is MediaPicker.
+  /** Camera → same MediaPreview editor as gallery (crop/caption/HD, never black). */
   async function pickImage(fromCamera: boolean) {
     setAttachOpen(false);
     const perm = await ImagePicker.requestCameraPermissionsAsync();
     if (!perm.granted) return;
     const res = await ImagePicker.launchCameraAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.All,
-      quality: 0.7,
+      quality: 0.85,
       videoMaxDuration: 60,
       allowsEditing: false,
     });
@@ -1460,7 +1522,34 @@ function ChatScreenInner() {
     const name =
       a.fileName ??
       (isVid ? `video_${Date.now()}.mp4` : `photo_${Date.now()}.jpg`);
-    await sendMedia(a.uri, name, isVid ? 'video' : 'image');
+    // Prefer full editor path (parity with Gallery). Fall back to direct send.
+    try {
+      const resolved = await resolvePickedUri(a.uri, {
+        id: `cam_${Date.now()}`,
+        fileName: name,
+        mediaType: isVid ? 'video' : 'image',
+        width: a.width,
+        height: a.height,
+      });
+      navigation.navigate('MediaPreview', {
+        conversationId,
+        assets: [
+          {
+            id: `cam_${Date.now()}`,
+            uri: resolved.uri,
+            type: isVid ? 'video' : 'image',
+            fileName: name,
+            width: a.width || resolved.width || 0,
+            height: a.height || resolved.height || 0,
+            durationMs: a.duration ? Math.round(a.duration * 1000) : undefined,
+            fileSize: a.fileSize,
+          },
+        ],
+        startIndex: 0,
+      });
+    } catch {
+      await sendMedia(a.uri, name, isVid ? 'video' : 'image');
+    }
     void fromCamera;
   }
 
@@ -1623,10 +1712,13 @@ function ChatScreenInner() {
 
   // ── Multi-select ──────────────────────────────────────────────────────────
   function enterSelection(m: Message) {
+    setSelected(null);
     setSelectionMode(true);
     setSelectedIds(new Set([m.id]));
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
   }
   function toggleSelect(m: Message) {
+    Haptics.selectionAsync().catch(() => {});
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(m.id)) next.delete(m.id); else next.add(m.id);
@@ -1637,6 +1729,24 @@ function ChatScreenInner() {
   function exitSelection() {
     setSelectionMode(false);
     setSelectedIds(new Set());
+  }
+
+  /** Multi-star selected messages (queueAction = offline-safe). */
+  function starSelectedMany() {
+    const ids = [...selectedIds];
+    if (!ids.length) return;
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    setStarredIds((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) {
+        if (!next.has(id)) {
+          next.add(id);
+          queueAction('star', { messageId: id });
+        }
+      }
+      return next;
+    });
+    exitSelection();
   }
 
   // Hardware / gesture back exits multi-select (restore normal chat header).
@@ -2211,7 +2321,11 @@ function ChatScreenInner() {
           onPress: async () => {
             await deleteMessage(supabase, target.id);
             setMsgs((prev) =>
-              prev.map((m) => (m.id === target.id ? { ...m, is_deleted: true, content: null, media_url: null } : m)),
+              prev.map((m) =>
+                m.id === target.id
+                  ? { ...m, is_deleted: true, deleted_kind: 'user' as const, content: null, media_url: null }
+                  : m,
+              ),
             );
           },
         });
@@ -2277,7 +2391,9 @@ function ChatScreenInner() {
                 await Promise.all(ids.map((id) => deleteMessage(supabase, id).catch(() => {})));
                 setMsgs((prev) =>
                   prev.map((m) =>
-                    ids.includes(m.id) ? { ...m, is_deleted: true, content: null, media_url: null } : m,
+                    ids.includes(m.id)
+                      ? { ...m, is_deleted: true, deleted_kind: 'user' as const, content: null, media_url: null }
+                      : m,
                   ),
                 );
               },
@@ -2323,7 +2439,11 @@ function ChatScreenInner() {
           onPress: async () => {
             await deleteMessage(supabase, msg.id);
             setMsgs((prev) =>
-              prev.map((m) => (m.id === msg.id ? { ...m, is_deleted: true, content: null, media_url: null } : m)),
+              prev.map((m) =>
+                m.id === msg.id
+                  ? { ...m, is_deleted: true, deleted_kind: 'user' as const, content: null, media_url: null }
+                  : m,
+              ),
             );
           },
         });
@@ -2362,12 +2482,11 @@ function ChatScreenInner() {
   const timeline = useMemo<TimelineItem[]>(() => {
     const merged: TimelineItem[] = [
       ...messages
-        // delete-for-me: never show to this user. is_deleted: an UNSENT message
-        // (Instagram-style) vanishes entirely for everyone — no tombstone. The
-        // realtime UPDATE (is_deleted → true) makes it disappear live on all clients.
-        // messageExpired: disappearing message (0022) past its expiry — hide it
-        // instantly; the `now` tick re-runs this filter as each one expires.
-        .filter((m) => !hiddenIds.has(m.id) && !m.is_deleted && !messageExpired(m, now))
+        // delete-for-me (hiddenIds): never show to this user.
+        // Soft-deleted (is_deleted): KEEP as a tombstone so timeline position
+        // stays intact — user unsend or Lumixo moderation placeholder.
+        // messageExpired: disappearing message past expiry — hide instantly.
+        .filter((m) => !hiddenIds.has(m.id) && !messageExpired(m, now))
         .map((m): TimelineItem => ({ kind: 'msg', id: m.id, at: m.created_at, message: m })),
       ...polls.map((p): TimelineItem => ({ kind: 'poll', id: `poll:${p.id}`, at: p.created_at, poll: p })),
     ];
@@ -2590,29 +2709,45 @@ function ChatScreenInner() {
     const mine = msg.sender_id === uid;
     const replyTo = msg.reply_to ? messageById.get(msg.reply_to) ?? null : null;
     const senderName = isGroup ? peerNameById.get(msg.sender_id) ?? null : null;
+    const interactive = !msg.is_deleted;
     return (
       <SwipeToReply
-        enabled={!selectionMode && !msg.is_deleted}
+        enabled={!selectionMode && interactive}
         tint={colors.primary}
-        onReply={() => { setEditing(null); setReply(msg); }}
-        // Long-press is a native RNGH gesture on the wrapper (covers the whole
-        // bubble) so it fires fast and reliably even with the keyboard open —
-        // deleted messages are inert. See SwipeToReply for the gesture wiring.
-        onLongPress={msg.is_deleted ? undefined : () => {
-          if (selectionMode) {
-            Haptics.selectionAsync().catch(() => {});
-            toggleSelect(msg);
-          } else {
-            // Firmer WhatsApp-style buzz as the context menu opens.
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-            setSelected(msg);
-          }
-        }}
+        onReply={
+          interactive
+            ? () => {
+                setEditing(null);
+                setReply(msg);
+              }
+            : undefined
+        }
+        // Long-press → multi-select (toolbar: copy / forward / star / info / delete).
+        // Single-message menu still available via "Select" path or long-press while selected.
+        onLongPress={
+          interactive
+            ? () => {
+                if (selectionMode) {
+                  toggleSelect(msg);
+                } else {
+                  enterSelection(msg);
+                }
+              }
+            : undefined
+        }
+        onDoubleTap={
+          interactive && !selectionMode
+            ? () => {
+                void react(defaultReaction || '❤️', msg);
+              }
+            : undefined
+        }
       >
         <MessageBubble
           message={msg}
           mine={mine}
           myId={uid}
+          isGroup={isGroup}
           grouped={item.grouped}
           senderName={senderName}
           replyTo={replyTo}
@@ -2636,7 +2771,7 @@ function ChatScreenInner() {
           onOpenDocument={(m) => (selectionMode ? toggleSelect(m) : void openDocument(m))}
           viewOnceSpent={voSpent.has(msg.id)}
           highlight={searchActive ? search : ''}
-          activeMatch={msg.id === activeMatchId}
+          activeMatch={msg.id === activeMatchId || msg.id === flashId}
         />
       </SwipeToReply>
     );
@@ -2673,6 +2808,7 @@ function ChatScreenInner() {
   const matchIds = useMemo(() => {
     if (!searchActive) return [] as string[];
     return messages
+      // Soft-deleted rows have content cleared — never match original body in search.
       .filter((m) => !m.is_deleted && messageMatchesKind(m, searchKind) && (!search || (m.content ?? '').toLowerCase().includes(search)))
       .map((m) => m.id);
   }, [messages, search, searchKind, searchActive]);
@@ -2681,8 +2817,16 @@ function ChatScreenInner() {
   const scrollToMessage = useCallback((id: string) => {
     const idx = inverted.findIndex((it) => it.id === id);
     if (idx >= 0) {
-      try { listRef.current?.scrollToIndex({ index: idx, animated: true, viewPosition: 0.5 }); } catch { /* measured later */ }
+      try {
+        listRef.current?.scrollToIndex({ index: idx, animated: true, viewPosition: 0.5 });
+      } catch {
+        /* measured later */
+      }
     }
+    // WhatsApp-style brief highlight on the jumped-to message.
+    setFlashId(id);
+    if (flashTimer.current) clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(() => setFlashId(null), 1400);
   }, [inverted]);
   function jumpMatch(delta: number) {
     if (matchIds.length === 0) return;
@@ -2880,12 +3024,27 @@ function ChatScreenInner() {
         </Pressable>
       )}
 
-      {/* Reply / edit preview bar */}
+      {/* Reply / edit preview bar (WhatsApp-class: sender + snippet + media thumb) */}
       {(reply || editing) && (
         <View style={styles.previewBar}>
           <View style={styles.previewLine} />
-          <View style={{ flex: 1 }}>
-            <Text style={styles.previewTitle}>{editing ? 'Edit message' : 'Reply'}</Text>
+          {!!reply && !editing && reply.type === 'image' && !!reply.media_url && (
+            <Image
+              source={{ uri: reply.media_url }}
+              style={styles.previewThumb}
+              contentFit="cover"
+            />
+          )}
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={styles.previewTitle} numberOfLines={1}>
+              {editing
+                ? 'Edit message'
+                : reply
+                  ? reply.sender_id === uid
+                    ? 'You'
+                    : peerNameById.get(reply.sender_id) || 'Reply'
+                  : 'Reply'}
+            </Text>
             <Text style={styles.previewText} numberOfLines={1}>
               {previewLabel(editing ?? reply)}
             </Text>
@@ -2897,6 +3056,7 @@ function ChatScreenInner() {
               setEditing(null);
               setText('');
             }}
+            accessibilityLabel="Cancel reply"
           >
             <Ionicons name="close" size={20} color={colors.textMuted} />
           </Pressable>
@@ -3459,14 +3619,25 @@ const makeStyles = (colors: Palette) =>
       gap: 5, paddingHorizontal: 16, paddingTop: 10, paddingBottom: 6,
     },
     encNoteText: { color: colors.textMuted, fontSize: font.tiny, fontWeight: '500' },
-    daySep: { alignItems: 'center', marginVertical: 8 },
+    daySep: { alignItems: 'center', marginVertical: 10, paddingVertical: 2 },
     daySepText: {
-      color: colors.text, fontSize: 11.5, fontWeight: '600',
-      backgroundColor: colors.isLight ? 'rgba(255,255,255,0.95)' : colors.surface,
-      paddingHorizontal: 10, paddingVertical: 4,
-      borderRadius: radius.sm, overflow: 'hidden',
+      color: colors.isLight ? '#54656F' : colors.textMuted,
+      fontSize: 12,
+      fontWeight: '600',
+      letterSpacing: 0.2,
+      backgroundColor: colors.isLight ? 'rgba(255,255,255,0.92)' : 'rgba(17,27,33,0.92)',
+      paddingHorizontal: 12,
+      paddingVertical: 5,
+      borderRadius: 8,
+      overflow: 'hidden',
       borderWidth: StyleSheet.hairlineWidth,
-      borderColor: colors.isLight ? 'rgba(0,0,0,0.06)' : colors.border,
+      borderColor: colors.isLight ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.08)',
+      // Soft elevation so the pill reads as floating while scrolling.
+      shadowColor: '#000',
+      shadowOpacity: colors.isLight ? 0.06 : 0.25,
+      shadowRadius: 3,
+      shadowOffset: { width: 0, height: 1 },
+      elevation: 1,
     },
     headerPerson: { flexDirection: 'row', alignItems: 'center', maxWidth: 220 },
     headerTextCol: { marginLeft: 9, flexShrink: 1, minWidth: 0 },
@@ -3533,7 +3704,14 @@ const makeStyles = (colors: Palette) =>
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: colors.border,
     },
-    previewLine: { width: 3, height: 28, borderRadius: 2, backgroundColor: colors.primary, marginRight: 8 },
+    previewLine: { width: 3, height: 36, borderRadius: 2, backgroundColor: colors.primary, marginRight: 8 },
+    previewThumb: {
+      width: 40,
+      height: 40,
+      borderRadius: 6,
+      marginRight: 8,
+      backgroundColor: colors.surfaceAlt,
+    },
     previewTitle: { color: colors.primary, fontSize: font.small, fontWeight: '700' },
     previewText: { color: colors.textMuted, fontSize: font.small },
     composer: {

@@ -20,6 +20,7 @@ import { getCache, setCache } from '../lib/localCache';
 import { formatTime } from '../lib/time';
 import InputModal from '../components/InputModal';
 import Avatar from '../components/Avatar';
+import ProfileAvatar from '../components/ProfileAvatar';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import type { RootStackParamList } from '../navigation/types';
 import { Alert } from '../ui/dialog';
@@ -191,7 +192,13 @@ export default function CallDetailScreen() {
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: spacing(10) }}>
       <View style={styles.head}>
-        <Avatar uri={params.avatarUrl} name={params.title} size={96} />
+        <ProfileAvatar
+          uri={params.avatarUrl}
+          name={params.title}
+          size={96}
+          userId={params.peerId}
+          mode="choice"
+        />
         <Text style={styles.name}>{params.title}</Text>
         {params.username ? <Text style={styles.sub}>@{params.username}</Text> : null}
       </View>

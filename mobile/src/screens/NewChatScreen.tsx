@@ -21,6 +21,7 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { supabase } from '../lib/supabase';
+import ProfileAvatar from '../components/ProfileAvatar';
 import {
   searchProfiles,
   startDirectConversation,
@@ -279,7 +280,13 @@ export default function NewChatScreen() {
               onLongPress={!isSearching && !phoneMatches.some((m) => m.userId === item.id) ? () => confirmRemove(item) : undefined}
               delayLongPress={300}
             >
-              <Avatar uri={item.avatar_url} name={item.display_name ?? item.username} size={48} />
+              <ProfileAvatar
+                uri={item.avatar_url}
+                name={item.display_name ?? item.username}
+                size={48}
+                userId={item.id}
+                mode="auto"
+              />
               <View style={styles.rowBody}>
                 <Text style={styles.name}>{title}</Text>
                 <Text style={styles.sub} numberOfLines={1}>

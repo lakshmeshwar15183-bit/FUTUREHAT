@@ -23,6 +23,7 @@ import { useColors, spacing, radius, font, type Palette } from '../theme';
 import { useCalls } from '../calls/CallContext';
 import { useChatLock } from '../security/ChatLock';
 import Avatar from '../components/Avatar';
+import ProfileAvatar from '../components/ProfileAvatar';
 import MediaViewer, { type ViewerItem } from '../components/MediaViewer';
 import type { RootStackParamList } from '../navigation/types';
 import { Alert } from '../ui/dialog';
@@ -240,7 +241,13 @@ export default function ProfileScreen() {
     <ScrollView style={styles.container}>
       <View style={styles.header}>
         <View>
-          <Avatar uri={profile?.avatar_url} name={displayName} size={120} />
+          <ProfileAvatar
+            uri={profile?.avatar_url}
+            name={displayName}
+            size={120}
+            userId={params.userId}
+            mode="choice"
+          />
           {!!convId && disappearSecs > 0 && (
             <View style={styles.avatarDisappearBadge}>
               <Ionicons name="timer-outline" size={16} color="#fff" />

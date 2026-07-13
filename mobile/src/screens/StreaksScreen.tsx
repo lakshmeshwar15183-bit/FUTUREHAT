@@ -14,6 +14,7 @@ import type { StreakSummary } from '../lib/shared';
 import { getCache, setCache } from '../lib/localCache';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import Avatar from '../components/Avatar';
+import ProfileAvatar from '../components/ProfileAvatar';
 import { LumixoCat } from '../components/LumixoCat';
 import type { RootStackParamList } from '../navigation/types';
 
@@ -120,7 +121,13 @@ export default function StreaksScreen() {
                 title: s.peer_name ?? (s.peer_username ? `@${s.peer_username}` : 'Streak'),
               })}
             >
-              <Avatar uri={s.peer_avatar} name={s.peer_name ?? s.peer_username ?? '?'} size={46} />
+              <ProfileAvatar
+                uri={s.peer_avatar}
+                name={s.peer_name ?? s.peer_username ?? '?'}
+                size={46}
+                userId={s.peer_id}
+                mode="auto"
+              />
               <View style={styles.rowBody}>
                 <Text style={styles.rowName} numberOfLines={1}>
                   {s.peer_name ?? (s.peer_username ? `@${s.peer_username}` : 'Lumixo user')}

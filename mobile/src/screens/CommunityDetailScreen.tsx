@@ -15,14 +15,16 @@ import {
   rsvpEvent,
   getCommunityMembers,
   getCurrentUser,
+  leaveCommunity,
 } from '../lib/shared';
 import type { Channel, CommunityEvent, CommunityMember } from '../lib/shared';
 import { getCache, setCache } from '../lib/localCache';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import Avatar from '../components/Avatar';
+import ProfileAvatar from '../components/ProfileAvatar';
 import EventComposerModal, { type EventDraft } from '../components/EventComposerModal';
 import type { RootStackParamList } from '../navigation/types';
-import { Alert } from '../ui/dialog';
+import { Alert, showSheet } from '../ui/dialog';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'CommunityDetail'>;
 type Rt = RouteProp<RootStackParamList, 'CommunityDetail'>;
@@ -102,12 +104,86 @@ export default function CommunityDetailScreen() {
         (m.profile?.username || '').toLowerCase().includes(q),
     );
   }, [members, memberQuery]);
+
+  // Announcements first (WhatsApp), then other groups A–Z.
+  const orderedChannels = useMemo(() => {
+    return [...channels].sort((a, b) => {
+      const aAnn = a.kind === 'announcement' ? 0 : 1;
+      const bAnn = b.kind === 'announcement' ? 0 : 1;
+      if (aAnn !== bAnn) return aAnn - bAnn;
+      return a.name.localeCompare(b.name);
+    });
+  }, [channels]);
+
   const roleOf = (m: CommunityMember) => (m.user_id === ownerId ? 'Owner' : m.role === 'admin' ? 'Admin' : null);
   const isAdmin =
     !!myId &&
     (myId === ownerId || members.some((m) => m.user_id === myId && m.role === 'admin'));
 
-  useFocusEffect(useCallback(() => { navigation.setOptions({ title: name }); load(); }, [load, name, navigation]));
+  const openOverflow = useCallback(() => {
+    showSheet({
+      title: name,
+      actions: [
+        {
+          text: 'Add group',
+          icon: 'group',
+          onPress: () => {
+            if (isAdmin) openChannelModal();
+            else Alert.alert('Admins only', 'Only community admins can add groups.');
+          },
+        },
+        {
+          text: 'Invite via ID',
+          icon: 'link',
+          onPress: () =>
+            Alert.alert('Community ID', communityId, [{ text: 'OK' }]),
+        },
+        {
+          text: 'Exit community',
+          icon: 'exit',
+          style: 'destructive',
+          onPress: () => {
+            Alert.alert('Exit community?', `Leave “${name}”?`, [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Exit',
+                style: 'destructive',
+                onPress: async () => {
+                  const { error } = await leaveCommunity(supabase, communityId);
+                  if (error) {
+                    Alert.alert('Could not leave', error.message);
+                    return;
+                  }
+                  navigation.goBack();
+                },
+              },
+            ]);
+          },
+        },
+        {
+          text: 'Report',
+          icon: 'report',
+          style: 'destructive',
+          onPress: () => Alert.alert('Report', 'Thanks — our team will review this community.'),
+        },
+      ],
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [name, communityId, isAdmin, navigation]);
+
+  useFocusEffect(
+    useCallback(() => {
+      navigation.setOptions({
+        title: name,
+        headerRight: () => (
+          <Pressable onPress={openOverflow} hitSlop={10} style={{ paddingHorizontal: 8 }}>
+            <Ionicons name="ellipsis-vertical" size={20} color="#fff" />
+          </Pressable>
+        ),
+      });
+      load();
+    }, [load, name, navigation, openOverflow]),
+  );
 
   function openChannelModal() {
     setChannelName('');
@@ -174,33 +250,64 @@ export default function CommunityDetailScreen() {
 
       {tab === 'channels' ? (
         <FlatList
-          data={channels}
+          data={orderedChannels}
           keyExtractor={(c) => c.id}
           ListHeaderComponent={
-            isAdmin ? (
-              <Pressable style={styles.addRow} onPress={openChannelModal}>
-                <View style={styles.addIcon}>
-                  <Ionicons name="add" size={22} color="#fff" />
-                </View>
-                <Text style={styles.addLabel}>Add channel</Text>
-              </Pressable>
-            ) : null
+            <>
+              <View style={styles.infoHeader}>
+                <Text style={styles.infoTitle}>Groups</Text>
+                <Text style={styles.infoSub}>
+                  {orderedChannels.length} group{orderedChannels.length === 1 ? '' : 's'}
+                  {members.length ? ` · ${members.length} members` : ''}
+                </Text>
+              </View>
+              {isAdmin ? (
+                <Pressable style={styles.addRow} onPress={openChannelModal}>
+                  <View style={styles.addIcon}>
+                    <Ionicons name="add" size={22} color="#fff" />
+                  </View>
+                  <Text style={styles.addLabel}>Add group</Text>
+                </Pressable>
+              ) : null}
+            </>
           }
-          renderItem={({ item }) => (
-            <Pressable
-              style={styles.row}
-              onPress={() => navigation.navigate('Chat', { conversationId: item.conversation_id, title: item.name })}
-            >
-              <Ionicons
-                name={item.kind === 'announcement' ? 'megaphone' : item.kind === 'broadcast' ? 'radio' : 'chatbubbles'}
-                size={22}
-                color={colors.primary}
-              />
-              <Text style={styles.rowText}># {item.name}</Text>
-              <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
-            </Pressable>
-          )}
-          ListEmptyComponent={<Empty colors={colors} icon="chatbubbles-outline" text="No channels yet" />}
+          renderItem={({ item }) => {
+            const isAnn = item.kind === 'announcement';
+            const title = isAnn ? 'Announcements' : item.name;
+            return (
+              <Pressable
+                style={styles.groupRow}
+                onPress={() =>
+                  navigation.navigate('Chat', {
+                    conversationId: item.conversation_id,
+                    title,
+                  })
+                }
+              >
+                <View style={[styles.groupAvatar, isAnn && styles.annAvatar]}>
+                  {isAnn ? (
+                    <Ionicons name="megaphone" size={22} color="#fff" />
+                  ) : (
+                    <Avatar uri={null} name={item.name} size={48} />
+                  )}
+                </View>
+                <View style={styles.groupBody}>
+                  <Text style={styles.groupName} numberOfLines={1}>
+                    {title}
+                  </Text>
+                  <Text style={styles.groupSub} numberOfLines={1}>
+                    {isAnn
+                      ? 'Only admins can post'
+                      : item.kind === 'broadcast'
+                        ? 'Broadcast'
+                        : 'Group'}
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
+              </Pressable>
+            );
+          }}
+          ListEmptyComponent={<Empty colors={colors} icon="chatbubbles-outline" text="No groups yet" />}
         />
       ) : tab === 'events' ? (
         <FlatList
@@ -260,7 +367,13 @@ export default function CommunityDetailScreen() {
           }
           renderItem={({ item }) => (
             <Pressable style={styles.memberRow} onPress={() => navigation.navigate('Profile', { userId: item.user_id })}>
-              <Avatar uri={item.profile?.avatar_url} name={item.profile?.display_name} size={42} />
+              <ProfileAvatar
+                uri={item.profile?.avatar_url}
+                name={item.profile?.display_name}
+                size={42}
+                userId={item.user_id}
+                mode="auto"
+              />
               <View style={{ flex: 1, marginLeft: spacing(3) }}>
                 <Text style={styles.rowText} numberOfLines={1}>{item.profile?.display_name || 'User'}</Text>
                 {!!item.profile?.username && <Text style={styles.memberHandle}>@{item.profile.username}</Text>}
@@ -384,4 +497,52 @@ const makeStyles = (colors: Palette) =>
     modalSubmit: { backgroundColor: colors.primary, borderRadius: radius.md, paddingHorizontal: spacing(5), paddingVertical: spacing(2.5) },
     modalSubmitDisabled: { opacity: 0.5 },
     modalSubmitText: { color: '#fff', fontSize: font.body, fontWeight: '700' },
+    infoHeader: {
+      paddingHorizontal: spacing(4),
+      paddingTop: spacing(4),
+      paddingBottom: spacing(2),
+    },
+    infoTitle: {
+      color: colors.text,
+      fontSize: font.heading,
+      fontWeight: '700',
+    },
+    infoSub: {
+      color: colors.textMuted,
+      fontSize: font.small,
+      marginTop: 4,
+    },
+    groupRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: spacing(4),
+      paddingVertical: spacing(2.5),
+      minHeight: 68,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: colors.border,
+      backgroundColor: colors.surface,
+    },
+    groupAvatar: {
+      width: 48,
+      height: 48,
+      borderRadius: 24,
+      overflow: 'hidden',
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.surfaceAlt,
+    },
+    annAvatar: {
+      backgroundColor: colors.primary,
+    },
+    groupBody: { flex: 1, marginLeft: spacing(3), minWidth: 0 },
+    groupName: {
+      color: colors.text,
+      fontSize: font.body,
+      fontWeight: '600',
+    },
+    groupSub: {
+      color: colors.textMuted,
+      fontSize: font.small,
+      marginTop: 2,
+    },
   });
