@@ -139,6 +139,7 @@ export default function AppearanceScreen() {
 
   const pickAppIcon = useCallback(
     async (id: AppIconId) => {
+      // Optimistic UI — stay on Appearance; never restart or leave the screen.
       setIconPref(id);
       getCache<AppearancePrefs | null>('appearance', null).then((c) =>
         setCache('appearance', {
@@ -148,12 +149,18 @@ export default function AppearanceScreen() {
         }),
       );
       queueAction('updatePreferences', { updates: { app_icon: id } });
-      const result = await setAppIcon(id);
-      if (!result.ok) {
-        Alert.alert('Could not change icon', result.error ?? 'Try again.');
-      } else if (result.error) {
-        // Preference saved; native apply deferred (e.g. Expo Go).
-        Alert.alert('Icon saved', result.error);
+      try {
+        const result = await setAppIcon(id);
+        // Android success toast is non-blocking (inside setAppIcon).
+        // Only block with an alert on hard failure.
+        if (!result.ok && result.error) {
+          Alert.alert('Could not change icon', result.error);
+        }
+      } catch {
+        Alert.alert(
+          'Could not change icon',
+          'Your choice was saved. The home-screen icon may update after a moment.',
+        );
       }
     },
     [],

@@ -1,8 +1,8 @@
 // Lumixo — dynamic launcher icon switcher.
-// Android: activity-alias + PackageManager (no app restart required for most OEMs).
+// Android: activity-alias + PackageManager with enable-first + DONT_KILL_APP.
 // iOS: UIApplication.setAlternateIconName (when the iOS target is linked).
-// Web: browser tab favicon via preferences (handled separately).
-import { NativeModules, Platform } from 'react-native';
+// Must never crash, kill the activity, or reset navigation state.
+import { NativeModules, Platform, ToastAndroid } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export type AppIconId = 'icon1' | 'icon2' | 'icon3' | 'icon4' | 'icon5' | 'icon6';
@@ -24,6 +24,9 @@ export const APP_ICON_OPTIONS: {
 const STORAGE_KEY = 'fh:app_icon:v1';
 const DEFAULT_ICON: AppIconId = 'icon1';
 
+const LAUNCHER_TOAST =
+  'Launcher icon updated. It may refresh on the home screen shortly.';
+
 type NativeIconModule = {
   setIcon: (iconName: string) => Promise<boolean>;
   getIcon: () => Promise<string>;
@@ -39,6 +42,17 @@ function normalize(id: string | null | undefined): AppIconId {
     return DEFAULT_ICON;
   }
   return DEFAULT_ICON;
+}
+
+function softToast(message: string) {
+  if (Platform.OS === 'android') {
+    try {
+      ToastAndroid.show(message, ToastAndroid.LONG);
+    } catch {
+      /* ignore */
+    }
+  }
+  // iOS: system shows its own alternate-icon confirmation; avoid a second modal.
 }
 
 export async function getStoredAppIcon(): Promise<AppIconId> {
@@ -63,11 +77,20 @@ export async function getActiveAppIcon(): Promise<AppIconId> {
 }
 
 /**
- * Switch the launcher icon. Persists locally so the choice survives reboot and
- * app updates. Preferences sync (app_icon field) is handled by the caller.
+ * Switch the launcher icon silently.
+ * - Never throws to the UI layer
+ * - Never restarts the React activity (native uses DONT_KILL_APP + enable-first)
+ * - Persists preference even if native apply is deferred
  */
-export async function setAppIcon(id: string): Promise<{ ok: boolean; error?: string }> {
+export async function setAppIcon(id: string): Promise<{
+  ok: boolean;
+  error?: string;
+  changed?: boolean;
+  toast?: string;
+}> {
   const icon = normalize(id);
+
+  // Persist first so preference survives even if native fails.
   try {
     await AsyncStorage.setItem(STORAGE_KEY, icon);
   } catch {
@@ -75,35 +98,69 @@ export async function setAppIcon(id: string): Promise<{ ok: boolean; error?: str
   }
 
   if (Platform.OS === 'web') {
-    return { ok: true };
+    return { ok: true, changed: true };
   }
 
   if (!NativeIcon?.setIcon) {
-    // Native module not linked (e.g. Expo Go). Preference still saved.
     return {
       ok: true,
-      error: Platform.OS === 'ios'
-        ? 'Icon will apply in a production iOS build.'
-        : 'Icon preference saved. Install a release build to switch the launcher icon.',
+      changed: false,
+      error:
+        Platform.OS === 'ios'
+          ? 'Icon will apply in a production iOS build.'
+          : 'Icon preference saved. Install a release build to switch the launcher icon.',
     };
   }
 
   try {
+    // Skip native work if already active (avoids PM thrash / restart risk).
+    if (NativeIcon.getIcon) {
+      try {
+        const current = normalize(await NativeIcon.getIcon());
+        if (current === icon) {
+          return { ok: true, changed: false };
+        }
+      } catch {
+        /* proceed to set */
+      }
+    }
+
     await NativeIcon.setIcon(icon);
-    return { ok: true };
+
+    if (Platform.OS === 'android') {
+      softToast(LAUNCHER_TOAST);
+      return { ok: true, changed: true, toast: LAUNCHER_TOAST };
+    }
+    return { ok: true, changed: true };
   } catch (e: any) {
-    return { ok: false, error: e?.message ?? 'Could not change app icon' };
+    // Preference is saved; do not crash the session.
+    return {
+      ok: false,
+      error: e?.message ?? 'Could not change app icon',
+      changed: false,
+    };
   }
 }
 
-/** Call once at app start so Android alias state matches stored preference. */
+/**
+ * Call once at app start so Android alias state matches stored preference.
+ * No-ops when already matching — must not toggle components on every cold start.
+ */
 export async function hydrateAppIcon(): Promise<void> {
-  const stored = await getStoredAppIcon();
-  if (NativeIcon?.setIcon) {
-    try {
-      await NativeIcon.setIcon(stored);
-    } catch {
-      /* ignore — icon may already match */
+  try {
+    const stored = await getStoredAppIcon();
+    if (!NativeIcon?.setIcon) return;
+
+    if (NativeIcon.getIcon) {
+      try {
+        const current = normalize(await NativeIcon.getIcon());
+        if (current === stored) return;
+      } catch {
+        /* apply stored */
+      }
     }
+    await NativeIcon.setIcon(stored);
+  } catch {
+    /* ignore — never block boot */
   }
 }

@@ -5,6 +5,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { supabase } from '../lib/supabase';
 import { getCurrentUser, getMyProfile, signOut, getServerAdmin, getServerModerator, getServerOwner, getMailboxUnseenCount } from '../lib/shared';
@@ -24,6 +25,7 @@ type Nav = NativeStackNavigationProp<RootStackParamList>;
 export default function SettingsScreen() {
   const navigation = useNavigation<Nav>();
   const colors = useColors();
+  const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   // Live premium from global context — updates instantly after purchase (no focus wait).
   const { isPremium: premium } = usePremium();
@@ -84,11 +86,16 @@ export default function SettingsScreen() {
     ]);
   }
 
+  // Tab bar already clears the system nav; add extra scroll padding so the
+  // footer mascot + version never collide with the last group or the tab bar.
+  const footerPad = Math.max(spacing(10), insets.bottom + spacing(8));
+
   return (
     <ScrollView
       style={styles.container}
-      // Tab bar already reserves system nav inset — only need scroll breathing room.
-      contentContainerStyle={{ paddingBottom: spacing(6) }}
+      contentContainerStyle={{ paddingBottom: footerPad }}
+      // Keep footer layout stable across font scale / short screens.
+      keyboardShouldPersistTaps="handled"
     >
       <Pressable
         style={styles.profileRow}
@@ -186,24 +193,38 @@ export default function SettingsScreen() {
         <Row icon="log-out-outline" label="Sign out" danger onPress={doSignOut} />
       </Group>
 
-      <View style={styles.aboutMascot} pointerEvents="none">
-        <LumixoCat mood="wave" size="sm" decorative />
+      {/* About footer — fixed vertical stack: mascot box → credit → version.
+          Mascot is clipped to a fixed height so animations never overlap text. */}
+      <View style={styles.aboutFooter} accessibilityRole="summary">
+        <View style={styles.aboutMascot} pointerEvents="none">
+          <LumixoCat mood="wave" size="xs" decorative />
+        </View>
+        <Text style={styles.credit} numberOfLines={2}>
+          {CREDIT}
+        </Text>
+        <Text style={styles.mascotCredit} numberOfLines={1}>
+          Mascot: Lumi
+        </Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`${APP_NAME} version ${APP_VERSION}`}
+          hitSlop={12}
+          style={styles.versionHit}
+          onPress={() => {
+            const next = diagTaps + 1;
+            if (next >= 7) {
+              setDiagTaps(0);
+              navigation.navigate('Diagnostics');
+            } else {
+              setDiagTaps(next);
+            }
+          }}
+        >
+          <Text style={styles.version} numberOfLines={1}>
+            {APP_NAME} v{APP_VERSION}
+          </Text>
+        </Pressable>
       </View>
-      <Text style={styles.credit}>{CREDIT}</Text>
-      <Text style={styles.mascotCredit}>Mascot: Lumi</Text>
-      <Pressable
-        onPress={() => {
-          const next = diagTaps + 1;
-          if (next >= 7) {
-            setDiagTaps(0);
-            navigation.navigate('Diagnostics');
-          } else {
-            setDiagTaps(next);
-          }
-        }}
-      >
-        <Text style={styles.version}>{APP_NAME} v{APP_VERSION}</Text>
-      </Pressable>
     </ScrollView>
   );
 }
@@ -380,29 +401,44 @@ const makeStyles = (colors: Palette) =>
     },
     premiumTitle: { color: colors.text, fontSize: font.heading, fontWeight: '700', letterSpacing: -0.15 },
     premiumSub: { color: colors.textMuted, fontSize: font.small, marginTop: 2, lineHeight: 17 },
+    aboutFooter: {
+      marginTop: spacing(6),
+      paddingHorizontal: spacing(4),
+      alignItems: 'center',
+      gap: spacing(1.5),
+    },
     aboutMascot: {
       alignItems: 'center',
-      marginTop: spacing(5),
+      justifyContent: 'center',
+      height: 64,
+      width: '100%',
       marginBottom: spacing(1),
+      overflow: 'hidden',
     },
     credit: {
       color: colors.textMuted,
       textAlign: 'center',
-      marginTop: spacing(2),
       fontSize: font.small,
       fontWeight: '600',
+      lineHeight: 18,
+      maxWidth: 320,
     },
     mascotCredit: {
       color: colors.textFaint,
       textAlign: 'center',
-      marginTop: 2,
       fontSize: font.tiny,
+      lineHeight: 15,
+    },
+    versionHit: {
+      minHeight: 32,
+      justifyContent: 'center',
+      paddingVertical: spacing(1),
+      paddingHorizontal: spacing(3),
     },
     version: {
       color: colors.textFaint,
       textAlign: 'center',
-      marginTop: 4,
-      marginBottom: spacing(8),
       fontSize: font.tiny,
+      lineHeight: 15,
     },
   });

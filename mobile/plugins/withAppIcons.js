@@ -115,25 +115,42 @@ class AppIconModule(private val ctx: ReactApplicationContext) : ReactContextBase
 `.replace('${PKG}', PKG).replace('MainActivityIcon\$suffix', 'MainActivityIcon$suffix'),
   );
 
-  // Fix the Kotlin string - the template above is messy. Write cleanly:
+  // Production module: enable-first, no-op if unchanged, deferred disable.
+  // Survives prebuild; keep in sync with android/.../AppIconModule.kt.
   fs.writeFileSync(
     path.join(javaDir, 'AppIconModule.kt'),
     `package ${PKG}
 
 import android.content.ComponentName
 import android.content.pm.PackageManager
+import android.os.Handler
+import android.os.Looper
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 
+/**
+ * Switches launcher icons via activity-aliases without killing the process.
+ * Enable target FIRST, then disable others with DONT_KILL_APP (deferred).
+ */
 class AppIconModule(private val ctx: ReactApplicationContext) : ReactContextBaseJavaModule(ctx) {
   override fun getName(): String = "LumixoAppIcon"
   private val icons = listOf("icon1", "icon2", "icon3", "icon4", "icon5", "icon6")
+  private val mainHandler = Handler(Looper.getMainLooper())
 
   private fun componentFor(iconId: String): ComponentName {
     val suffix = iconId.removePrefix("icon").ifEmpty { "1" }
     return ComponentName(ctx, "${PKG}.MainActivityIcon" + suffix)
+  }
+
+  private fun activeIconId(pm: PackageManager): String {
+    for (id in icons) {
+      val state = pm.getComponentEnabledSetting(componentFor(id))
+      if (state == PackageManager.COMPONENT_ENABLED_STATE_ENABLED) return id
+      if (state == PackageManager.COMPONENT_ENABLED_STATE_DEFAULT && id == "icon1") return "icon1"
+    }
+    return "icon1"
   }
 
   @ReactMethod
@@ -141,13 +158,28 @@ class AppIconModule(private val ctx: ReactApplicationContext) : ReactContextBase
     try {
       val pm = ctx.packageManager
       val target = if (icons.contains(iconName)) iconName else "icon1"
-      for (id in icons) {
-        val state = if (id == target)
-          PackageManager.COMPONENT_ENABLED_STATE_ENABLED
-        else
-          PackageManager.COMPONENT_ENABLED_STATE_DISABLED
-        pm.setComponentEnabledSetting(componentFor(id), state, PackageManager.DONT_KILL_APP)
+      if (activeIconId(pm) == target) {
+        promise.resolve(true)
+        return
       }
+      // Enable replacement first so we never zero out launcher components.
+      pm.setComponentEnabledSetting(
+        componentFor(target),
+        PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+        PackageManager.DONT_KILL_APP
+      )
+      mainHandler.postDelayed({
+        try {
+          for (id in icons) {
+            if (id == target) continue
+            pm.setComponentEnabledSetting(
+              componentFor(id),
+              PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+              PackageManager.DONT_KILL_APP
+            )
+          }
+        } catch (_: Exception) { }
+      }, 250)
       promise.resolve(true)
     } catch (e: Exception) {
       promise.reject("ICON_ERROR", e.message, e)
@@ -157,15 +189,7 @@ class AppIconModule(private val ctx: ReactApplicationContext) : ReactContextBase
   @ReactMethod
   fun getIcon(promise: Promise) {
     try {
-      val pm = ctx.packageManager
-      for (id in icons) {
-        val state = pm.getComponentEnabledSetting(componentFor(id))
-        if (state == PackageManager.COMPONENT_ENABLED_STATE_ENABLED) {
-          promise.resolve(id)
-          return
-        }
-      }
-      promise.resolve("icon1")
+      promise.resolve(activeIconId(ctx.packageManager))
     } catch (e: Exception) {
       promise.reject("ICON_ERROR", e.message, e)
     }
