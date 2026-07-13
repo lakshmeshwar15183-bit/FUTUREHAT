@@ -255,6 +255,22 @@ describe('P0 · source contracts (edge + clients)', () => {
     expect(edgeSrc).toMatch(/admin_claim_razorpay_webhook/);
   });
 
+  it('edge fails create_order when ledger upsert fails (no silent orphan orders)', () => {
+    expect(edgeSrc).toMatch(/ledger_write_failed/);
+    expect(edgeSrc).toMatch(/admin_upsert_razorpay_order/);
+    // Must not soft-continue past ledger failure.
+    expect(edgeSrc).not.toMatch(/Ledger failure must not block checkout/);
+  });
+
+  it('edge status recovers ledger miss from Razorpay notes', () => {
+    expect(edgeSrc).toMatch(/status_backfill/);
+    expect(edgeSrc).toMatch(/order_not_found/);
+  });
+
+  it('edge mark_cancelled soft-skips missing ledger rows', () => {
+    expect(edgeSrc).toMatch(/status: 'missing'/);
+  });
+
   it('edge webhook event id is stable (no Date.now in eventId)', () => {
     // receipt uniqueness may use Date.now; eventId expression must not.
     expect(edgeSrc).toMatch(/Stable id — never Date\.now/);
@@ -330,7 +346,7 @@ describe('P1 · failed / cancelled / loading UX contracts', () => {
     const p = path.join(__dirname, '../../screens/PremiumScreen.tsx');
     const src = fs.readFileSync(p, 'utf8');
     expect(src).toMatch(/Payment cancelled/);
-    expect(src).toMatch(/Payment failed/);
+    expect(src).toMatch(/friendlyRazorpayCheckoutFailure/);
     expect(src).toMatch(/No internet connection/);
     expect(src).toMatch(/Activating Premium/);
     expect(src).toMatch(/beginActivation/);

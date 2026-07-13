@@ -64,7 +64,12 @@ function friendlyFromCode(code?: string, status?: number, serverMsg?: string): s
       return 'Please choose a valid plan.';
     case 'order_failed':
     case 'order_invalid':
+    case 'ledger_write_failed':
       return 'Could not start checkout. Please try again.';
+    case 'order_not_found':
+      return 'We could not find this checkout session. Start a new payment if you still want Premium.';
+    case 'order_id_required':
+      return 'Missing checkout session. Please start payment again.';
     case 'invalid_json':
       return 'Invalid request. Please try again.';
     case 'payment_failed':
@@ -86,6 +91,9 @@ function friendlyFromCode(code?: string, status?: number, serverMsg?: string): s
       break;
   }
   if (status === 401 || status === 403) return 'Please sign in again to continue checkout.';
+  if (status === 404 && /order not found/i.test(serverMsg || '')) {
+    return 'We could not find this checkout session. Start a new payment if you still want Premium.';
+  }
   if (status === 503) return 'Secure payments are temporarily unavailable. Please try again later.';
   if (status === 429) return 'Too many payment attempts. Please wait a moment and try again.';
   if (status && status >= 500) return 'Payment service is temporarily unavailable. Please try again shortly.';
@@ -97,6 +105,34 @@ function friendlyFromCode(code?: string, status?: number, serverMsg?: string): s
     return serverMsg.slice(0, 180);
   }
   return 'Something went wrong with payments. Please try again.';
+}
+
+/**
+ * Map Razorpay Checkout `payment.failed` copy (often "Please use another method")
+ * to actionable UX — especially while keys are still rzp_test_*.
+ */
+export function friendlyRazorpayCheckoutFailure(
+  description?: string,
+  opts?: { keyId?: string | null },
+): string {
+  const raw = (description || '').trim();
+  const lower = raw.toLowerCase();
+  const testMode = !!opts?.keyId && opts.keyId.startsWith('rzp_test');
+  if (
+    /another method|payment method not|method not available|international cards? are not supported|card not supported/i.test(
+      lower,
+    )
+  ) {
+    if (testMode) {
+      return 'That method is not available in Razorpay test mode. Use test card 4111 1111 1111 1111 (any future expiry, any CVV), or try UPI/netbanking if enabled in your Razorpay test dashboard.';
+    }
+    return 'That payment method did not work. Please try UPI, card, netbanking, or another option.';
+  }
+  if (/insufficient|limit exceeded|bank declined|do not honour|not sufficient/i.test(lower)) {
+    return raw || 'Your bank declined this payment. Try another card or method.';
+  }
+  if (raw && !/edge function|non-2xx/i.test(raw)) return raw.slice(0, 220);
+  return 'Payment failed. No charge was completed.';
 }
 
 /**

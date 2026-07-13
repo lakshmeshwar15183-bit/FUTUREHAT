@@ -13,6 +13,7 @@ import {
   verifyRazorpayPayment,
   getRazorpayOrderStatus,
   markRazorpayOrderCancelled,
+  friendlyRazorpayCheckoutFailure,
 } from '@shared/payments/razorpayApi';
 
 declare global {
@@ -139,7 +140,7 @@ export class RazorpayWebProvider implements PaymentProvider {
         settle({
           ok: false,
           provider: 'razorpay',
-          error: resp?.error?.description || 'Payment failed',
+          error: friendlyRazorpayCheckoutFailure(resp?.error?.description, { keyId }),
         });
       });
       rzp.open();

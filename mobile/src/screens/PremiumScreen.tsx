@@ -38,6 +38,7 @@ import {
   verifyRazorpayPayment,
   getRazorpayOrderStatus,
   markRazorpayOrderCancelled,
+  friendlyRazorpayCheckoutFailure,
 } from '../../../shared/payments/razorpayApi';
 import {
   RazorpayCheckoutModal,
@@ -74,6 +75,8 @@ export default function PremiumScreen() {
   const [userMeta, setUserMeta] = useState<{ email?: string; name?: string }>({});
   const [justUnlocked, setJustUnlocked] = useState(false);
   const verifyingRef = useRef(false);
+  /** Last checkout key_id — used to map test-mode method failures. */
+  const lastKeyIdRef = useRef<string | null>(null);
 
   // Soft hydrate config + identity — never blocks paint with a full-screen spinner.
   useFocusEffect(
@@ -146,6 +149,7 @@ export default function PremiumScreen() {
     }
 
     setPendingOrderId(order.orderId);
+    lastKeyIdRef.current = order.keyId || null;
     setCheckoutParams({
       keyId: order.keyId,
       orderId: order.orderId,
@@ -229,7 +233,11 @@ export default function PremiumScreen() {
     }
 
     if (result.type === 'failed') {
-      setLocalError(result.description || 'Payment failed. No charge was completed.');
+      setLocalError(
+        friendlyRazorpayCheckoutFailure(result.description, {
+          keyId: lastKeyIdRef.current,
+        }),
+      );
       return;
     }
 
@@ -353,17 +361,30 @@ export default function PremiumScreen() {
                 onPress={() => {
                   setLocalError('');
                   void (async () => {
-                    beginActivation(plan);
+                    // Do not beginActivation until we know pay succeeded — otherwise
+                    // a gateway method failure surfaces as a scary "Order not found" banner.
                     const st = await getRazorpayOrderStatus(supabase, pendingOrderId!);
                     if (st.subscriptionActive || st.recovered) {
+                      beginActivation(plan);
+                      setJustUnlocked(true);
                       await completeActivation();
                       setPendingOrderId(null);
-                    } else {
-                      failActivation(
-                        st.error?.message ||
-                          'Payment not confirmed yet. If you were charged, try again in a moment.',
-                      );
+                      setLocalError('');
+                      return;
                     }
+                    const payStatus = String(
+                      (st.payment as { status?: string } | null)?.status || '',
+                    ).toLowerCase();
+                    if (payStatus === 'created' || payStatus === 'attempted' || payStatus === 'cancelled') {
+                      setLocalError(
+                        'No successful payment yet. Tap Upgrade to try again — if you were charged, wait a moment and check status again.',
+                      );
+                      return;
+                    }
+                    setLocalError(
+                      st.error?.message ||
+                        'Payment not confirmed yet. If you were charged, try again in a moment.',
+                    );
                   })();
                 }}
               >

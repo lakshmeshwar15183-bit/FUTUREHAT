@@ -813,17 +813,29 @@ Deno.serve(async (req) => {
         });
       }
 
-      const { error: upsertErr } = await admin.rpc('admin_upsert_razorpay_order', {
-        p_user_id: user.id,
-        p_order_id: order.id,
-        p_amount: amountPaise,
-        p_currency: order.currency || 'INR',
-        p_plan: plan,
-        p_notes: { receipt: order.receipt ?? null },
-      });
+      // Ledger is required for status / cancel / recovery. Fail hard if we cannot write it
+      // (previously we returned orderId while status 404'd with "Order not found").
+      let upsertErr: { message?: string } | null = null;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const res = await admin.rpc('admin_upsert_razorpay_order', {
+          p_user_id: user.id,
+          p_order_id: order.id,
+          p_amount: amountPaise,
+          p_currency: order.currency || 'INR',
+          p_plan: plan,
+          p_notes: { receipt: order.receipt ?? null },
+        });
+        upsertErr = res.error;
+        if (!upsertErr) break;
+        console.error('[payments] ledger order attempt', attempt + 1, upsertErr.message);
+      }
       if (upsertErr) {
-        // Ledger failure must not block checkout if order exists — log and continue.
-        console.error('[payments] ledger order', upsertErr.message);
+        return clientError(req, {
+          status: 500,
+          code: 'ledger_write_failed',
+          message: 'Could not start checkout. Please try again.',
+          log: upsertErr.message ?? 'admin_upsert_razorpay_order failed',
+        });
       }
 
       console.log('[payments] order ok', order.id, 'user=', user.id.slice(0, 8));
@@ -840,14 +852,21 @@ Deno.serve(async (req) => {
     // ── Mark checkout cancelled (user dismissed before pay) ────────────────
     if (body.action === 'mark_cancelled') {
       const orderId = body.razorpay_order_id ?? '';
-      if (!orderId) return json(req, { error: 'Order id required' }, 400);
+      if (!orderId) {
+        return clientError(req, {
+          status: 400,
+          code: 'order_id_required',
+          message: 'Order id required.',
+        });
+      }
       const { data: row } = await admin
         .from('razorpay_payments')
         .select('user_id, status, amount, plan, currency')
         .eq('razorpay_order_id', orderId)
         .eq('user_id', user.id)
         .maybeSingle();
-      if (!row) return json(req, { error: 'Order not found' }, 404);
+      // Soft miss — dismiss must never surface a harsh 404 after a failed/partial checkout.
+      if (!row) return json(req, { ok: true, skipped: true, status: 'missing' });
       // Never cancel a paid row — status recovery / verify own those.
       if (row.status === 'captured' || row.status === 'refunded' || row.status === 'authorized') {
         return json(req, { ok: true, skipped: true, status: row.status });
@@ -867,16 +886,99 @@ Deno.serve(async (req) => {
     // ── Status / retry helper ──────────────────────────────────────────────
     if (body.action === 'status') {
       const orderId = body.razorpay_order_id ?? '';
-      if (!orderId) return json(req, { error: 'Order id required' }, 400);
+      if (!orderId) {
+        return clientError(req, {
+          status: 400,
+          code: 'order_id_required',
+          message: 'Order id required.',
+        });
+      }
 
-      const { data: row } = await admin
+      let { data: row } = await admin
         .from('razorpay_payments')
         .select('*')
         .eq('razorpay_order_id', orderId)
         .eq('user_id', user.id)
         .maybeSingle();
 
-      if (!row) return json(req, { error: 'Order not found' }, 404);
+      // Ledger miss: recover from Razorpay order notes (user_id bound at create_order).
+      // Fixes "Order not found" when create_order returned but upsert failed, or migration lag.
+      if (!row) {
+        const orderResp = await rzpFetch(`/orders/${orderId}`, KEY_ID, KEY_SECRET);
+        if (!orderResp.ok) {
+          return clientError(req, {
+            status: 404,
+            code: 'order_not_found',
+            message:
+              'We could not find this checkout session. Start a new payment if you still want Premium.',
+            log: `status ledger miss + rzp HTTP ${orderResp.status}`,
+          });
+        }
+        const rzpOrder = await orderResp.json();
+        const notesUser = String(rzpOrder?.notes?.user_id || '');
+        if (notesUser !== user.id) {
+          return clientError(req, {
+            status: 404,
+            code: 'order_not_found',
+            message:
+              'We could not find this checkout session. Start a new payment if you still want Premium.',
+            log: 'status ledger miss + notes user mismatch',
+          });
+        }
+        const amountPaise = Number(rzpOrder.amount || 0);
+        const planFromAmt = planFromAmountPaise(amountPaise);
+        const notesPlan =
+          rzpOrder?.notes?.plan === 'yearly'
+            ? 'yearly'
+            : rzpOrder?.notes?.plan === 'monthly'
+              ? 'monthly'
+              : null;
+        const plan = planFromAmt || notesPlan || 'monthly';
+        if (amountPaise > 0) {
+          await admin.rpc('admin_upsert_razorpay_order', {
+            p_user_id: user.id,
+            p_order_id: orderId,
+            p_amount: amountPaise,
+            p_currency: String(rzpOrder.currency || 'INR'),
+            p_plan: plan,
+            p_notes: {
+              receipt: rzpOrder.receipt ?? null,
+              source: 'status_backfill',
+            },
+          });
+          const refreshed = await admin
+            .from('razorpay_payments')
+            .select('*')
+            .eq('razorpay_order_id', orderId)
+            .eq('user_id', user.id)
+            .maybeSingle();
+          row = refreshed.data;
+        }
+        if (!row) {
+          // Still no ledger — return soft unpaid status from gateway so UI does not hard-fail.
+          const { data: subMiss } = await admin
+            .from('subscriptions')
+            .select('status, current_period_end')
+            .eq('user_id', user.id)
+            .maybeSingle();
+          const subActiveMiss =
+            subMiss?.status === 'active' &&
+            subMiss?.current_period_end &&
+            new Date(subMiss.current_period_end).getTime() > Date.now();
+          return json(req, {
+            payment: {
+              razorpay_order_id: orderId,
+              status: String(rzpOrder.status || 'created'),
+              amount: amountPaise,
+              currency: String(rzpOrder.currency || 'INR'),
+              plan,
+              source: 'razorpay_only',
+            },
+            subscriptionActive: !!subActiveMiss,
+            recovered: false,
+          });
+        }
+      }
 
       // If captured in ledger, premium should already be active.
       // If order is paid at Razorpay but verify never completed, finish now.
