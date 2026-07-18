@@ -3,13 +3,15 @@
 // Survives refresh; flushes on online / interval / manual flushOutbox().
 
 import { supabase } from '../supabase';
-import { sendMessage, editMessage, uploadMedia } from '@shared/api';
+import { sendMessage, editMessage, uploadMedia, retryDelayMs } from '@shared/api';
 import { sendPush } from '@shared/pushApi';
 import type { Message, MessageType, UUID } from '@shared/types';
 import { deleteMediaBlob, getMediaBlob, putMediaBlob } from './mediaBlobStore';
 
 const KEY = 'lumixo_outbox_v1';
 const MAX_ATTEMPTS = 25;
+/** Per-item next-retry timestamp (ms). Survives only in-memory for this tab. */
+const nextRetryAt = new Map<string, number>();
 
 export interface WebOutboxItem {
   id: string; // client id (also used as message PK when possible)
@@ -165,16 +167,26 @@ export async function flushOutbox(): Promise<void> {
       const next: WebOutboxItem[] = [];
       for (const item of box) {
         if (item.attempts >= MAX_ATTEMPTS) {
+          nextRetryAt.delete(item.id);
           listeners.forEach((l) => l(item, null, 'max_attempts'));
+          continue;
+        }
+        // Exponential backoff — skip items not yet due (poor network resilience).
+        const due = nextRetryAt.get(item.id) ?? 0;
+        if (due > Date.now()) {
+          next.push(item);
           continue;
         }
         try {
           if (item.kind === 'edit' && item.messageId) {
             const { message, error } = await editMessage(supabase, item.messageId, item.content);
             if (error || !message) {
-              next.push({ ...item, attempts: item.attempts + 1 });
+              const attempts = item.attempts + 1;
+              nextRetryAt.set(item.id, Date.now() + retryDelayMs(attempts));
+              next.push({ ...item, attempts });
               continue;
             }
+            nextRetryAt.delete(item.id);
             listeners.forEach((l) => l(item, message));
             continue;
           }
@@ -184,7 +196,9 @@ export async function flushOutbox(): Promise<void> {
           if (item.blobKey && !mediaUrl) {
             const stored = await getMediaBlob(item.blobKey);
             if (!stored) {
-              next.push({ ...item, attempts: item.attempts + 1 });
+              const attempts = item.attempts + 1;
+              nextRetryAt.set(item.id, Date.now() + retryDelayMs(attempts));
+              next.push({ ...item, attempts });
               continue;
             }
             const { url, error: upErr } = await uploadMedia(
@@ -195,7 +209,9 @@ export async function flushOutbox(): Promise<void> {
               stored.mime,
             );
             if (upErr || !url) {
-              next.push({ ...item, attempts: item.attempts + 1 });
+              const attempts = item.attempts + 1;
+              nextRetryAt.set(item.id, Date.now() + retryDelayMs(attempts));
+              next.push({ ...item, attempts });
               continue;
             }
             mediaUrl = url;
@@ -226,6 +242,7 @@ export async function flushOutbox(): Promise<void> {
           if ((message && !error) || dupe) {
             const mid = message?.id ?? item.id;
             if (item.blobKey) void deleteMediaBlob(item.blobKey).catch(() => {});
+            nextRetryAt.delete(item.id);
             listeners.forEach((l) => l(item, message));
             if (item.kind === 'send') {
               const preview =
@@ -253,10 +270,14 @@ export async function flushOutbox(): Promise<void> {
               });
             }
           } else {
-            next.push({ ...item, attempts: item.attempts + 1 });
+            const attempts = item.attempts + 1;
+            nextRetryAt.set(item.id, Date.now() + retryDelayMs(attempts));
+            next.push({ ...item, attempts });
           }
         } catch {
-          next.push({ ...item, attempts: item.attempts + 1 });
+          const attempts = item.attempts + 1;
+          nextRetryAt.set(item.id, Date.now() + retryDelayMs(attempts));
+          next.push({ ...item, attempts });
         }
       }
       write(next);

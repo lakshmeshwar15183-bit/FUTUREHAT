@@ -2,7 +2,7 @@
 // Does NOT precache hashed Vite assets (avoids stale-chunk white screens after deploy).
 // Optional: runtime cache for static icons only.
 
-const ICON_CACHE = 'lumixo-icons-v2';
+const ICON_CACHE = 'lumixo-icons-v3';
 const ICON_PATHS = ['/lumixo.svg', '/lumi.svg', '/favicon.png', '/lumixo-192.png', '/lumixo-512.png', '/manifest.webmanifest', '/offline.html'];
 
 self.addEventListener('install', (event) => {

@@ -32,8 +32,9 @@ const K = {
 // (AsyncStorage on Android is backed by a size-limited SQLite store).
 // Raised for WhatsApp-class offline history (recent slice still sufficient for
 // near-instant open; older history loads from network on scroll).
-/** Exported for tests — keep in sync with offline-test suite. */
-export const MSG_CACHE_LIMIT = 800;
+/** Exported for tests — keep in sync with shared/localFirst + offline-test suite. */
+export { MSG_CACHE_LIMIT } from '../../../shared/localFirst';
+import { MSG_CACHE_LIMIT } from '../../../shared/localFirst';
 
 // RFC-4122 v4 id from CSPRNG when available (message PKs via outbox — collisions
 // are catastrophic for that row). Falls back to Math.random only if crypto is missing.
@@ -59,16 +60,52 @@ export function uuidv4(): string {
   });
 }
 
+// In-memory hot layer over AsyncStorage (P2 smoothness).
+// After first read/write, subsequent getCached* for the same key are sync-fast
+// (no bridge round-trip). Durable source of truth remains AsyncStorage —
+// App Store safe, no native module, offline-test compatible.
+const memCache = new Map<string, unknown>();
+const MEM_MAX_KEYS = 120;
+
+function memGet<T>(key: string): T | undefined {
+  if (!memCache.has(key)) return undefined;
+  // LRU touch
+  const v = memCache.get(key);
+  memCache.delete(key);
+  memCache.set(key, v);
+  return v as T;
+}
+
+function memSet(key: string, value: unknown): void {
+  if (memCache.has(key)) memCache.delete(key);
+  memCache.set(key, value);
+  while (memCache.size > MEM_MAX_KEYS) {
+    const oldest = memCache.keys().next().value;
+    if (oldest === undefined) break;
+    memCache.delete(oldest);
+  }
+}
+
+/** Test / logout helper — drop hot cache without touching AsyncStorage. */
+export function clearMemoryCache(): void {
+  memCache.clear();
+}
+
 async function readJSON<T>(key: string, fallback: T): Promise<T> {
+  const hit = memGet<T>(key);
+  if (hit !== undefined) return hit;
   try {
     const raw = await AsyncStorage.getItem(key);
-    return raw ? (JSON.parse(raw) as T) : fallback;
+    const parsed = raw ? (JSON.parse(raw) as T) : fallback;
+    memSet(key, parsed);
+    return parsed;
   } catch {
     return fallback;
   }
 }
 
 async function writeJSON(key: string, value: unknown): Promise<void> {
+  memSet(key, value);
   try {
     await AsyncStorage.setItem(key, JSON.stringify(value));
   } catch {

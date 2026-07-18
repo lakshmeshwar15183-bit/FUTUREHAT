@@ -7,6 +7,7 @@ import {
   AppState,
   BackHandler,
   FlatList,
+  InteractionManager,
   Keyboard,
   Dimensions,
   Modal,
@@ -171,6 +172,14 @@ import {
 } from '../lib/chatThreadLayout';
 import { sheetBottomPad } from '../lib/safeLayout';
 import MessageBubble, { type TickStatus, replySummary } from '../components/MessageBubble';
+import { ChatHeaderTitle, ChatHeaderRight } from '../components/ChatHeaderTitle';
+import {
+  bindChatHeaderLive,
+  patchChatHeaderLive,
+  setChatHeaderTyping,
+  clearChatHeaderLive,
+} from '../lib/chatHeaderLive';
+import { createMessageBatcher } from '../lib/messageBatch';
 import SwipeToReply from '../components/SwipeToReply';
 import MediaViewer, { type ViewerItem } from '../components/MediaViewer';
 import { ensureMediaCached } from '../lib/mediaCache';
@@ -365,6 +374,9 @@ function ChatScreenInner() {
   const [reactions, setReactions] = useState<MessageReaction[]>([]);
   const [receipts, setReceipts] = useState<Map<string, TickStatus>>(new Map());
   const [loading, setLoading] = useState(true);
+  /** Cursor pagination: more history may exist older than the local window. */
+  const [hasMoreOlder, setHasMoreOlder] = useState(true);
+  const loadingOlderRef = useRef(false);
 
   const [peers, setPeers] = useState<Profile[]>([]);
   const peersRef = useRef<Profile[]>([]);
@@ -403,7 +415,14 @@ function ChatScreenInner() {
   const [mentionQuery, setMentionQuery] = useState('');
   const [mentionStart, setMentionStart] = useState(0);
   const [onlineIds, setOnlineIds] = useState<Set<string>>(new Set());
-  const [typingName, setTypingName] = useState<string | null>(null);
+  // Typing lives in chatHeaderLive (not React state) so message list does not re-render.
+  /** Nav action refs — setOptions stays stable; presses read latest handlers. */
+  const headerNavRef = useRef({
+    placeCall: (_k: 'audio' | 'video') => {},
+    openChatMenu: () => {},
+    openHeaderProfile: () => {},
+    openHeaderStreak: () => {},
+  });
 
   const [text, setText] = useState('');
   // Keep latest draft for multi-emoji inserts (picker stays open like WhatsApp).
@@ -668,10 +687,13 @@ function ChatScreenInner() {
 
   // ── Bootstrap: who am I, conversation peers, history ──────────────────────
   // Local-first: paint cached messages + queued (outbox) messages INSTANTLY with
-  // no network wait or spinner (WhatsApp-style), then reconcile with Supabase in
-  // the background. If we're offline the cached view simply stays.
+  // no network wait or spinner (WhatsApp-style), then reconcile with Supabase
+  // AFTER interactions (smooth first scroll). Offline → cached view stays.
   useEffect(() => {
     let active = true;
+    const interactTasks: { cancel?: () => void }[] = [];
+    bindChatHeaderLive(conversationId, { title: params.title || '' });
+
     (async () => {
       const user = await getCurrentUser(supabase); // local session read — instant
       if (!active) return;
@@ -683,6 +705,7 @@ function ChatScreenInner() {
         getCachedMessages(conversationId),
         getPendingMessages(conversationId),
       ]);
+      if (active) setHasMoreOlder(true);
       if (active && (cachedMsgs.length || pending.length)) {
         setMsgs(() => mergeById(cachedMsgs, pending));
         setLoading(false); // never block on the network once we have something
@@ -710,23 +733,28 @@ function ChatScreenInner() {
             setHeaderTitle(cs.title);
           }
           cacheProfiles(enriched).catch(() => {});
+          // Group metadata is secondary — defer so first paint/scroll stay smooth.
           if (group) {
-            Promise.all([
-              getMyGroupRole(supabase, conversationId),
-              getGroupConversation(supabase, conversationId),
-              getPinnedMessageIds(supabase, conversationId),
-              getGroupMembers(supabase, conversationId).catch(() => [] as GroupMember[]),
-            ])
-              .then(([role, gconv, pins, mems]) => {
-                if (!active) return;
-                setMyGroupRole(role);
-                const perms = permissionsFromConversation(gconv ?? cs.conversation);
-                setGroupPerms(perms);
-                setGroupSendBlocked(!canSendInGroup(role, perms));
-                setPinnedIds(new Set(pins));
-                setGroupMembers(mems || []);
-              })
-              .catch(() => {});
+            const runGroup = () => {
+              if (!active) return;
+              Promise.all([
+                getMyGroupRole(supabase, conversationId),
+                getGroupConversation(supabase, conversationId),
+                getPinnedMessageIds(supabase, conversationId),
+                getGroupMembers(supabase, conversationId).catch(() => [] as GroupMember[]),
+              ])
+                .then(([role, gconv, pins, mems]) => {
+                  if (!active) return;
+                  setMyGroupRole(role);
+                  const perms = permissionsFromConversation(gconv ?? cs.conversation);
+                  setGroupPerms(perms);
+                  setGroupSendBlocked(!canSendInGroup(role, perms));
+                  setPinnedIds(new Set(pins));
+                  setGroupMembers(mems || []);
+                })
+                .catch(() => {});
+            };
+            interactTasks.push(InteractionManager.runAfterInteractions(runGroup));
           } else {
             setMyGroupRole(null);
             setGroupSendBlocked(false);
@@ -742,93 +770,129 @@ function ChatScreenInner() {
       // already hide expired ones regardless.
       purgeExpiredMessages(supabase).catch(() => {});
 
-      // 3) BACKGROUND: fetch fresh history, merge with pending, refresh cache.
-      try {
-        const msgs = await getMessages(supabase, conversationId, 100);
+      // 3) BACKGROUND (after interactions): delta/full sync + receipts/reactions.
+      const runNetwork = async () => {
         if (!active) return;
-        const pend = await getPendingMessages(conversationId);
-        setMsgs(() => mergeById(msgs, pend));
-        setLoading(false);
-        cacheMessages(conversationId, msgs).catch(() => {});
-        // Do NOT prefetch full media blobs on history sync (WhatsApp/Telegram).
-        // Only message metadata is kept; files download when the user opens them.
-
-        const ids = msgs.map((m) => m.id);
-        const [rx, rc] = await Promise.all([getReactions(supabase, ids), getReceipts(supabase, ids)]);
-        if (!active) return;
-        setReactions(rx);
-        // Single source of truth: rebuild ticks from receipts. Preserve local
-        // sending/failed states for optimistic outbox rows still in flight.
-        const mineIds = msgs.filter((m) => m.sender_id === myId).map((m) => m.id);
-        const built = buildTickMap(rc, myId, mineIds);
-        setReceipts((prev) => {
-          const next = new Map(built);
-          for (const [id, t] of prev) {
-            if (t === 'sending' || t === 'failed') next.set(id, t);
-          }
-          return next;
-        });
-        loadPolls().catch(() => {});
-
-        // Per-user message extras (star + delete-for-me). Degrade to empty if the
-        // 0011/0014 migrations aren't applied — the shared helpers already do.
-        Promise.all([getStarredIds(supabase), getHiddenMessageIds(supabase)])
-          .then(([starred, hidden]) => {
-            if (!active) return;
-            setStarredIds(new Set(starred));
-            setHiddenIds(new Set(hidden));
-          })
-          .catch(() => {});
-
-        // Pipeline: delivered first (device has the message), then read unless ghost.
-        const incomingIds = msgs.filter((m) => m.sender_id !== myId).map((m) => m.id);
-        if (incomingIds.length) {
-          markMessagesAsDelivered(supabase, incomingIds).catch(() => {});
-          if (!ghostRef.current) {
-            incomingIds.forEach((id) => markMessageAsRead(supabase, id).catch(() => {}));
-          }
-        }
-      } catch {
-        // Offline / transient error: keep the cached view already on screen.
-        if (active) setLoading(false);
-      }
-
-      // Fallback peer resolution if the conversation wasn't in the cache yet
-      // (e.g. opened via a deep link before the Chats tab was visited).
-      if (myId && peersRef.current.length === 0) {
         try {
-          const summaries = await getMyConversations(supabase);
-          const summary = summaries.find((s) => s.conversation.id === conversationId);
-          if (summary && active) {
-            setIsGroup(summary.conversation.type === 'group');
-            const peerList = summary.participants.filter((p) => p.id !== myId);
-            const enriched = await Promise.all(
-              peerList.map(async (p) => {
-                const cachedP = await getCachedProfile(p.id).catch(() => null);
-                return (mergeProfileIdentity(cachedP, p) as Profile) ?? p;
-              }),
-            );
-            setPeers((prev) => {
-              // Monotonic: never replace a peer that already has a real name with empty.
-              if (!prev.length) return enriched;
-              return enriched.map((p) => {
-                const old = prev.find((x) => x.id === p.id);
-                return (mergeProfileIdentity(old, p) as Profile) ?? p;
-              });
-            });
-            setChatAvatarUrl(summary.avatarUrl ?? enriched[0]?.avatar_url ?? null);
-            if (summary.title && !/^unknown$/i.test(summary.title)) {
-              setHeaderTitle((t) => (/^unknown$/i.test(t) ? summary.title : t));
+          const watermark = (() => {
+            let latest: string | null = null;
+            for (const m of cachedMsgs) {
+              const f = m as Message & { pending?: boolean; failed?: boolean };
+              if (f.pending || f.failed) continue;
+              if (!latest || m.created_at > latest) latest = m.created_at;
             }
-            cacheProfiles(enriched).catch(() => {});
+            return latest;
+          })();
+
+          let msgs: Message[];
+          if (watermark && cachedMsgs.length > 0) {
+            const delta = await getMessages(supabase, conversationId, { after: watermark, limit: 200 });
+            if (!active) return;
+            if (delta.length) {
+              const map = new Map<string, Message>();
+              for (const m of cachedMsgs) map.set(m.id, m);
+              for (const m of delta) map.set(m.id, m);
+              msgs = [...map.values()].sort((a, b) =>
+                a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0,
+              );
+              cacheMessages(conversationId, msgs).catch(() => {});
+            } else {
+              msgs = cachedMsgs;
+            }
+          } else {
+            msgs = await getMessages(supabase, conversationId, 100);
+            if (!active) return;
+            cacheMessages(conversationId, msgs).catch(() => {});
           }
-        } catch { /* offline */ }
+
+          const pend = await getPendingMessages(conversationId);
+          if (!active) return;
+          setMsgs(() => mergeById(msgs, pend));
+          setLoading(false);
+          // Do NOT prefetch full media blobs on history sync (WhatsApp/Telegram).
+
+          const ids = msgs.map((m) => m.id);
+          const [rx, rc] = await Promise.all([getReactions(supabase, ids), getReceipts(supabase, ids)]);
+          if (!active) return;
+          setReactions(rx);
+          const mineIds = msgs.filter((m) => m.sender_id === myId).map((m) => m.id);
+          const built = buildTickMap(rc, myId, mineIds);
+          setReceipts((prev) => {
+            const next = new Map(built);
+            for (const [id, t] of prev) {
+              if (t === 'sending' || t === 'failed') next.set(id, t);
+            }
+            return next;
+          });
+          loadPolls().catch(() => {});
+
+          Promise.all([getStarredIds(supabase), getHiddenMessageIds(supabase)])
+            .then(([starred, hidden]) => {
+              if (!active) return;
+              setStarredIds(new Set(starred));
+              setHiddenIds(new Set(hidden));
+            })
+            .catch(() => {});
+
+          const incomingIds = msgs.filter((m) => m.sender_id !== myId).map((m) => m.id);
+          if (incomingIds.length) {
+            markMessagesAsDelivered(supabase, incomingIds).catch(() => {});
+            if (!ghostRef.current) {
+              incomingIds.forEach((id) => markMessageAsRead(supabase, id).catch(() => {}));
+            }
+          }
+        } catch {
+          if (active) setLoading(false);
+        }
+
+        // Fallback peer resolution if conversation wasn't in the cache yet.
+        if (myId && peersRef.current.length === 0) {
+          try {
+            const summaries = await getMyConversations(supabase);
+            const summary = summaries.find((s) => s.conversation.id === conversationId);
+            if (summary && active) {
+              setIsGroup(summary.conversation.type === 'group');
+              const peerList = summary.participants.filter((p) => p.id !== myId);
+              const enriched = await Promise.all(
+                peerList.map(async (p) => {
+                  const cachedP = await getCachedProfile(p.id).catch(() => null);
+                  return (mergeProfileIdentity(cachedP, p) as Profile) ?? p;
+                }),
+              );
+              setPeers((prev) => {
+                if (!prev.length) return enriched;
+                return enriched.map((p) => {
+                  const old = prev.find((x) => x.id === p.id);
+                  return (mergeProfileIdentity(old, p) as Profile) ?? p;
+                });
+              });
+              setChatAvatarUrl(summary.avatarUrl ?? enriched[0]?.avatar_url ?? null);
+              if (summary.title && !/^unknown$/i.test(summary.title)) {
+                setHeaderTitle((t) => (/^unknown$/i.test(t) ? summary.title : t));
+              }
+              cacheProfiles(enriched).catch(() => {});
+            }
+          } catch { /* offline */ }
+        }
+      };
+
+      // If we already painted cache, wait for transitions; if cold, start soon.
+      if (cachedMsgs.length || pending.length) {
+        interactTasks.push(
+          InteractionManager.runAfterInteractions(() => {
+            void runNetwork();
+          }),
+        );
+      } else {
+        void runNetwork();
       }
     })();
     return () => {
       active = false;
+      interactTasks.forEach((t) => t.cancel?.());
+      clearChatHeaderLive(conversationId);
     };
-  }, [conversationId, setMsgs]);
+  }, [conversationId, setMsgs, params.title]);
 
   // Monotonic receipt merge via shared messageStatus (never downgrade ticks).
   const applyReceipts = useCallback((rows: { message_id: string; user_id: string; status: string }[]) => {
@@ -850,32 +914,40 @@ function ChatScreenInner() {
       removeCachedMessages(conversationId, [id]).catch(() => {});
     };
 
-    const msgChannel = subscribeToMessages(
-      supabase,
-      conversationId,
-      (incoming) => {
-        // Replace any optimistic row sharing this id (offline send confirmed), or
-        // append if new. Keep the local cache in sync so a reopen is instant.
-        setMsgs((prev) => (prev.some((m) => m.id === incoming.id)
-          ? prev.map((m) => (m.id === incoming.id ? incoming : m))
-          : [...prev, incoming]));
+    // Coalesce rapid inserts so one setState per frame during active chat.
+    const insertBatch = createMessageBatcher((batch) => {
+      setMsgs((prev) => {
+        let next = prev;
+        for (const incoming of batch) {
+          next = next.some((m) => m.id === incoming.id)
+            ? next.map((m) => (m.id === incoming.id ? incoming : m))
+            : [...next, incoming];
+        }
+        return next;
+      });
+      for (const incoming of batch) {
         upsertCachedMessage(conversationId, incoming).catch(() => {});
-        // A system message means the disappearing timer was just changed — refresh
-        // the header indicator to match.
         if (incoming.type === 'system') {
           getDisappearing(supabase, conversationId).then(setDisappearSecs).catch(() => {});
         }
         if (incoming.sender_id !== uid) {
-          // Always mark delivered on device receipt; read only when not in ghost mode.
           markMessageAsDelivered(supabase, incoming.id).catch(() => {});
           if (!ghostRef.current) {
             markMessageAsRead(supabase, incoming.id).catch(() => {});
           }
         }
-        requestAnimationFrame(() => listRef.current?.scrollToOffset({ offset: 0, animated: true }));
+      }
+      requestAnimationFrame(() => listRef.current?.scrollToOffset({ offset: 0, animated: true }));
+    });
+
+    const msgChannel = subscribeToMessages(
+      supabase,
+      conversationId,
+      (incoming) => {
+        insertBatch.push(incoming);
       },
       (updated) => {
-        // Legacy soft user-unsend → remove row (Telegram: no tombstone).
+        // Updates/deletes apply immediately (not batched) for correct ticks/unsend.
         if (shouldOmitDeletedFromTimeline(updated)) {
           removeLocally(updated.id);
           return;
@@ -906,11 +978,12 @@ function ChatScreenInner() {
 
     const tc = createTypingChannel(supabase, conversationId, (p) => {
       if (!alive || p.userId === uid) return;
-      setTypingName(p.typing ? p.name : null);
+      // Header-only update — does not re-render the message list.
+      setChatHeaderTyping(conversationId, p.typing ? p.name : null);
       if (p.typing) {
         if (typingTimeout.current) clearTimeout(typingTimeout.current);
         typingTimeout.current = setTimeout(() => {
-          if (alive) setTypingName(null);
+          if (alive) setChatHeaderTyping(conversationId, null);
         }, 4000);
       }
     });
@@ -918,14 +991,14 @@ function ChatScreenInner() {
 
     return () => {
       alive = false;
+      insertBatch.clear();
       supabase.removeChannel(msgChannel);
       supabase.removeChannel(rxChannel);
       supabase.removeChannel(rcChannel);
       leavePresence(presenceChannel); // shared room: unhook this screen only
       supabase.removeChannel(tc.channel);
-      // Cancel any pending "typing…" auto-clear so it can't fire setTypingName
-      // after this screen has unmounted (no state updates after unmount).
       if (typingTimeout.current) { clearTimeout(typingTimeout.current); typingTimeout.current = null; }
+      setChatHeaderTyping(conversationId, null);
     };
   }, [uid, conversationId, setMsgs, applyReceipts]);
 
@@ -972,16 +1045,13 @@ function ChatScreenInner() {
   }, [conversationId]);
 
   // ── Header (title + presence / typing subtitle) ───────────────────────────
+  // Typing/online/title live in chatHeaderLive — setOptions does NOT re-run on them.
   const peerOnline = peers.some((p) => onlineIds.has(p.id));
-  const subtitle = typingName
-    ? isGroup
-      ? `${typingName} is typing…`
-      : 'typing…'
-    : isGroup
-      ? `${peers.length + 1} members`
-      : peerOnline
-        ? 'online'
-        : formatLastSeen(peers[0]?.last_seen);
+  const baseSubtitle = isGroup
+    ? `${peers.length + 1} members`
+    : peerOnline
+      ? 'online'
+      : formatLastSeen(peers[0]?.last_seen);
   // Direct chats prefer the peer avatar; groups use conversation avatar.
   const [peerNickname, setPeerNickname] = useState<string | null>(null);
   const [headerTitle, setHeaderTitle] = useState(params.title);
@@ -1050,6 +1120,35 @@ function ChatScreenInner() {
   const headerAvatarName = isGroup
     ? (headerTitle || params.title)
     : resolveDisplayName(peers[0], { nickname: peerNickname, fallback: headerTitle || params.title });
+
+  // Push live header fields without navigation.setOptions (typing/online/title).
+  useEffect(() => {
+    patchChatHeaderLive(conversationId, {
+      title: headerTitle || params.title || '',
+      baseSubtitle,
+      avatarUri: headerAvatarUri ?? null,
+      avatarName: headerAvatarName || params.title || '',
+      peerUserId: isGroup ? null : (peers[0]?.id ?? null),
+      isGroup,
+      streakScore,
+      streakEmoji,
+      disappearSecs,
+      ghost,
+    });
+  }, [
+    conversationId,
+    headerTitle,
+    params.title,
+    baseSubtitle,
+    headerAvatarUri,
+    headerAvatarName,
+    isGroup,
+    peers,
+    streakScore,
+    streakEmoji,
+    disappearSecs,
+    ghost,
+  ]);
 
   function openHeaderProfile() {
     if (isGroup) {
@@ -1279,10 +1378,11 @@ function ChatScreenInner() {
       } as any);
       return;
     }
+    // Stable header chrome: live title/typing/online update via chatHeaderLive
+    // (ChatHeaderTitle). Do NOT list typing/subtitle/title here — that was jank.
     navigation.setOptions({
       headerLeft: undefined,
       headerTitleAlign: 'left',
-      // Pin title left of trailing icons so long names ellipsize, never overlap.
       headerTitleContainerStyle: {
         flex: 1,
         maxWidth: titleMax,
@@ -1295,117 +1395,46 @@ function ChatScreenInner() {
         paddingLeft: 0,
       },
       headerTitle: () => (
-        <View style={[styles.headerPerson, { maxWidth: titleMax }]}>
-          <ProfileAvatar
-            uri={headerAvatarUri}
-            name={headerAvatarName}
-            size={36}
-            userId={isGroup ? null : peers[0]?.id}
-            mode="auto"
-          />
-          <Pressable
-            onPress={openHeaderProfile}
-            style={styles.headerTextCol}
-            accessibilityRole="button"
-            accessibilityLabel="Open contact info"
-          >
-            <View style={styles.headerTitleRow}>
-              <Text
-                style={styles.headerTitle}
-                numberOfLines={1}
-                ellipsizeMode="tail"
-                maxFontSizeMultiplier={1.35}
-              >
-                {headerTitle || params.title}
-              </Text>
-              {!isGroup && streakScore > 0 && !!streakEmoji && (
-                <Pressable
-                  onPress={openHeaderStreak}
-                  hitSlop={8}
-                  style={styles.headerStreak}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Streak ${streakScore}. Open streak details.`}
-                >
-                  <Text style={styles.headerStreakEmoji} allowFontScaling={false}>
-                    {streakEmoji}
-                  </Text>
-                  <Text style={styles.headerStreakScore} allowFontScaling={false}>
-                    {streakScore > 999 ? '999+' : streakScore}
-                  </Text>
-                </Pressable>
-              )}
-              {disappearSecs > 0 && (
-                <Ionicons
-                  name="timer-outline"
-                  size={13}
-                  color="rgba(255,255,255,0.9)"
-                  style={{ marginLeft: 4, flexShrink: 0 }}
-                />
-              )}
-              {ghost && (
-                <Ionicons
-                  name="eye-off-outline"
-                  size={12}
-                  color="rgba(255,255,255,0.9)"
-                  style={{ marginLeft: 4, flexShrink: 0 }}
-                />
-              )}
-            </View>
-            {!!subtitle && (
-              <Text
-                style={[
-                  styles.headerSub,
-                  typingName ? styles.headerSubTyping : null,
-                  { color: typingName ? '#B8F5E0' : 'rgba(255,255,255,0.88)' },
-                ]}
-                numberOfLines={1}
-                ellipsizeMode="tail"
-                maxFontSizeMultiplier={1.3}
-              >
-                {subtitle}
-              </Text>
-            )}
-          </Pressable>
-        </View>
+        <ChatHeaderTitle
+          styles={styles}
+          titleMax={titleMax}
+          onPressProfile={() => headerNavRef.current.openHeaderProfile()}
+          onPressStreak={() => headerNavRef.current.openHeaderStreak()}
+        />
       ),
       headerRight: () => (
-        <View style={styles.headerActions}>
-          {!isGroup && (
-            <>
-              <Pressable
-                hitSlop={8}
-                onPress={() => placeCall('audio')}
-                accessibilityLabel="Voice call"
-                style={styles.headerIconBtn}
-              >
-                <Ionicons name="call-outline" size={22} color={headerOnGreen} />
-              </Pressable>
-              <Pressable
-                hitSlop={8}
-                onPress={() => placeCall('video')}
-                accessibilityLabel="Video call"
-                style={styles.headerIconBtn}
-              >
-                <Ionicons name="videocam-outline" size={23} color={headerOnGreen} />
-              </Pressable>
-            </>
-          )}
-          <Pressable
-            hitSlop={8}
-            onPress={openChatMenu}
-            accessibilityLabel="More options"
-            style={styles.headerIconBtn}
-          >
-            <Ionicons name="ellipsis-vertical" size={20} color={headerOnGreen} />
-          </Pressable>
-        </View>
+        <ChatHeaderRight
+          styles={styles}
+          isGroup={isGroup}
+          headerOnGreen={headerOnGreen}
+          onAudio={() => headerNavRef.current.placeCall('audio')}
+          onVideo={() => headerNavRef.current.placeCall('video')}
+          onMore={() => headerNavRef.current.openChatMenu()}
+        />
       ),
       headerTintColor: headerOnGreen,
       headerStyle: { backgroundColor: colors.header },
       headerShadowVisible: false,
       contentStyle: { backgroundColor: chatCanvasBg },
     } as any);
-  }, [navigation, params.title, headerTitle, headerAvatarName, subtitle, peers, colors, styles, selectionMode, selectedIds, isGroup, ghost, disappearSecs, conversationId, headerAvatarUri, typingName, chatMuted, chatLock, starredIds, peerNickname, headerOnGreen, chatCanvasBg, myGroupRole, groupPerms, pinnedIds, streakScore, streakEmoji]);
+  }, [
+    navigation,
+    colors,
+    styles,
+    selectionMode,
+    selectedIds,
+    isGroup,
+    headerOnGreen,
+    chatCanvasBg,
+    // selection-mode actions only (kept for correct menu wiring when selecting)
+    chatMuted,
+    chatLock,
+    starredIds,
+    myGroupRole,
+    groupPerms,
+    pinnedIds,
+    conversationId,
+  ]);
 
   function placeCall(kind: 'audio' | 'video') {
     // Only reachable from direct chats (call buttons are hidden in groups).
@@ -1413,6 +1442,10 @@ function ChatScreenInner() {
     if (!peer) return;
     startCall(conversationId, peer, kind);
   }
+  // Keep nav header handlers fresh without re-running setOptions.
+  headerNavRef.current.placeCall = placeCall;
+  headerNavRef.current.openHeaderProfile = openHeaderProfile;
+  headerNavRef.current.openHeaderStreak = openHeaderStreak;
 
   // ── Compose / send ────────────────────────────────────────────────────────
   // Honour the "Enter to send" + double-tap reaction chat settings.
@@ -2214,14 +2247,60 @@ function ChatScreenInner() {
     return () => { alive = false; };
   }, [conversationId]);
 
+  /** Scroll-up pagination: fetch older messages before the oldest local row. */
+  const loadOlderMessages = useCallback(async () => {
+    if (loadingOlderRef.current || !hasMoreOlder) return;
+    const oldest = messagesRef.current.reduce<string | null>((acc, m) => {
+      if (!acc || m.created_at < acc) return m.created_at;
+      return acc;
+    }, null);
+    if (!oldest) return;
+    loadingOlderRef.current = true;
+    try {
+      const older = await getMessages(supabase, conversationId, { before: oldest, limit: 60 });
+      if (older.length === 0) {
+        setHasMoreOlder(false);
+      } else {
+        if (older.length < 60) setHasMoreOlder(false);
+        setMsgs((prev) => {
+          const merged = mergeById(older, prev);
+          cacheMessages(conversationId, merged).catch(() => {});
+          return merged;
+        });
+      }
+    } catch {
+      /* offline — keep local history */
+    } finally {
+      loadingOlderRef.current = false;
+    }
+  }, [conversationId, hasMoreOlder, setMsgs]);
+
   async function goToFirstMessage() {
     try {
       scrollToOldestPending.current = true;
-      // Load a deep history slice so "first" is meaningful for long threads.
-      const deep = await getMessages(supabase, conversationId, 1000);
-      if (deep.length) {
-        setMsgs((prev) => mergeById(deep, prev));
-        cacheMessages(conversationId, deep).catch(() => {});
+      // Page older history until we have a deep window (no single 1000-row blast).
+      let guard = 0;
+      while (guard < 8) {
+        guard += 1;
+        const oldest = messagesRef.current.reduce<string | null>((acc, m) => {
+          if (!acc || m.created_at < acc) return m.created_at;
+          return acc;
+        }, null);
+        if (!oldest) break;
+        const older = await getMessages(supabase, conversationId, { before: oldest, limit: 100 });
+        if (!older.length) {
+          setHasMoreOlder(false);
+          break;
+        }
+        setMsgs((prev) => {
+          const merged = mergeById(older, prev);
+          cacheMessages(conversationId, merged).catch(() => {});
+          return merged;
+        });
+        if (older.length < 100) {
+          setHasMoreOlder(false);
+          break;
+        }
       }
       // Actual scroll runs in FlatList onContentSizeChange (after layout).
       // Fallback if content size does not fire (short threads).
@@ -2477,6 +2556,7 @@ function ChatScreenInner() {
       ],
     });
   }
+  headerNavRef.current.openChatMenu = openChatMenu;
 
   async function exportChatTranscript() {
     try {
@@ -3330,6 +3410,9 @@ function ChatScreenInner() {
         }}
         // 16ms ≈ 60fps sampling; state only updates on FAB visibility edge.
         scrollEventThrottle={16}
+        // Inverted list: end ≈ visual TOP (older history). Cursor-paginate silently.
+        onEndReached={() => { void loadOlderMessages(); }}
+        onEndReachedThreshold={0.4}
         onContentSizeChange={() => {
           // Reliable jump after deep history load ("Go to first message").
           if (scrollToOldestPending.current) {

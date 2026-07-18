@@ -24,8 +24,22 @@ import {
   isModerationRemoved,
   canDeleteMessageForEveryone,
   shouldOmitDeletedFromTimeline,
+  mergeMessagesById,
+  mergeNetworkMessages,
+  latestSyncedCreatedAt,
+  oldestCreatedAt,
+  MSG_OPEN_LIMIT,
   type TickStatus,
 } from '@shared/api';
+import {
+  getCachedMessages,
+  cacheMessages,
+  upsertCachedMessage,
+  removeCachedMessages,
+  mergeCachedDelta,
+  getDraft,
+  setDraft,
+} from './lib/messageCache';
 import { getNickname } from './lib/nicknames';
 import { sendPush } from '@shared/pushApi';
 import { scheduleMessage, getScheduledMessages, dispatchDueMessages } from '@shared/premiumApi';
@@ -236,41 +250,88 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
   const typingStopRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isTypingRef = useRef(false);
 
-  const upsertMessage = (m: Message) =>
+  const upsertMessage = (m: Message) => {
     setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev.map((x) => (x.id === m.id ? m : x)) : [...prev, m]));
+    void upsertCachedMessage(convId, m);
+  };
+
+  // Composer drafts — restore instantly, debounce persist (offline-safe).
+  useEffect(() => {
+    setInput(getDraft(convId));
+  }, [convId]);
+  useEffect(() => {
+    if (editing) return; // don't overwrite draft while editing a bubble
+    const t = setTimeout(() => setDraft(convId, input), 250);
+    return () => clearTimeout(t);
+  }, [input, convId, editing]);
 
   useEffect(() => {
     let active = true;
-    setMessages([]); setTickMap(new Map()); setReactions([]); setTypingUsers({});
+    // Never flash the previous conversation's bubbles while this thread hydrates.
+    setMessages([]);
+    setTickMap(new Map()); setReactions([]); setTypingUsers({});
     setSuggestions([]); setSummary(null); setReplyTo(null); setEditing(null);
     setPolls([]); setPollComposerOpen(false);
     setSearchOpen(false); setSearchTerm('');
 
-    (async () => {
-      const msgs = await getMessages(supabase, convId);
-      if (!active) return;
-      // Merge durable outbox pending rows (offline / refresh) into the thread.
-      const pending = getOutboxForConversation(convId)
+    const pendingOf = () =>
+      getOutboxForConversation(convId)
         .filter((i) => i.kind === 'send')
         .map((i) => optimisticFromOutbox(i, profile?.id ?? ''));
-      const byId = new Map<string, Message>();
-      for (const m of msgs) byId.set(m.id, m);
-      for (const m of pending) if (!byId.has(m.id)) byId.set(m.id, m);
-      const merged = [...byId.values()].sort((a, b) =>
-        a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0,
-      );
-      setMessages(merged);
-      const ids = msgs.map((m) => m.id);
-      const rc = await getReceipts(supabase, ids);
-      const mineIds = msgs.filter((m) => m.sender_id === profile?.id).map((m) => m.id);
-      setTickMap(buildTickMap(rc, profile?.id, mineIds));
-      setReactions(await getReactions(supabase, ids));
-      const incomingIds = msgs.filter((m) => m.sender_id !== profile?.id).map((m) => m.id);
-      if (incomingIds.length) {
-        void markMessagesAsDelivered(supabase, incomingIds).catch(() => {});
-        if (!ghostRef.current) {
-          incomingIds.forEach((id) => { void markMessageAsRead(supabase, id).catch(() => {}); });
+
+    (async () => {
+      // 1) INSTANT: IndexedDB thread + durable outbox (never wait on network).
+      const cached = await getCachedMessages(convId);
+      if (!active) return;
+      let pending = pendingOf();
+      if (cached.length || pending.length) {
+        setMessages(mergeMessagesById(cached, pending));
+      } else {
+        setMessages([]);
+      }
+
+      // 2) BACKGROUND sync — delta when warm, full open-window when cold.
+      try {
+        const watermark = latestSyncedCreatedAt(cached);
+        let thread: Message[];
+        if (watermark && cached.length > 0) {
+          const delta = await getMessages(supabase, convId, { after: watermark, limit: 200 });
+          if (!active) return;
+          if (delta.length) {
+            thread = await mergeCachedDelta(convId, delta);
+          } else {
+            thread = cached;
+          }
+        } else {
+          const network = await getMessages(supabase, convId, MSG_OPEN_LIMIT);
+          if (!active) return;
+          await cacheMessages(convId, network);
+          thread = network;
         }
+        pending = pendingOf();
+        const merged = mergeNetworkMessages(mergeMessagesById(cached, pending), thread, 'delta');
+        setMessages(mergeMessagesById(merged, pending));
+
+        const ids = thread.map((m) => m.id);
+        if (ids.length) {
+          const [rc, rx] = await Promise.all([
+            getReceipts(supabase, ids),
+            getReactions(supabase, ids),
+          ]);
+          if (!active) return;
+          const mineIds = thread.filter((m) => m.sender_id === profile?.id).map((m) => m.id);
+          setTickMap(buildTickMap(rc, profile?.id, mineIds));
+          setReactions(rx);
+          const incomingIds = thread.filter((m) => m.sender_id !== profile?.id).map((m) => m.id);
+          if (incomingIds.length) {
+            void markMessagesAsDelivered(supabase, incomingIds).catch(() => {});
+            if (!ghostRef.current) {
+              incomingIds.forEach((id) => { void markMessageAsRead(supabase, id).catch(() => {}); });
+            }
+          }
+        }
+      } catch {
+        /* offline — cached view already on screen */
       }
       void flushOutbox();
     })().catch(() => {});
@@ -306,6 +367,7 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
       supabase, convId,
       (newMsg) => {
         setMessages((prev) => (prev.some((m) => m.id === newMsg.id) ? prev : [...prev, newMsg]));
+        void upsertCachedMessage(convId, newMsg);
         // A 'system' notice means the disappearing timer was just changed — refresh it.
         if (newMsg.type === 'system') getDisappearing(supabase, convId).then((s) => { if (active) setDisappearSecs(s); }).catch(() => {});
         if (newMsg.sender_id !== profile?.id) {
@@ -316,12 +378,15 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
       (updated) => {
         if (shouldOmitDeletedFromTimeline(updated)) {
           setMessages((prev) => prev.filter((m) => m.id !== updated.id));
+          void removeCachedMessages(convId, [updated.id]);
           return;
         }
         setMessages((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
+        void upsertCachedMessage(convId, updated);
       },
       (deletedId) => {
         setMessages((prev) => prev.filter((m) => m.id !== deletedId));
+        void removeCachedMessages(convId, [deletedId]);
       },
     );
     const receiptChannel = subscribeToReceipts(supabase, convId, (r) => {
@@ -557,6 +622,7 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
       senderId: profile?.id,
     });
     upsertMessage(optimisticFromOutbox(item, profile?.id ?? ''));
+    setDraft(convId, ''); // clear durable draft after successful queue
     // flushOutbox runs inside enqueue; if online, push is sent after insert.
     // Do NOT call notifyPush here — outbox flush owns push with messageId.
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
@@ -902,7 +968,51 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
     if (displayMessages.length <= msgWindow) return displayMessages;
     return displayMessages.slice(displayMessages.length - msgWindow);
   }, [displayMessages, msgWindow, searchActive]);
-  const hasOlderMessages = !searchActive && displayMessages.length > msgWindow;
+  const hasOlderInWindow = !searchActive && displayMessages.length > msgWindow;
+  const [hasMoreOnServer, setHasMoreOnServer] = useState(true);
+  useEffect(() => { setHasMoreOnServer(true); }, [convId]);
+  const hasOlderMessages = hasOlderInWindow || (!searchActive && hasMoreOnServer && displayMessages.length > 0);
+
+  /** Load older history from server (cursor pagination) and/or expand DOM window. */
+  async function loadOlderMessages() {
+    if (loadingOlderRef.current) return;
+    loadingOlderRef.current = true;
+    const c = messagesContainerRef.current;
+    const prevHeight = c?.scrollHeight ?? 0;
+    const prevTop = c?.scrollTop ?? 0;
+    try {
+      // First expand local window if we still have cached rows off-screen.
+      if (displayMessages.length > msgWindow) {
+        setMsgWindow((w) => Math.min(displayMessages.length, w + MSG_WINDOW_STEP));
+      } else {
+        const before = oldestCreatedAt(messagesRef.current);
+        if (before) {
+          const older = await getMessages(supabase, convId, { before, limit: MSG_WINDOW_STEP });
+          if (older.length === 0) {
+            setHasMoreOnServer(false);
+          } else {
+            if (older.length < MSG_WINDOW_STEP) setHasMoreOnServer(false);
+            setMessages((prev) => {
+              const merged = mergeMessagesById(older, prev);
+              void cacheMessages(convId, merged);
+              return merged;
+            });
+            setMsgWindow((w) => w + older.length);
+          }
+        } else {
+          setHasMoreOnServer(false);
+        }
+      }
+    } catch {
+      /* offline — keep windowed local history */
+    }
+    requestAnimationFrame(() => {
+      const el = messagesContainerRef.current;
+      if (el) el.scrollTop = el.scrollHeight - prevHeight + prevTop;
+      loadingOlderRef.current = false;
+    });
+  }
+
   const matchIds = useMemo(() => {
     if (!searchActive) return [] as string[];
     return displayMessages
@@ -1106,17 +1216,9 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
         onScroll={(e) => {
           const c = e.currentTarget;
           setShowJump(c.scrollHeight - c.scrollTop - c.clientHeight > 240);
-          // Expand window when user scrolls near top (preserve scroll position).
+          // Expand window / fetch older page near top (preserve scroll position).
           if (hasOlderMessages && c.scrollTop < 100 && !loadingOlderRef.current) {
-            loadingOlderRef.current = true;
-            const prevHeight = c.scrollHeight;
-            const prevTop = c.scrollTop;
-            setMsgWindow((w) => Math.min(displayMessages.length, w + MSG_WINDOW_STEP));
-            requestAnimationFrame(() => {
-              const el = messagesContainerRef.current;
-              if (el) el.scrollTop = el.scrollHeight - prevHeight + prevTop;
-              loadingOlderRef.current = false;
-            });
+            void loadOlderMessages();
           }
         }}
         onClick={() => { setPickerFor(null); setActionFor(null); setAiOpen(false); setStickersOpen(false); }}
@@ -1128,9 +1230,11 @@ export function ChatView({ conversation, isOtherPremium, onBack, onConversationG
           <button
             type="button"
             className="load-older-msgs"
-            onClick={() => setMsgWindow((w) => Math.min(displayMessages.length, w + MSG_WINDOW_STEP))}
+            onClick={() => { void loadOlderMessages(); }}
           >
-            Load older messages ({displayMessages.length - msgWindow} more)
+            {hasOlderInWindow
+              ? `Load older messages (${displayMessages.length - msgWindow} more)`
+              : 'Load older messages'}
           </button>
         )}
         {windowedMessages.map((msg, i) => {

@@ -51,10 +51,31 @@ export function CommunitiesModal({ onClose, onOpenChannel }: {
     return () => window.removeEventListener('keydown', onKey);
   }, [active, onClose]);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    // Cache-first: paint last-known communities instantly, then refresh.
+    let hadCache = false;
+    try {
+      const raw = localStorage.getItem('fh:web:communities:v1');
+      if (raw) {
+        const list = JSON.parse(raw) as Community[];
+        if (Array.isArray(list) && list.length) {
+          setCommunities(list);
+          setLoading(false);
+          hadCache = true;
+        }
+      }
+    } catch { /* ignore */ }
+    if (!hadCache) setLoading(true);
+    void load();
+  }, []);
   async function load() {
-    setLoading(true);
-    setCommunities(await getMyCommunities(supabase));
+    try {
+      const list = await getMyCommunities(supabase);
+      setCommunities(list);
+      try { localStorage.setItem('fh:web:communities:v1', JSON.stringify(list)); } catch { /* quota */ }
+    } catch {
+      /* keep cache offline */
+    }
     setLoading(false);
   }
 

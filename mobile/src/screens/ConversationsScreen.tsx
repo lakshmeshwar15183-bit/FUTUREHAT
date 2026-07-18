@@ -8,7 +8,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BackHandler,
-  FlatList,
   LayoutAnimation,
   Platform,
   Pressable,
@@ -20,6 +19,7 @@ import {
   UIManager,
   View,
 } from 'react-native';
+import { FlashList } from '@shopify/flash-list';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
@@ -29,6 +29,7 @@ import { LumixoCat } from '../components/LumixoCat';
 import { supabase } from '../lib/supabase';
 import {
   getMyConversations,
+  getMessages,
   getCurrentUser,
   searchAllMessages,
   getPinnedIds,
@@ -68,6 +69,7 @@ import {
   getCachedConversations, cacheConversations, getCache, setCache,
   pendingConversationEffects, reconcileIds, mergeEffects,
   getNicknames, cacheProfiles,
+  getCachedMessages, cacheMessages,
 } from '../lib/localCache';
 import { onConnectivity, queueAction } from '../lib/sync';
 import { formatListTimestamp } from '../lib/time';
@@ -564,6 +566,36 @@ export default function ConversationsScreen() {
         // Persist every participant so offline / failed joins keep real names.
         const allProfiles = stabilized.flatMap((c) => c.participants);
         cacheProfiles(allProfiles).catch(() => {});
+        // Preload recent threads into message cache (silent, offline-ready opens).
+        void (async () => {
+          const top = stabilized.slice(0, 8);
+          for (const c of top) {
+            try {
+              const convId = c.conversation.id;
+              const local = await getCachedMessages(convId);
+              if (local.length === 0) {
+                const msgs = await getMessages(supabase, convId, 80);
+                if (msgs.length) await cacheMessages(convId, msgs);
+              } else {
+                let after: string | null = null;
+                for (const m of local) {
+                  const f = m as { pending?: boolean; failed?: boolean };
+                  if (f.pending || f.failed) continue;
+                  if (!after || m.created_at > after) after = m.created_at;
+                }
+                if (!after) continue;
+                const delta = await getMessages(supabase, convId, { after, limit: 100 });
+                if (delta.length) {
+                  const map = new Map(local.map((m) => [m.id, m]));
+                  for (const m of delta) map.set(m.id, m);
+                  await cacheMessages(convId, [...map.values()]);
+                }
+              }
+            } catch {
+              /* one chat failure must not stop preload */
+            }
+          }
+        })();
       }
       // Per-user conversation flags (pin/mute/hidden) + premium wiring. Hidden
       // must be loaded here so hidden chats stay hidden across reloads (web parity).
@@ -1248,18 +1280,18 @@ export default function ConversationsScreen() {
         </View>
       )}
 
-      <FlatList
+      <FlashList
+        style={{ flex: 1 }}
         data={filteredItems}
         keyExtractor={(c) => c.conversation.id}
         renderItem={renderItem}
+        // Fixed-ish row height (~avatar 48 + vertical padding) — enables recycling.
+        estimatedItemSize={76}
         // Cheap identity for external row state — avoid joining every fav/pin id (jank).
         extraData={`${selectionGen}:${filter}:${pinnedOrder.length}:${favIds.size}:${mutedIds.size}:${onlineIds.size}`}
         keyboardShouldPersistTaps="handled"
-        initialNumToRender={listPerf.chatList.initialNumToRender}
-        maxToRenderPerBatch={listPerf.chatList.maxToRenderPerBatch}
-        windowSize={listPerf.chatList.windowSize}
-        updateCellsBatchingPeriod={listPerf.chatList.updateCellsBatchingPeriod}
-        removeClippedSubviews={listPerf.chatList.removeClippedSubviews}
+        // How far ahead to render (px). ~9 rows of look-ahead on mid-range phones.
+        drawDistance={listPerf.chatList.windowSize * 76}
         ItemSeparatorComponent={Separator}
         ListHeaderComponent={selectionMode ? null : (
           <View>
@@ -1502,7 +1534,7 @@ export default function ConversationsScreen() {
             </View>
           ) : null
         }
-        contentContainerStyle={filteredItems.length === 0 ? styles.flexGrow : undefined}
+        contentContainerStyle={{ paddingBottom: 24 }}
       />
 
       <Pressable

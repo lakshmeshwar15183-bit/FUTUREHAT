@@ -12,6 +12,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { invalidateSignedMediaUrl, mediaPathFromUrl, signedMediaUrl } from '@shared/api';
 import { supabase } from '../supabase';
 import { safeHref } from '../util/safeUrl';
+import { ensureMediaCached, getCachedMediaUrl } from './mediaReceiveCache';
 
 export interface SignedUrlState {
   /** Resolved, displayable url (signed for private media). Null while first
@@ -76,28 +77,50 @@ export function useSignedUrl(source: string | null | undefined): SignedUrlState 
       return;
     }
 
-    signedMediaUrl(supabase, source)
-      .then((resolved) => {
+    (async () => {
+      // 1) Instant offline / repeat open: permanent IndexedDB media cache.
+      try {
+        const local = await getCachedMediaUrl(source);
+        if (!alive) return;
+        if (local) {
+          setUrl(local);
+          setError(false);
+          setLoading(false);
+          return;
+        }
+      } catch {
+        /* fall through to sign */
+      }
+
+      try {
+        const resolved = await signedMediaUrl(supabase, source);
         if (!alive) return;
         // signedMediaUrl falls back to the raw url when signing fails — for a
         // private bucket that url will 403 and render broken. Require a signed
         // form; otherwise surface error so the caller shows retry.
         const isSigned = !!resolved && /\/object\/(sign|authenticated)\//.test(resolved);
-        if (isSigned) {
+        if (isSigned && resolved) {
           setUrl(resolved);
           setError(false);
+          setLoading(false);
+          // 2) Background: persist bytes so next open / offline is instant.
+          void ensureMediaCached(source, resolved).then((localUrl) => {
+            if (!alive || !localUrl || localUrl === resolved) return;
+            // Prefer blob: once cached (stable offline).
+            setUrl(localUrl);
+          });
         } else {
           setUrl(null);
           setError(true);
+          setLoading(false);
         }
-        setLoading(false);
-      })
-      .catch(() => {
+      } catch {
         if (!alive) return;
         setUrl(null);
         setLoading(false);
         setError(true);
-      });
+      }
+    })();
     return () => { alive = false; };
   }, [source, nonce]);
 

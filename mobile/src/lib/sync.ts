@@ -55,6 +55,10 @@ import {
   uuidv4,
   type OutboxItem,
 } from './localCache';
+import { retryDelayMs } from '../../../shared/localFirst';
+
+/** Per-item next-retry (ms epoch). In-memory; resets on process death (ok — attempts still persist). */
+const nextRetryAt = new Map<string, number>();
 
 type OnlineListener = (online: boolean) => void;
 type OutboxListener = (item: OutboxItem, sentId: string) => void;
@@ -137,12 +141,16 @@ export async function flushOutbox(): Promise<void> {
             } as any;
             await upsertCachedMessage(item.conversationId, failedMsg);
           } catch { /* cache best-effort */ }
+          nextRetryAt.delete(item.tempId);
           await removeFromOutbox(item.tempId);
           deadLetterListeners.forEach((l) => {
             try { l(item, 'max_attempts'); } catch { /* listener must not break flush */ }
           });
           continue;
         }
+        // Exponential backoff on poor networks (don't hammer the API).
+        const due = nextRetryAt.get(item.tempId) ?? 0;
+        if (due > Date.now()) continue;
         try {
           // Offline media (0030): if this item still holds a LOCAL file:// URI, upload
           // it now (on reconnect) and swap in the remote URL before inserting the row.
@@ -153,7 +161,9 @@ export async function flushOutbox(): Promise<void> {
               item.conversationId, item.localUri, item.fileName ?? `media_${item.tempId}`,
             );
             if (upErr || !url) {
-              await updateOutboxItem(item.tempId, { attempts: (item.attempts ?? 0) + 1 });
+              const attempts = (item.attempts ?? 0) + 1;
+              nextRetryAt.set(item.tempId, Date.now() + retryDelayMs(attempts));
+              await updateOutboxItem(item.tempId, { attempts });
               continue;
             }
             mediaUrl = url;
@@ -180,6 +190,7 @@ export async function flushOutbox(): Promise<void> {
           );
           if ((message && !error) || dupe) {
             if (message) await upsertCachedMessage(item.conversationId, message);
+            nextRetryAt.delete(item.tempId);
             await removeFromOutbox(item.tempId);
             sentListeners.forEach((l) => l(item, message?.id ?? item.tempId));
             // Live streak signal (fire-and-forget): the SERVER re-derives whether this
@@ -222,10 +233,14 @@ export async function flushOutbox(): Promise<void> {
               });
             } catch { /* ignore */ }
           } else {
-            await updateOutboxItem(item.tempId, { attempts: (item.attempts ?? 0) + 1 });
+            const attempts = (item.attempts ?? 0) + 1;
+            nextRetryAt.set(item.tempId, Date.now() + retryDelayMs(attempts));
+            await updateOutboxItem(item.tempId, { attempts });
           }
         } catch {
-          await updateOutboxItem(item.tempId, { attempts: (item.attempts ?? 0) + 1 });
+          const attempts = (item.attempts ?? 0) + 1;
+          nextRetryAt.set(item.tempId, Date.now() + retryDelayMs(attempts));
+          await updateOutboxItem(item.tempId, { attempts });
         }
       }
       // Loop if another flush was requested while we were working (new enqueue, etc.).

@@ -27,6 +27,18 @@ import {
   aggregateRecipientTick,
   type TickStatus,
 } from './messageStatus.js';
+// Re-export local-first pure helpers so existing `@shared/api` imports keep working.
+export {
+  MSG_CACHE_LIMIT,
+  MSG_OPEN_LIMIT,
+  PRELOAD_RECENT_CHATS,
+  mergeMessagesById,
+  mergeNetworkMessages,
+  latestSyncedCreatedAt,
+  oldestCreatedAt,
+  retryDelayMs,
+  isLocalOnlyMessage,
+} from './localFirst.js';
 import {
   resolveConversationTitle,
   resolveConversationAvatar,
@@ -454,19 +466,54 @@ export async function getMyConversations(
 
 // ── Messages ────────────────────────────────────────────────────────────────
 
+/** Options for local-first message sync / pagination. */
+export type GetMessagesOpts = {
+  /** Max rows (default 50). Capped at 1000. */
+  limit?: number;
+  /** Older page: messages strictly before this ISO `created_at` (scroll-up). */
+  before?: string;
+  /** Delta sync: messages strictly after this ISO `created_at` (background). */
+  after?: string;
+};
+
+/**
+ * Fetch messages for a conversation.
+ * - Default: latest `limit` rows (newest window).
+ * - `before`: older page for scroll-up pagination (does not re-download recent).
+ * - `after`: incremental delta since last cache watermark (background sync).
+ * Third arg accepts a number (legacy) or GetMessagesOpts.
+ */
 export async function getMessages(
   client: SupabaseClient,
   conversationId: UUID,
-  limit = 50,
+  limitOrOpts: number | GetMessagesOpts = 50,
 ): Promise<Message[]> {
-  const { data } = await client
+  const opts: GetMessagesOpts =
+    typeof limitOrOpts === 'number' ? { limit: limitOrOpts } : limitOrOpts ?? {};
+  const limit = Math.min(Math.max(opts.limit ?? 50, 1), 1000);
+  let q = client
     .from('messages')
     .select('*')
     .eq('conversation_id', conversationId)
     // Disappearing messages (0022): never fetch ones that already expired.
-    .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
-    .order('created_at', { ascending: false })
-    .limit(limit);
+    .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`);
+
+  if (opts.after) {
+    // Delta: ascending from after → return chronological order.
+    q = q.gt('created_at', opts.after).order('created_at', { ascending: true }).limit(limit);
+    const { data } = await q;
+    return data || [];
+  }
+
+  if (opts.before) {
+    // Older page: descending before cursor, then reverse to chronological.
+    q = q.lt('created_at', opts.before).order('created_at', { ascending: false }).limit(limit);
+    const { data } = await q;
+    return (data || []).reverse();
+  }
+
+  q = q.order('created_at', { ascending: false }).limit(limit);
+  const { data } = await q;
   return (data || []).reverse();
 }
 

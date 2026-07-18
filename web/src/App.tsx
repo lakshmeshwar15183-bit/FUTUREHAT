@@ -54,6 +54,7 @@ import {
   mark,
 } from './lib/startupCache';
 import { startWebOutbox } from './lib/outbox';
+import { scheduleThreadPreload } from './lib/backgroundSync';
 import { lazyStable } from './lib/lazyStable';
 import { ErrorBoundary } from './lib/ErrorBoundary';
 import './App.css';
@@ -194,6 +195,8 @@ function AppInner() {
       setListHydrating(false);
       mark('convs-fetch-done');
       if (uid) writeCachedConversations(uid, stabilized);
+      // Silent warm of recent threads so open-chat is IndexedDB-instant.
+      scheduleThreadPreload(stabilized);
     } catch {
       /* transient network — keep cache */
       if (mountedRef.current) setListHydrating(false);
