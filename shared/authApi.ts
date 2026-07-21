@@ -9,6 +9,7 @@ import {
   validatePassword,
   validateDisplayName,
 } from './authErrors.js';
+import { DISPOSABLE_EMAIL_MESSAGE, isDisposableEmail } from './disposableEmail.js';
 import { isValidE164, normalizeToE164, type DefaultCountry } from './phone.js';
 
 export interface SignUpInput {
@@ -46,6 +47,10 @@ export async function registerWithEmail(
   const email = input.email.trim().toLowerCase();
   if (!isValidEmail(email)) {
     return { user: null, session: null, error: new Error('Enter a valid email address.') };
+  }
+  // Free offline block: reject known temporary / disposable inboxes.
+  if (isDisposableEmail(email)) {
+    return { user: null, session: null, error: new Error(DISPOSABLE_EMAIL_MESSAGE) };
   }
   const nameCheck = validateDisplayName(input.displayName);
   if (!nameCheck.ok) {

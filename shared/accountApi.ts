@@ -4,6 +4,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { UUID } from './types.js';
 import { getCurrentUser } from './api.js';
 import { friendlyAuthError, isValidEmail, validatePassword } from './authErrors.js';
+import { DISPOSABLE_EMAIL_MESSAGE, isDisposableEmail } from './disposableEmail.js';
 import { setMyPhone, logout, getMyAccount } from './authApi.js';
 import type { DefaultCountry } from './phone.js';
 
@@ -52,6 +53,9 @@ export async function changeEmail(client: SupabaseClient, newEmail: string) {
   const mail = newEmail.trim().toLowerCase();
   if (!isValidEmail(mail)) {
     return { error: new Error('Enter a valid email address.') };
+  }
+  if (isDisposableEmail(mail)) {
+    return { error: new Error(DISPOSABLE_EMAIL_MESSAGE) };
   }
   const { error } = await client.auth.updateUser({ email: mail });
   if (error) return { error: new Error(friendlyAuthError(error, 'Could not update email.')) };

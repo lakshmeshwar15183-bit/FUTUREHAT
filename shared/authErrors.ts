@@ -57,6 +57,12 @@ export function friendlyAuthError(err: unknown, fallback = 'Something went wrong
   if (code === 'over_email_send_rate_limit' || /email rate limit|over_email/.test(lower)) {
     return 'Too many emails sent. Please wait a few minutes and try again.';
   }
+  if (
+    code === 'disposable_email_not_allowed' ||
+    /disposable_email_not_allowed|disposable email|temporary email|temp.?mail/.test(lower)
+  ) {
+    return 'Temporary or disposable email addresses are not allowed. Please use a permanent email (Gmail, Outlook, iCloud, Proton, Yahoo, etc.).';
+  }
   if (code === 'same_password' || /same password|different from the old/.test(lower)) {
     return 'Choose a password you have not used recently.';
   }
