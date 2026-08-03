@@ -1,6 +1,6 @@
-// FUTUREHAT web — Supabase client singleton
+// Lumixo web — Supabase client singleton
 
-import { createFutureHatClient } from '@shared/client';
+import { createLumixoClient } from '@shared/client';
 
 const url = import.meta.env.VITE_SUPABASE_URL;
 const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -9,4 +9,4 @@ if (!url || !anonKey) {
   throw new Error('Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY in .env.local');
 }
 
-export const supabase = createFutureHatClient({ url, anonKey });
+export const supabase = createLumixoClient({ url, anonKey });

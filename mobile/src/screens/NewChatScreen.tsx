@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — start a new conversation. Two modes:
+// Lumixo mobile — start a new conversation. Two modes:
 //   • no search query  → persistent "recent contacts" (people you've chatted
 //     with before), rendered instantly from local cache and refreshed in the
 //     background. Survives deleting the conversation (independent data source).
@@ -9,27 +9,33 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
-  FlatList,
+  Linking,
   Pressable,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import SafeFlatList from '../ui/SafeFlatList';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { supabase } from '../lib/supabase';
+import ProfileAvatar from '../components/ProfileAvatar';
 import {
   searchProfiles,
   startDirectConversation,
   getCurrentUser,
   listRecentContacts,
+  discoverContactsFromEntries,
+  resolveDisplayName,
   type Profile,
   type RecentContact,
+  type DiscoveredContact,
 } from '../lib/shared';
+import { readLocalContactEntries } from '../lib/deviceContacts';
+import { LumixoCat } from '../components/LumixoCat';
 import {
   getCachedRecentContacts,
   cacheRecentContacts,
@@ -39,6 +45,7 @@ import { queueAction } from '../lib/sync';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import Avatar from '../components/Avatar';
 import type { RootStackParamList } from '../navigation/types';
+import { Alert } from '../ui/dialog';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'NewChat'>;
 
@@ -53,6 +60,8 @@ export default function NewChatScreen() {
   const [opening, setOpening] = useState(false);
   const [uid, setUid] = useState<string | null>(null);
   const [recent, setRecent] = useState<RecentContact[]>([]);
+  const [phoneMatches, setPhoneMatches] = useState<DiscoveredContact[]>([]);
+  const [discovering, setDiscovering] = useState(false);
 
   // ── Offline-first load of recent contacts ──────────────────────────────────
   // 1) render the local cache immediately (no network wait), then
@@ -98,11 +107,16 @@ export default function NewChatScreen() {
     let active = true;
     setSearching(true);
     const t = setTimeout(async () => {
-      const data = await searchProfiles(supabase, q);
-      if (active) {
-        // never surface the current user in their own results
-        setResults(data.filter((p) => p.id !== uid));
-        setSearching(false);
+      try {
+        const data = await searchProfiles(supabase, q);
+        if (active) {
+          // never surface the current user in their own results
+          setResults(data.filter((p) => p.id !== uid));
+        }
+      } catch {
+        if (active) setResults([]);
+      } finally {
+        if (active) setSearching(false);
       }
     }, 300);
     return () => {
@@ -164,8 +178,82 @@ export default function NewChatScreen() {
     queueAction('removeRecentContact', { contactId });
   }
 
+  async function findFromPhoneContacts() {
+    if (discovering) return;
+    setDiscovering(true);
+    try {
+      // WhatsApp-class: tap → system permission dialog first (no custom pre-prompt).
+      // Permanent deny → Open Settings. Soft deny → friendly note, stay usable.
+      const { entries, permission, error: readErr } = await readLocalContactEntries();
+
+      if (permission === 'unavailable') {
+        Alert.alert(
+          'Contacts',
+          readErr?.message ??
+            'Contacts are not available on this build. Update the app to find friends by phone.',
+        );
+        return;
+      }
+
+      if (permission === 'permanently_denied') {
+        Alert.alert(
+          'Contacts access',
+          'Contacts permission is permanently turned off for Lumixo. Open Settings to enable it so you can find friends from your address book.',
+          [
+            { text: 'Not now', style: 'cancel' },
+            {
+              text: 'Open Settings',
+              onPress: () => {
+                void Linking.openSettings().catch(() => {});
+              },
+            },
+          ],
+        );
+        return;
+      }
+
+      if (permission === 'denied' || permission === 'undetermined') {
+        // User dismissed the system dialog once — do not block the rest of the app.
+        Alert.alert(
+          'Contacts',
+          'You can still search by name or @username. Allow Contacts anytime to find friends who are already on Lumixo.',
+        );
+        return;
+      }
+
+      // granted
+      if (readErr) {
+        Alert.alert('Contacts', readErr.message);
+        return;
+      }
+      if (!entries.length) {
+        Alert.alert('Contacts', 'No phone numbers found in your contacts.');
+        return;
+      }
+      const { matches, error } = await discoverContactsFromEntries(supabase, entries);
+      if (error) {
+        Alert.alert('Contacts', error.message);
+        return;
+      }
+      setPhoneMatches(matches.filter((m) => m.userId !== uid));
+      if (!matches.length) {
+        Alert.alert(
+          'No matches',
+          'None of your contacts are on Lumixo yet. Invite friends to join with their email.',
+        );
+      }
+    } finally {
+      setDiscovering(false);
+    }
+  }
+
   const isSearching = query.trim().length >= 2;
   const recentProfiles = recent.map((r) => r.contact).filter((p) => p && p.id !== uid);
+  const phoneProfiles = phoneMatches.map((m) => ({
+    ...m.profile,
+    // Prefer local address-book name for the subtitle only; open() uses profile.
+    _localName: m.localName,
+  }));
 
   return (
     <View style={styles.container}>
@@ -190,38 +278,80 @@ export default function NewChatScreen() {
         <Text style={styles.actionLabel}>New group</Text>
       </Pressable>
 
-      <FlatList
-        data={isSearching ? results : recentProfiles}
+      <Pressable style={styles.actionRow} onPress={findFromPhoneContacts} disabled={discovering}>
+        <View style={[styles.actionIcon, { backgroundColor: colors.primary }]}>
+          {discovering ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Ionicons name="person-add" size={22} color="#fff" />
+          )}
+        </View>
+        <View style={{ flex: 1, marginLeft: spacing(3) }}>
+          <Text style={[styles.actionLabel, { marginLeft: 0 }]}>Find from contacts</Text>
+          <Text style={styles.actionSub}>
+            Numbers stay on your phone — only private hashes are checked
+          </Text>
+        </View>
+      </Pressable>
+
+      <SafeFlatList
+        data={isSearching ? results : [...phoneProfiles.map((p) => p as Profile), ...recentProfiles.filter((r) => !phoneMatches.some((m) => m.userId === r.id))]}
         keyExtractor={(p) => p.id}
         keyboardShouldPersistTaps="handled"
+        contentContainerStyle={{ paddingBottom: spacing(4) }}
         ListHeaderComponent={
-          !isSearching && recentProfiles.length > 0 ? (
-            <Text style={styles.sectionLabel}>RECENT CONTACTS</Text>
+          !isSearching ? (
+            <>
+              {phoneMatches.length > 0 ? (
+                <Text style={styles.sectionLabel}>ON LUMIXO FROM YOUR CONTACTS</Text>
+              ) : null}
+              {phoneMatches.length === 0 && recentProfiles.length > 0 ? (
+                <Text style={styles.sectionLabel}>RECENT CONTACTS</Text>
+              ) : null}
+            </>
           ) : null
         }
-        renderItem={({ item }) => (
-          <Pressable
-            style={styles.row}
-            onPress={() => open(item)}
-            onLongPress={!isSearching ? () => confirmRemove(item) : undefined}
-            delayLongPress={300}
-          >
-            <Avatar uri={item.avatar_url} name={item.display_name ?? item.username} size={48} />
-            <View style={styles.rowBody}>
-              <Text style={styles.name}>{item.display_name ?? 'FUTUREHAT user'}</Text>
-              <Text style={styles.sub} numberOfLines={1}>
-                {item.about || (item.username ? `@${item.username}` : 'Available')}
-              </Text>
-            </View>
-          </Pressable>
-        )}
+        renderItem={({ item }) => {
+          const local = phoneMatches.find((m) => m.userId === item.id)?.localName;
+          const title = resolveDisplayName(item) || local || 'Lumixo user';
+          return (
+            <Pressable
+              style={styles.row}
+              onPress={() => open(item)}
+              onLongPress={!isSearching && !phoneMatches.some((m) => m.userId === item.id) ? () => confirmRemove(item) : undefined}
+              delayLongPress={300}
+            >
+              <ProfileAvatar
+                uri={item.avatar_url}
+                name={item.display_name ?? item.username}
+                size={48}
+                userId={item.id}
+                mode="auto"
+              />
+              <View style={styles.rowBody}>
+                <Text style={styles.name}>{title}</Text>
+                <Text style={styles.sub} numberOfLines={1}>
+                  {local && item.display_name
+                    ? `${item.display_name}${item.username ? ` · @${item.username}` : ''}`
+                    : item.about || (item.username ? `@${item.username}` : 'Available')}
+                </Text>
+              </View>
+            </Pressable>
+          );
+        }}
         ListEmptyComponent={
           isSearching && !searching ? (
-            <Text style={styles.empty}>No users found for “{query.trim()}”.</Text>
+            <View style={styles.emptyWrap}>
+              <LumixoCat mood="confused" size="sm" decorative />
+              <Text style={styles.empty}>No users found for “{query.trim()}”.</Text>
+            </View>
           ) : !isSearching ? (
-            <Text style={styles.empty}>
-              No recent contacts yet. Search above to start your first chat.
-            </Text>
+            <View style={styles.emptyWrap}>
+              <LumixoCat mood="wave" size="sm" decorative />
+              <Text style={styles.empty}>
+                No recent contacts yet. Search above or find friends from your phone contacts.
+              </Text>
+            </View>
           ) : null
         }
       />
@@ -244,6 +374,7 @@ const makeStyles = (colors: Palette) =>
     actionRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing(4), paddingVertical: spacing(3) },
     actionIcon: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
     actionLabel: { color: colors.text, fontSize: font.heading, marginLeft: spacing(3), fontWeight: '500' },
+    actionSub: { color: colors.textMuted, fontSize: font.small, marginTop: 2 },
     sectionLabel: {
       color: colors.textMuted,
       fontSize: font.small,
@@ -257,5 +388,6 @@ const makeStyles = (colors: Palette) =>
     rowBody: { flex: 1, marginLeft: spacing(3) },
     name: { color: colors.text, fontSize: font.heading, fontWeight: '500' },
     sub: { color: colors.textMuted, fontSize: font.small, marginTop: 2 },
-    empty: { color: colors.textMuted, textAlign: 'center', marginTop: spacing(8), fontSize: font.body, paddingHorizontal: spacing(6) },
+    emptyWrap: { alignItems: 'center', marginTop: spacing(6), paddingHorizontal: spacing(6) },
+    empty: { color: colors.textMuted, textAlign: 'center', marginTop: spacing(3), fontSize: font.body },
   });

@@ -1,8 +1,10 @@
-/* FUTUREHAT — global styles + theme variable contract.
+/* Lumixo — global styles + theme variable contract.
    Defaults below mirror the Classic theme; the appearance engine
    (theme/themes.ts) overrides these CSS variables at runtime. */
 
 :root {
+  /* Dark defaults; appearanceMode.ts / prefers-color-scheme override for light. */
+  color-scheme: dark;
   --fh-bg: #111b21;
   --fh-panel: #202c33;
   --fh-elevated: #2a3942;
@@ -18,6 +20,34 @@
   --fh-radius: 14px;
   --fh-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
   --fh-shadow-soft: 0 4px 16px rgba(0, 0, 0, 0.25);
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+/* First paint before JS: match OS when no data-appearance set yet. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-appearance="dark"]) {
+    color-scheme: light;
+    --fh-bg: #ffffff;
+    --fh-panel: #ffffff;
+    --fh-elevated: #f0f2f5;
+    --fh-chat-bg: #efeae2;
+    --fh-accent: #008069;
+    --fh-accent-2: #00a884;
+    --fh-bubble-mine: #d9fdd3;
+    --fh-bubble-theirs: #ffffff;
+    --fh-text: #111b21;
+    --fh-muted: #667781;
+    --fh-border: #e9edef;
+    --fh-shadow: 0 2px 12px rgba(11, 20, 26, 0.08);
+    --fh-shadow-soft: 0 1px 4px rgba(11, 20, 26, 0.06);
+  }
+}
+
+html[data-appearance="light"] {
+  color-scheme: light;
+}
+html[data-appearance="dark"] {
+  color-scheme: dark;
 }
 
 * {
@@ -26,13 +56,63 @@
   box-sizing: border-box;
 }
 
+/* Stable full-viewport fill (P0 blank-screen prevention). */
+html {
+  height: 100%;
+  height: 100dvh;
+  background: var(--fh-bg, #0b141a);
+}
+html, body, #root {
+  width: 100%;
+  min-height: 100%;
+  min-height: 100dvh;
+  min-height: var(--app-height, 100dvh);
+}
 body {
   font-family: var(--fh-font);
   background: var(--fh-bg);
   color: var(--fh-text);
   overflow: hidden;
+  height: 100%;
+  height: var(--app-height, 100dvh);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+}
+#root {
+  height: 100%;
+  height: var(--app-height, 100dvh);
+  display: flex;
+  flex-direction: column;
+  background: var(--fh-bg, #0b141a);
+}
+/* Used by viewportStability forceRepaint — no visual change. */
+#root.fh-repaint {
+  transform: translateZ(0);
+}
+.fh-boot-fallback {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--app-height, 100dvh);
+  background: var(--fh-bg, #0b141a);
+  color: var(--fh-text, #e9edef);
+  gap: 8px;
+}
+.fh-boot-fallback-brand {
+  font-weight: 800;
+  font-size: 28px;
+  color: #00a884;
+  letter-spacing: 0.04em;
+}
+.fh-app-root,
+.fh-auth-root {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -171,4 +251,43 @@ a {
 .modal-actions button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* Error boundary — never leave a blank root */
+.fh-error-boundary {
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #0b141a;
+  color: #e9edef;
+  padding: 24px;
+}
+.fh-error-card {
+  max-width: 360px;
+  text-align: center;
+  background: #1f2c33;
+  border-radius: 16px;
+  padding: 28px 24px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+}
+.fh-error-icon { font-size: 40px; margin-bottom: 12px; }
+.fh-error-mascot { display: flex; justify-content: center; margin-bottom: 8px; }
+.fh-error-card h1 { font-size: 18px; margin-bottom: 8px; }
+.fh-error-card p { color: #8696a0; font-size: 14px; margin-bottom: 20px; line-height: 1.45; }
+.fh-error-btn {
+  display: inline-block;
+  margin: 4px;
+  padding: 10px 18px;
+  border-radius: 8px;
+  border: none;
+  background: #00a884;
+  color: #fff;
+  font-weight: 600;
+  font-size: 14px;
+}
+.fh-error-btn.ghost {
+  background: transparent;
+  color: #8696a0;
+  border: 1px solid #2a3942;
 }

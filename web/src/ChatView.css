@@ -6,6 +6,150 @@
   height: 100%;
 }
 
+/* Telegram-style delete dialog */
+.delete-dlg {
+  width: min(360px, 92vw);
+  padding: 20px 20px 14px;
+  border-radius: 14px;
+  background: var(--fh-panel, #202c33);
+  color: var(--fh-text, #e9edef);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+}
+.delete-dlg h3 {
+  margin: 0 0 8px;
+  font-size: 18px;
+  font-weight: 700;
+}
+.delete-dlg p {
+  margin: 0 0 14px;
+  font-size: 14px;
+  color: var(--fh-muted, #8696a0);
+  line-height: 1.4;
+}
+.delete-dlg-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  margin-bottom: 16px;
+  cursor: pointer;
+  user-select: none;
+}
+.delete-dlg-check input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--fh-accent, #00a884);
+}
+.delete-dlg-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.delete-dlg-actions button {
+  border: none;
+  background: transparent;
+  color: var(--fh-muted, #8696a0);
+  font-weight: 600;
+  font-size: 14px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.delete-dlg-actions button.danger {
+  color: #f15c6d;
+  font-weight: 700;
+}
+.delete-dlg-actions button:hover {
+  background: rgba(127, 127, 127, 0.12);
+}
+
+/* @mention picker above composer */
+.mention-menu {
+  position: absolute;
+  left: 56px;
+  right: 56px;
+  bottom: 100%;
+  margin-bottom: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+  background: var(--fh-panel, #202c33);
+  border: 1px solid var(--fh-border, #2a3942);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  z-index: 20;
+}
+.mention-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--fh-text, #e9edef);
+  padding: 10px 12px;
+  cursor: pointer;
+  text-align: left;
+  font-size: 14px;
+}
+.mention-item:hover {
+  background: color-mix(in srgb, var(--fh-accent, #00a884) 12%, transparent);
+}
+.mention-av {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--fh-surface-alt, #2a3942);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 12px;
+  flex: none;
+}
+.mention-name { font-weight: 600; }
+.mention-user { color: var(--fh-muted, #8696a0); font-size: 12px; }
+
+/* WhatsApp-style pinned messages strip */
+.pinned-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-bottom: 1px solid var(--fh-border, #2a3942);
+  background: var(--fh-panel, #202c33);
+  color: var(--fh-text, #e9edef);
+  padding: 8px 14px;
+  cursor: pointer;
+}
+.pinned-banner:hover {
+  background: color-mix(in srgb, var(--fh-accent, #00a884) 8%, var(--fh-panel, #202c33));
+}
+.pinned-banner-icon {
+  font-size: 16px;
+  flex: none;
+}
+.pinned-banner-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.pinned-banner-body strong {
+  font-size: 12px;
+  color: var(--fh-accent, #00a884);
+  font-weight: 700;
+}
+.pinned-banner-text {
+  font-size: 13px;
+  color: var(--fh-muted, #8696a0);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .chat-header {
   display: flex;
   align-items: center;
@@ -64,6 +208,23 @@
 }
 .chat-enc-note svg { opacity: 0.85; }
 
+.load-older-msgs {
+  display: block;
+  margin: 8px auto 16px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--fh-border, #2a3942);
+  background: var(--fh-panel, #202c33);
+  color: var(--fh-muted, #8696a0);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.load-older-msgs:hover {
+  color: var(--fh-text, #e9edef);
+  border-color: var(--fh-muted, #8696a0);
+}
+
 .messages-container {
   flex: 1;
   overflow-y: auto;
@@ -79,6 +240,9 @@
   flex-direction: column;
   margin-bottom: 2px;
   max-width: 65%;
+  /* Skip layout/paint for off-screen bubbles (long threads stay near 60fps). */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 72px;
 }
 /* New sender / new group gets a gap above; continuations stack tightly (WhatsApp). */
 .message:not(.grouped) { margin-top: 10px; }
@@ -348,6 +512,7 @@
 }
 
 .message-input-form {
+  position: relative;
   display: flex;
   align-items: flex-end;
   gap: 12px;
@@ -652,8 +817,29 @@
 .reply-quote-name { font-size: 12px; font-weight: 600; color: var(--fh-accent); }
 .reply-quote-text { font-size: 13px; color: var(--fh-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-.message-bubble.deleted { opacity: 0.8; }
-.deleted-text { font-style: italic; color: var(--fh-muted); }
+.message-bubble.deleted {
+  opacity: 0.92;
+  pointer-events: none;
+  user-select: none;
+}
+.message-bubble.moderation-removed {
+  background: color-mix(in srgb, var(--fh-muted) 12%, transparent) !important;
+  border: 1px solid color-mix(in srgb, var(--fh-muted) 20%, transparent);
+  box-shadow: none;
+}
+.deleted-text {
+  font-style: italic;
+  color: var(--fh-muted);
+  font-size: 0.92em;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.35rem;
+  line-height: 1.35;
+}
+.deleted-icon {
+  flex-shrink: 0;
+  line-height: 1.35;
+}
 .edited-tag { font-size: 10px; opacity: 0.7; margin-right: 2px; }
 
 /* ── Reply / edit compose banner ──────────────────────────────────────────── */

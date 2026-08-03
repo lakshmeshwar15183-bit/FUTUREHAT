@@ -3,7 +3,7 @@
 // Gradle output straight through and exits with Gradle's own status code.
 import { spawnSync } from 'node:child_process';
 
-const ANDROID_DIR = '/Users/lakshmeshwarpandey/FUTUREHAT/mobile/android';
+const ANDROID_DIR = '/Users/lakshmeshwarpandey/Lumixo/mobile/android';
 const JAVA_HOME = '/opt/homebrew/opt/openjdk@17';
 
 console.log('[build-release] gradlew clean :app:bundleRelease :app:assembleRelease --no-daemon');

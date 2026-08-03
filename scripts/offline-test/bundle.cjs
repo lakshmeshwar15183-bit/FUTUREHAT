@@ -37,6 +37,7 @@ module.exports = __toCommonJS(entry_exports);
 // ../../mobile/src/lib/localCache.ts
 var localCache_exports = {};
 __export(localCache_exports, {
+  MSG_CACHE_LIMIT: () => MSG_CACHE_LIMIT,
   cacheConversations: () => cacheConversations,
   cacheMessages: () => cacheMessages,
   cacheProfile: () => cacheProfile,
@@ -64,7 +65,7 @@ __export(localCache_exports, {
   upsertCachedMessage: () => upsertCachedMessage,
   uuidv4: () => uuidv4
 });
-var import_async_storage = __toESM(require("/Users/lakshmeshwarpandey/FUTUREHAT/scripts/offline-test/mocks/async-storage.js"));
+var import_async_storage = __toESM(require("/Users/lakshmeshwarpandey/Lumixo/scripts/offline-test/mocks/async-storage.js"));
 var K = {
   convs: (uid) => `fh:cache:convs:${uid}`,
   msgs: (convId) => `fh:cache:msgs:${convId}`,
@@ -74,8 +75,23 @@ var K = {
   outbox: "fh:outbox:v1",
   actions: "fh:actions:v1"
 };
-var MSG_CACHE_LIMIT = 200;
+var MSG_CACHE_LIMIT = 800;
 function uuidv4() {
+  const g = globalThis;
+  if (g.crypto?.randomUUID) {
+    try {
+      return g.crypto.randomUUID();
+    } catch {
+    }
+  }
+  if (g.crypto?.getRandomValues) {
+    const bytes = new Uint8Array(16);
+    g.crypto.getRandomValues(bytes);
+    bytes[6] = bytes[6] & 15 | 64;
+    bytes[8] = bytes[8] & 63 | 128;
+    const hex = [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  }
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
     const r = Math.random() * 16 | 0;
     const v = c === "x" ? r : r & 3 | 8;
@@ -117,16 +133,43 @@ async function cacheConversations(uid, list) {
 async function getCachedMessages(convId) {
   return readJSON(K.msgs(convId), []);
 }
+var msgCacheChains = /* @__PURE__ */ new Map();
+function withMsgCacheLock(convId, fn) {
+  const prev = msgCacheChains.get(convId) ?? Promise.resolve();
+  const run = prev.then(fn, fn);
+  msgCacheChains.set(
+    convId,
+    run.then(
+      () => void 0,
+      () => void 0
+    )
+  );
+  return run;
+}
 async function cacheMessages(convId, messages) {
-  const trimmed = messages.slice(-MSG_CACHE_LIMIT);
-  await writeJSON(K.msgs(convId), trimmed);
+  return withMsgCacheLock(convId, async () => {
+    const existing = await getCachedMessages(convId);
+    const map = /* @__PURE__ */ new Map();
+    for (const m of existing) map.set(m.id, m);
+    for (const m of messages) map.set(m.id, m);
+    const merged = [...map.values()].sort(
+      (a, b) => a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0
+    );
+    const trimmed = merged.slice(-MSG_CACHE_LIMIT);
+    await writeJSON(K.msgs(convId), trimmed);
+  });
 }
 async function upsertCachedMessage(convId, message) {
-  const cur = await getCachedMessages(convId);
-  const idx = cur.findIndex((m) => m.id === message.id);
-  if (idx >= 0) cur[idx] = message;
-  else cur.push(message);
-  await cacheMessages(convId, cur);
+  return withMsgCacheLock(convId, async () => {
+    const cur = await getCachedMessages(convId);
+    const idx = cur.findIndex((m) => m.id === message.id);
+    if (idx >= 0) cur[idx] = message;
+    else cur.push(message);
+    const trimmed = cur.slice().sort(
+      (a, b) => a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0
+    ).slice(-MSG_CACHE_LIMIT);
+    await writeJSON(K.msgs(convId), trimmed);
+  });
 }
 async function getCachedProfile(id) {
   return readJSON(K.profile(id), null);
@@ -157,35 +200,65 @@ async function setDraft(convId, text) {
 async function getOutbox() {
   return readJSON(K.outbox, []);
 }
+var outboxChain = Promise.resolve();
+function withOutboxLock(fn) {
+  const run = outboxChain.then(fn, fn);
+  outboxChain = run.then(
+    () => void 0,
+    () => void 0
+  );
+  return run;
+}
 async function enqueueOutbox(item) {
-  const cur = await getOutbox();
-  cur.push(item);
-  await writeJSON(K.outbox, cur);
+  return withOutboxLock(async () => {
+    const cur = await getOutbox();
+    cur.push(item);
+    await writeJSON(K.outbox, cur);
+  });
 }
 async function removeFromOutbox(tempId) {
-  const cur = await getOutbox();
-  await writeJSON(K.outbox, cur.filter((i) => i.tempId !== tempId));
+  return withOutboxLock(async () => {
+    const cur = await getOutbox();
+    await writeJSON(K.outbox, cur.filter((i) => i.tempId !== tempId));
+  });
 }
 async function updateOutboxItem(tempId, patch) {
-  const cur = await getOutbox();
-  const next = cur.map((i) => i.tempId === tempId ? { ...i, ...patch } : i);
-  await writeJSON(K.outbox, next);
+  return withOutboxLock(async () => {
+    const cur = await getOutbox();
+    const next = cur.map((i) => i.tempId === tempId ? { ...i, ...patch } : i);
+    await writeJSON(K.outbox, next);
+  });
 }
 async function getActionQueue() {
   return readJSON(K.actions, []);
 }
+var actionChain = Promise.resolve();
+function withActionLock(fn) {
+  const run = actionChain.then(fn, fn);
+  actionChain = run.then(
+    () => void 0,
+    () => void 0
+  );
+  return run;
+}
 async function enqueueAction(action) {
-  const cur = await getActionQueue();
-  cur.push(action);
-  await writeJSON(K.actions, cur);
+  return withActionLock(async () => {
+    const cur = await getActionQueue();
+    cur.push(action);
+    await writeJSON(K.actions, cur);
+  });
 }
 async function removeAction(id) {
-  const cur = await getActionQueue();
-  await writeJSON(K.actions, cur.filter((a) => a.id !== id));
+  return withActionLock(async () => {
+    const cur = await getActionQueue();
+    await writeJSON(K.actions, cur.filter((a) => a.id !== id));
+  });
 }
 async function updateAction(id, patch) {
-  const cur = await getActionQueue();
-  await writeJSON(K.actions, cur.map((a) => a.id === id ? { ...a, ...patch } : a));
+  return withActionLock(async () => {
+    const cur = await getActionQueue();
+    await writeJSON(K.actions, cur.map((a) => a.id === id ? { ...a, ...patch } : a));
+  });
 }
 async function pendingConversationEffects(addKinds, removeKinds) {
   const adds = /* @__PURE__ */ new Set();
@@ -234,12 +307,14 @@ async function getPendingMessages(convId) {
     sender_id: i.senderId,
     type: i.type,
     content: i.content,
-    media_url: i.mediaUrl ?? null,
+    // Show the local file while it's still uploading (localUri), else the remote url.
+    media_url: i.mediaUrl ?? i.localUri ?? null,
     reply_to: i.replyTo ?? null,
     is_deleted: false,
     created_at: i.createdAt,
     edited_at: null,
-    pending: true
+    pending: true,
+    media_meta: i.mediaMeta ?? null
   }));
 }
 
@@ -250,17 +325,22 @@ __export(sync_exports, {
   flushOutbox: () => flushOutbox,
   isOnline: () => isOnline,
   onConnectivity: () => onConnectivity,
+  onOutboxDeadLetter: () => onOutboxDeadLetter,
   onOutboxSent: () => onOutboxSent,
   queueAction: () => queueAction,
   startSync: () => startSync
 });
-var import_netinfo = __toESM(require("/Users/lakshmeshwarpandey/FUTUREHAT/scripts/offline-test/mocks/netinfo.js"));
-var import_supabase = require("/Users/lakshmeshwarpandey/FUTUREHAT/scripts/offline-test/mocks/supabase.js");
-var import_shared = require("/Users/lakshmeshwarpandey/FUTUREHAT/scripts/offline-test/mocks/shared.js");
+var import_netinfo = __toESM(require("/Users/lakshmeshwarpandey/Lumixo/scripts/offline-test/mocks/netinfo.js"));
+var import_supabase = require("/Users/lakshmeshwarpandey/Lumixo/scripts/offline-test/mocks/supabase.js");
+var import_media = require("/Users/lakshmeshwarpandey/Lumixo/scripts/offline-test/mocks/media.js");
+var import_mediaCache = require("/Users/lakshmeshwarpandey/Lumixo/scripts/offline-test/mocks/mediaCache.js");
+var import_shared = require("/Users/lakshmeshwarpandey/Lumixo/scripts/offline-test/mocks/shared.js");
 var online = true;
 var flushing = false;
+var outboxNeedsReflush = false;
 var onlineListeners = /* @__PURE__ */ new Set();
 var sentListeners = /* @__PURE__ */ new Set();
+var deadLetterListeners = /* @__PURE__ */ new Set();
 function isOnline() {
   return online;
 }
@@ -273,38 +353,120 @@ function onOutboxSent(fn) {
   sentListeners.add(fn);
   return () => sentListeners.delete(fn);
 }
+function onOutboxDeadLetter(fn) {
+  deadLetterListeners.add(fn);
+  return () => deadLetterListeners.delete(fn);
+}
+var MAX_OUTBOX_ATTEMPTS = 30;
 async function flushOutbox() {
-  if (flushing) return;
+  if (flushing) {
+    outboxNeedsReflush = true;
+    return;
+  }
   flushing = true;
+  outboxNeedsReflush = false;
   try {
-    const box = await getOutbox();
-    for (const item of box) {
-      if (!online) break;
-      try {
-        const { message, error } = await (0, import_shared.sendMessage)(
-          import_supabase.supabase,
-          item.conversationId,
-          item.content,
-          item.type,
-          item.mediaUrl,
-          item.replyTo,
-          item.tempId
-          // reuse the optimistic id as the real row id
-        );
-        const dupe = !!error && (error.code === "23505" || /duplicate key|already exists/i.test(error.message ?? ""));
-        if (message && !error || dupe) {
-          if (message) await upsertCachedMessage(item.conversationId, message);
+    do {
+      outboxNeedsReflush = false;
+      const box = await getOutbox();
+      for (const item of box) {
+        if (!online) break;
+        if ((item.attempts ?? 0) >= MAX_OUTBOX_ATTEMPTS) {
+          try {
+            const failedMsg = {
+              id: item.tempId,
+              conversation_id: item.conversationId,
+              sender_id: item.senderId,
+              type: item.type,
+              content: item.content,
+              media_url: item.mediaUrl ?? null,
+              reply_to: item.replyTo ?? null,
+              created_at: item.createdAt ?? (/* @__PURE__ */ new Date()).toISOString(),
+              updated_at: (/* @__PURE__ */ new Date()).toISOString(),
+              is_deleted: false,
+              edited_at: null,
+              media_meta: item.mediaMeta ?? null,
+              pending: false,
+              failed: true
+            };
+            await upsertCachedMessage(item.conversationId, failedMsg);
+          } catch {
+          }
           await removeFromOutbox(item.tempId);
-          sentListeners.forEach((l) => l(item, message?.id ?? item.tempId));
-        } else {
+          deadLetterListeners.forEach((l) => {
+            try {
+              l(item, "max_attempts");
+            } catch {
+            }
+          });
+          continue;
+        }
+        try {
+          let mediaUrl = item.mediaUrl;
+          if (item.localUri && !mediaUrl) {
+            const { url, error: upErr } = await (0, import_media.uploadMediaFromUri)(
+              item.conversationId,
+              item.localUri,
+              item.fileName ?? `media_${item.tempId}`
+            );
+            if (upErr || !url) {
+              await updateOutboxItem(item.tempId, { attempts: (item.attempts ?? 0) + 1 });
+              continue;
+            }
+            mediaUrl = url;
+            if (item.localUri) void (0, import_mediaCache.registerLocalMedia)(url, item.localUri);
+            await updateOutboxItem(item.tempId, { mediaUrl: url, localUri: void 0 });
+          }
+          const { message, error } = await (0, import_shared.sendMessage)(
+            import_supabase.supabase,
+            item.conversationId,
+            item.content,
+            item.type,
+            mediaUrl,
+            item.replyTo,
+            item.tempId,
+            // reuse the optimistic id as the real row id
+            item.mediaMeta
+          );
+          const dupe = !!error && (error.code === "23505" || /duplicate key|already exists/i.test(error.message ?? ""));
+          if (message && !error || dupe) {
+            if (message) await upsertCachedMessage(item.conversationId, message);
+            await removeFromOutbox(item.tempId);
+            sentListeners.forEach((l) => l(item, message?.id ?? item.tempId));
+            (0, import_shared.recordStreakActivity)(import_supabase.supabase, item.conversationId).catch(() => {
+            });
+            try {
+              const mid = message?.id ?? item.tempId;
+              const preview = item.type === "text" ? (item.content || "Message").slice(0, 180) : item.type === "image" ? /\.gif(\?|#|$)/i.test(item.mediaUrl ?? item.localUri ?? "") ? "\u{1F39E}\uFE0F GIF" : "\u{1F4F7} Photo" : item.type === "video" ? "\u{1F3A5} Video" : item.type === "audio" ? "\u{1F3A4} Voice message" : item.type === "file" ? item.content?.trim() ? `\u{1F4C4} ${item.content}` : "\u{1F4C4} Document" : "New message";
+              void (0, import_shared.sendPush)(import_supabase.supabase, {
+                conversationId: item.conversationId,
+                kind: "message",
+                title: "",
+                // empty → Edge uses sender display name (not "New message")
+                body: preview,
+                data: {
+                  messageId: mid,
+                  messageType: item.type,
+                  type: "message",
+                  senderId: item.senderId
+                }
+              });
+            } catch {
+            }
+          } else {
+            await updateOutboxItem(item.tempId, { attempts: (item.attempts ?? 0) + 1 });
+          }
+        } catch {
           await updateOutboxItem(item.tempId, { attempts: (item.attempts ?? 0) + 1 });
         }
-      } catch {
-        await updateOutboxItem(item.tempId, { attempts: (item.attempts ?? 0) + 1 });
       }
-    }
+    } while (outboxNeedsReflush && online);
   } finally {
     flushing = false;
+    if (outboxNeedsReflush && online) {
+      outboxNeedsReflush = false;
+      void flushOutbox();
+    }
   }
 }
 function deepSet(root, path, value) {
@@ -324,6 +486,8 @@ async function mergeExtra(payload) {
 var actionHandlers = {
   pin: (p) => (0, import_shared.pinConversation)(import_supabase.supabase, p.conversationId),
   unpin: (p) => (0, import_shared.unpinConversation)(import_supabase.supabase, p.conversationId),
+  favorite: (p) => (0, import_shared.favoriteConversation)(import_supabase.supabase, p.conversationId),
+  unfavorite: (p) => (0, import_shared.unfavoriteConversation)(import_supabase.supabase, p.conversationId),
   mute: (p) => (0, import_shared.muteConversation)(import_supabase.supabase, p.conversationId),
   unmute: (p) => (0, import_shared.unmuteConversation)(import_supabase.supabase, p.conversationId),
   archive: (p) => (0, import_shared.archiveConversation)(import_supabase.supabase, p.conversationId),
@@ -353,36 +517,48 @@ var actionHandlers = {
 };
 var MAX_ACTION_ATTEMPTS = 25;
 var flushingActions = false;
+var actionsNeedReflush = false;
 async function flushActions() {
-  if (flushingActions) return;
+  if (flushingActions) {
+    actionsNeedReflush = true;
+    return;
+  }
   flushingActions = true;
+  actionsNeedReflush = false;
   try {
-    const queue = await getActionQueue();
-    for (const action of queue) {
-      if (!online) break;
-      const handler = actionHandlers[action.kind];
-      if (!handler) {
-        await removeAction(action.id);
-        continue;
-      }
-      try {
-        const res = await handler(action.payload);
-        const err = res && typeof res === "object" ? res.error : null;
-        if (err) {
+    do {
+      actionsNeedReflush = false;
+      const queue = await getActionQueue();
+      for (const action of queue) {
+        if (!online) break;
+        const handler = actionHandlers[action.kind];
+        if (!handler) {
+          await removeAction(action.id);
+          continue;
+        }
+        try {
+          const res = await handler(action.payload);
+          const err = res && typeof res === "object" ? res.error : null;
+          if (err) {
+            const attempts = (action.attempts ?? 0) + 1;
+            if (attempts >= MAX_ACTION_ATTEMPTS) await removeAction(action.id);
+            else await updateAction(action.id, { attempts });
+          } else {
+            await removeAction(action.id);
+          }
+        } catch {
           const attempts = (action.attempts ?? 0) + 1;
           if (attempts >= MAX_ACTION_ATTEMPTS) await removeAction(action.id);
           else await updateAction(action.id, { attempts });
-        } else {
-          await removeAction(action.id);
         }
-      } catch {
-        const attempts = (action.attempts ?? 0) + 1;
-        if (attempts >= MAX_ACTION_ATTEMPTS) await removeAction(action.id);
-        else await updateAction(action.id, { attempts });
       }
-    }
+    } while (actionsNeedReflush && online);
   } finally {
     flushingActions = false;
+    if (actionsNeedReflush && online) {
+      actionsNeedReflush = false;
+      void flushActions();
+    }
   }
 }
 async function queueAction(kind, payload) {

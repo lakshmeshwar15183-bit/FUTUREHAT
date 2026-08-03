@@ -1,4 +1,4 @@
-// FUTUREHAT — PWA install ("Add to Home Screen") hook. Captures the deferred
+// Lumixo — PWA install ("Add to Home Screen") hook. Captures the deferred
 // beforeinstallprompt event so the UI can offer an install button at the right
 // moment, and reports whether the app is already installed / running standalone.
 

@@ -1,4 +1,4 @@
-// FUTUREHAT — "Starred messages" browser. Read-only list of every message the
+// Lumixo — "Starred messages" browser. Read-only list of every message the
 // user has starred, across all chats (WhatsApp-style), backed by the additive
 // get_starred_messages() RPC (0014). Purely additive: the in-chat star toggle is
 // unchanged; this just gives the stars a home you can browse and jump from.
@@ -9,6 +9,7 @@ import { getStarredMessages } from '@shared/messageExtras';
 import type { StarredMessage } from '@shared/types';
 import { modalBackdrop, modalPanel } from './motion';
 import { StarIcon } from './Icons';
+import { LumixoCat } from './mascot/LumixoCat';
 import './StarredMessagesModal.css';
 
 function preview(m: StarredMessage): string {
@@ -53,7 +54,7 @@ export function StarredMessagesModal({
           <div className="starred-empty">Loading…</div>
         ) : items.length === 0 ? (
           <div className="starred-empty">
-            <StarIcon size={44} />
+            <LumixoCat mood="sleeping" size="md" decorative />
             <p>No starred messages yet</p>
             <span>Tap ⭐ on any message to save it here for quick access.</span>
           </div>
@@ -70,7 +71,7 @@ export function StarredMessagesModal({
                   <span className="starred-chat">{m.conversation_title ?? 'Conversation'}</span>
                   <span className="starred-when">{whenLabel(m.starred_at)}</span>
                 </div>
-                <div className="starred-sender">{m.sender_name ?? 'Unknown'}</div>
+                <div className="starred-sender">{m.sender_name && m.sender_name !== 'Unknown' ? m.sender_name : 'Contact'}</div>
                 <div className="starred-body">{preview(m)}</div>
               </button>
             ))}

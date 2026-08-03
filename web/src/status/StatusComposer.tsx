@@ -1,4 +1,4 @@
-// FUTUREHAT web — Status composer (WhatsApp-style).
+// Lumixo web — Status composer (WhatsApp-style).
 // One overlay that handles all three post types via an initial `mode`:
 //   text  — typed status with background + text colour
 //   media — pick photo/video, preview, add a caption

@@ -1,10 +1,12 @@
-// FUTUREHAT mobile — Notification settings (WhatsApp layout). Grouped MESSAGE /
+// Lumixo mobile — Notification settings (WhatsApp layout). Grouped MESSAGE /
 // CALLS / STATUS / GROUPS sections stored in user_preferences.extra.notifications
 // (synced to the profile → restore on any device). Notification tone / ringtone
 // use the DEVICE SYSTEM DEFAULT sound; the tone rows open Android's per-channel
 // settings for native customization (no bundled sounds, no in-app picker).
 import React, { useCallback, useMemo, useState } from 'react';
-import { Alert, Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Linking, Platform, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
+import SafeScrollView from '../ui/SafeScrollView';
+import { Alert } from '../ui/dialog';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 
@@ -14,7 +16,18 @@ import {
   DEFAULT_NOTIFICATION_SETTINGS,
 } from '../lib/shared';
 import type { NotificationSettings } from '../lib/shared';
-import { CHANNELS } from '../lib/notifications';
+import {
+  CHANNELS,
+  getNotificationPermissionGranted,
+  openNotificationSystemSettings,
+  registerForPush,
+} from '../lib/notifications';
+import { detectOemFamily, getOemGuide } from '../lib/notificationSetup';
+import {
+  getBatteryAssistStatus,
+  resetBatteryAssistantForManualOpen,
+} from '../lib/batteryAssistant';
+import BatteryAssistant from '../components/BatteryAssistant';
 import { getCache, setCache } from '../lib/localCache';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 
@@ -28,7 +41,7 @@ async function openChannelSettings(channelId: string) {
   }
   try {
     await Linking.sendIntent('android.settings.CHANNEL_NOTIFICATION_SETTINGS', [
-      { key: 'android.provider.extra.APP_PACKAGE', value: 'dev.lakshmeshwar.futurehat' },
+      { key: 'android.provider.extra.APP_PACKAGE', value: 'com.lumixo.app' },
       { key: 'android.provider.extra.CHANNEL_ID', value: channelId },
     ]);
   } catch {
@@ -39,13 +52,33 @@ async function openChannelSettings(channelId: string) {
 export default function NotificationsScreen() {
   const colors = useColors();
   const styles = useMemo(() => makeStyles(colors), [colors]);
+  const oem = useMemo(() => getOemGuide(detectOemFamily()), []);
   const [n, setN] = useState<NotificationSettings>(DEFAULT_NOTIFICATION_SETTINGS);
+  const [osGranted, setOsGranted] = useState<boolean | null>(null);
+  const [batteryAllowed, setBatteryAllowed] = useState<boolean | null>(null);
+  const [batteryKnown, setBatteryKnown] = useState(false);
+  const [showBatteryAssist, setShowBatteryAssist] = useState(false);
+
+  const refreshBattery = useCallback(() => {
+    if (Platform.OS !== 'android') return;
+    getBatteryAssistStatus()
+      .then((s) => {
+        setBatteryKnown(s.statusKnown);
+        setBatteryAllowed(s.statusKnown ? s.backgroundAllowed : null);
+      })
+      .catch(() => {
+        setBatteryKnown(false);
+        setBatteryAllowed(null);
+      });
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
       getCache<NotificationSettings | null>('notifsV2', null).then((c) => { if (c) setN({ ...DEFAULT_NOTIFICATION_SETTINGS, ...c }); });
       getNotificationSettings(supabase).then((s) => { setN(s); setCache('notifsV2', s); }).catch(() => {});
-    }, []),
+      getNotificationPermissionGranted().then(setOsGranted).catch(() => setOsGranted(null));
+      refreshBattery();
+    }, [refreshBattery]),
   );
 
   function update(patch: Partial<NotificationSettings>) {
@@ -76,7 +109,81 @@ export default function NotificationsScreen() {
   );
 
   return (
-    <ScrollView style={styles.container}>
+    <SafeScrollView style={styles.container}>
+      {/* SYSTEM — required for killed-app delivery */}
+      <Text style={styles.sectionLabel}>SYSTEM</Text>
+      <View style={styles.group}>
+        <Pressable
+          style={styles.row}
+          onPress={async () => {
+            const ok = await registerForPush();
+            setOsGranted(ok);
+            if (!ok) {
+              Alert.alert(
+                'Notifications off',
+                'Allow notifications so you still get messages when Lumixo is closed.',
+                [
+                  { text: 'Not now', style: 'cancel' },
+                  { text: 'Open settings', onPress: () => void openNotificationSystemSettings() },
+                ],
+              );
+            }
+          }}
+        >
+          <View style={{ flex: 1, marginRight: spacing(3) }}>
+            <Text style={styles.rowLabel}>Notification permission</Text>
+            <Text style={styles.rowDesc}>
+              {osGranted === null
+                ? 'Checking…'
+                : osGranted
+                  ? 'Allowed — messages can arrive when the app is closed'
+                  : 'Denied — tap to allow or open system settings'}
+            </Text>
+          </View>
+          <Ionicons
+            name={osGranted ? 'checkmark-circle' : 'alert-circle-outline'}
+            size={22}
+            color={osGranted ? colors.primary : colors.danger}
+          />
+        </Pressable>
+        {Platform.OS === 'android' && (
+          <Pressable
+            style={styles.row}
+            onPress={() => {
+              void resetBatteryAssistantForManualOpen();
+              setShowBatteryAssist(true);
+            }}
+            accessibilityRole="button"
+            accessibilityLabel="Battery optimization assistant"
+          >
+            <View style={{ flex: 1, marginRight: spacing(3) }}>
+              <Text style={styles.rowLabel}>Battery optimization</Text>
+              <Text style={styles.rowDesc}>
+                {batteryKnown && batteryAllowed
+                  ? 'Background activity enabled — calls & alerts should be reliable'
+                  : batteryKnown && batteryAllowed === false
+                    ? `${oem.brandLabel}: tap for a guided fix (recommended)`
+                    : 'Improve call & notification delivery when the app is closed'}
+              </Text>
+            </View>
+            <Ionicons
+              name={batteryKnown && batteryAllowed ? 'checkmark-circle' : 'chevron-forward'}
+              size={batteryKnown && batteryAllowed ? 22 : 16}
+              color={batteryKnown && batteryAllowed ? colors.primary : colors.textFaint}
+            />
+          </Pressable>
+        )}
+      </View>
+
+      <BatteryAssistant
+        visible={showBatteryAssist}
+        force
+        onClose={() => {
+          setShowBatteryAssist(false);
+          refreshBattery();
+        }}
+      />
+
       {/* MESSAGE */}
       <Text style={styles.sectionLabel}>MESSAGE</Text>
       <View style={styles.group}>
@@ -111,12 +218,56 @@ export default function NotificationsScreen() {
         <Toggle label="Vibrate" value={n.groupVibrate} onChange={(v) => update({ groupVibrate: v })} />
       </View>
 
+      {/* COMMUNITIES */}
+      <Text style={styles.sectionLabel}>COMMUNITIES</Text>
+      <View style={styles.group}>
+        <Toggle
+          label="Mute communities"
+          desc="Silence community channel notifications"
+          value={!!n.communitiesMute}
+          onChange={(v) => update({ communitiesMute: v })}
+        />
+      </View>
+
+      {/* MENTIONS */}
+      <Text style={styles.sectionLabel}>MENTIONS</Text>
+      <View style={styles.group}>
+        <ToneRow
+          label="Mention tone"
+          value={n.mentionTone || 'default'}
+          channel={CHANNELS.mentions}
+        />
+        <Toggle
+          label="Vibrate on mentions"
+          value={n.mentionVibrate !== false}
+          onChange={(v) => update({ mentionVibrate: v })}
+        />
+      </View>
+
+      {/* LED / lights — Android channel native */}
+      {Platform.OS === 'android' && (
+        <>
+          <Text style={styles.sectionLabel}>LIGHTS</Text>
+          <View style={styles.group}>
+            <Pressable style={styles.row} onPress={() => openChannelSettings(CHANNELS.messages)}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.rowLabel}>LED / notification light</Text>
+                <Text style={styles.rowDesc}>
+                  On supported devices, customize light color in the system channel settings
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
+            </Pressable>
+          </View>
+        </>
+      )}
+
       <Text style={styles.footnote}>
         Notification tones use your device’s default sound. Tap a tone to customize its sound,
-        vibration and light in Android settings. Preferences sync to your account.
+        vibration and light (LED) in Android settings. Preferences sync to your account.
       </Text>
       <View style={{ height: spacing(8) }} />
-    </ScrollView>
+    </SafeScrollView>
   );
 }
 

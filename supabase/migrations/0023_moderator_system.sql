@@ -68,7 +68,7 @@ begin
   end if;
   insert into public.user_warnings (user_id, kind, title, reason, message, report_id, created_by)
   values (
-    p_target, 'warning', 'Official FUTUREHAT Warning', p_reason,
+    p_target, 'warning', 'Official Lumixo Warning', p_reason,
     coalesce(nullif(trim(coalesce(p_note,'')),''),
              'You have received an official warning for: ' || p_reason),
     p_report, auth.uid()
@@ -98,8 +98,8 @@ begin
     update public.profiles set role = 'moderator' where id = p_target;
   end if;
   insert into public.user_warnings (user_id, kind, title, message, created_by)
-  values (p_target, 'mod_appointed', 'You are now a FUTUREHAT Moderator',
-          'You have been appointed as an official FUTUREHAT Moderator. The Moderator Dashboard is now available in your Settings.',
+  values (p_target, 'mod_appointed', 'You are now a Lumixo Moderator',
+          'You have been appointed as an official Lumixo Moderator. The Moderator Dashboard is now available in your Settings.',
           auth.uid());
   perform public._audit('assign_moderator', p_target::text,
     jsonb_build_object('from', v_old, 'to', 'moderator'));
@@ -120,7 +120,7 @@ begin
   end if;
   insert into public.user_warnings (user_id, kind, title, message, created_by)
   values (p_target, 'mod_removed', 'Moderator role removed',
-          'Your FUTUREHAT Moderator role has been removed. Thank you for your service.',
+          'Your Lumixo Moderator role has been removed. Thank you for your service.',
           auth.uid());
   perform public._audit('remove_moderator', p_target::text,
     jsonb_build_object('from', v_old, 'to', 'user'));

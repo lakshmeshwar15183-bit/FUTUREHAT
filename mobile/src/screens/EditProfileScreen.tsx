@@ -1,15 +1,14 @@
-// FUTUREHAT mobile — edit my profile: avatar, display name, username, about.
+// Lumixo mobile — edit my profile: avatar, display name, username, about.
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
-  View,
+  View
 } from 'react-native';
+import SafeScrollView from '../ui/SafeScrollView';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { useNavigation } from '@react-navigation/native';
@@ -22,6 +21,7 @@ import { queueAction } from '../lib/sync';
 import { uploadAvatarFromUri } from '../lib/media';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import Avatar from '../components/Avatar';
+import { Alert } from '../ui/dialog';
 
 export default function EditProfileScreen() {
   const navigation = useNavigation();
@@ -110,7 +110,7 @@ export default function EditProfileScreen() {
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={{ padding: spacing(5) }}>
+    <SafeScrollView style={styles.container} contentContainerStyle={{ padding: spacing(5) }}>
       <Pressable style={styles.avatarWrap} onPress={changeAvatar}>
         <Avatar uri={avatarUrl} name={displayName} size={110} />
         <View style={styles.cameraBadge}>
@@ -140,7 +140,7 @@ export default function EditProfileScreen() {
           style={[styles.input, styles.about]}
           value={about}
           onChangeText={setAbout}
-          placeholder="Hey there! I am using FUTUREHAT."
+          placeholder="Hey there! I am using Lumixo."
           placeholderTextColor={colors.textFaint}
           multiline
         />
@@ -149,7 +149,7 @@ export default function EditProfileScreen() {
       <Pressable style={styles.saveBtn} onPress={save} disabled={saving}>
         {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveText}>Save</Text>}
       </Pressable>
-    </ScrollView>
+    </SafeScrollView>
   );
 }
 

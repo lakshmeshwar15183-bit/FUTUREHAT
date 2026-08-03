@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — community event composer with an inline date/time picker.
+// Lumixo mobile — community event composer with an inline date/time picker.
 // Replaces the old free-text "When — YYYY-MM-DD HH:mm" field (which silently
 // defaulted to now on parse failure) with a tap-only picker that can never
 // produce an invalid date — web parity for datetime-local (community event

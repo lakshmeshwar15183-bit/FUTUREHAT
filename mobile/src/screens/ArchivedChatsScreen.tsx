@@ -1,7 +1,8 @@
-// FUTUREHAT mobile — Archived chats. Lists archived conversations with unarchive
+// Lumixo mobile — Archived chats. Lists archived conversations with unarchive
 // and open. Standalone; backed by 0010 archived_conversations + accountApi.
 import React, { useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import SafeScrollView from '../ui/SafeScrollView';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
@@ -14,6 +15,7 @@ import {
 import { queueAction } from '../lib/sync';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import Avatar from '../components/Avatar';
+import { LumixoCat } from '../components/LumixoCat';
 import type { RootStackParamList } from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -87,12 +89,15 @@ export default function ArchivedChatsScreen() {
   }
 
   return (
-    <ScrollView style={styles.container}>
+    <SafeScrollView style={styles.container}>
       <Text style={styles.subtitle}>Archived chats stay hidden from your main list. They reappear there when a new message arrives.</Text>
       {loading ? (
         <Text style={styles.empty}>Loading…</Text>
       ) : items.length === 0 ? (
-        <Text style={styles.empty}>No archived chats.</Text>
+        <View style={styles.emptyWrap}>
+          <LumixoCat mood="sleeping" size="md" decorative />
+          <Text style={styles.empty}>No archived chats.</Text>
+        </View>
       ) : items.map((c) => (
         <View key={c.conversation.id} style={styles.row}>
           <Pressable style={styles.rowMain} onPress={() => navigation.navigate('Chat', { conversationId: c.conversation.id, title: c.title })}>
@@ -105,14 +110,15 @@ export default function ArchivedChatsScreen() {
           <Pressable onPress={() => unarchive(c.conversation.id)}><Text style={styles.unarchive}>Unarchive</Text></Pressable>
         </View>
       ))}
-    </ScrollView>
+    </SafeScrollView>
   );
 }
 
 const makeStyles = (colors: Palette) =>
   StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.bg },
-    empty: { color: colors.textMuted, textAlign: 'center', marginTop: spacing(10), fontSize: font.body },
+    emptyWrap: { alignItems: 'center', marginTop: spacing(8), paddingHorizontal: spacing(4) },
+    empty: { color: colors.textMuted, textAlign: 'center', marginTop: spacing(3), fontSize: font.body },
     subtitle: { color: colors.textMuted, fontSize: font.small, paddingHorizontal: spacing(4), paddingVertical: spacing(3) },
     row: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing(4), paddingVertical: spacing(3), borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
     rowMain: { flex: 1, flexDirection: 'row', alignItems: 'center' },

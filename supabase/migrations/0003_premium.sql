@@ -1,4 +1,4 @@
--- FUTUREHAT+ — Premium subscriptions, preferences, and premium-feature data
+-- Lumixo+ — Premium subscriptions, preferences, and premium-feature data
 -- Idempotent: safe to run more than once. Uses the existing core schema
 -- (profiles, conversations, conversation_participants, messages).
 
@@ -54,7 +54,7 @@ as $$
   );
 $$;
 
--- Public-ish view so the UI can show a FUTUREHAT+ badge next to premium users.
+-- Public-ish view so the UI can show a Lumixo+ badge next to premium users.
 -- Exposes only the user_id of active subscribers (no billing data).
 create or replace view public.premium_users
 with (security_invoker = on) as

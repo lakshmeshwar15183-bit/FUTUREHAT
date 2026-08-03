@@ -1,4 +1,4 @@
-// FUTUREHAT web — notifications bridge. Mounted once in App. Subscribes to new
+// Lumixo web — notifications bridge. Mounted once in App. Subscribes to new
 // messages (and relies on CallContext for calls) and raises a browser
 // notification when the tab is hidden/unfocused, honoring the user's synced
 // prefs. Click focuses the tab and opens the chat. No bundled sounds.
@@ -44,6 +44,10 @@ export function WebNotifications({
         const m = payload.new as Message;
         const me = meRef.current;
         if (!m || m.sender_id === me || m.is_deleted) return;
+        // Device received the message → mark delivered (grey ✓✓ for sender).
+        // Read still requires opening the chat (ChatView).
+        const { markMessageAsDelivered } = await import('@shared/api');
+        void markMessageAsDelivered(supabase, m.id).catch(() => {});
         // Only notify for MY conversations (the realtime stream is app-wide).
         const conv = convRef.current.find((c) => c.conversation.id === m.conversation_id);
         if (!conv) return;
@@ -51,7 +55,7 @@ export function WebNotifications({
         const sender = await getProfile(supabase, m.sender_id).catch(() => null);
         const title = isGroup
           ? `${conv.title}: ${sender?.display_name ?? 'Someone'}`
-          : (conv.title || sender?.display_name || 'FUTUREHAT');
+          : (conv.title || sender?.display_name || 'Lumixo');
         showMessageNotification({
           conversationId: m.conversation_id,
           title,

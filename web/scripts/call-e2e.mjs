@@ -1,4 +1,4 @@
-// FUTUREHAT — live E2E for the CALL path (createCall + realtime incoming +
+// Lumixo — live E2E for the CALL path (createCall + realtime incoming +
 // broadcast signaling + status). Validates the exact backend behind a call so
 // we can tell a client bug ("tap does nothing") from a backend one.
 // Env: FH_URL, FH_ANON.

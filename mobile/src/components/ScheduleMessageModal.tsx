@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — schedule a message for later (premium; web ChatView
+// Lumixo mobile — schedule a message for later (premium; web ChatView
 // "Scheduling"). Shows a read-only preview of the current draft plus the shared
 // inline date/time picker; confirming returns the chosen future Date to the
 // caller, which persists it via scheduleMessage(). Rejects past times (parity

@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — Metro config that lets the Expo app consume the
+// Lumixo mobile — Metro config that lets the Expo app consume the
 // monorepo `shared/` TypeScript package directly.
 const { getDefaultConfig } = require('expo/metro-config');
 const path = require('path');

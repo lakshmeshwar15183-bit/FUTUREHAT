@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — file I/O adapter between native pickers (which hand back
+// Lumixo mobile — file I/O adapter between native pickers (which hand back
 // local `file://` URIs) and the shared Supabase upload helpers (which take raw
 // bytes). This is platform glue, not business logic — the bucket/path/URL rules
 // all live in `shared/api.ts`.
@@ -24,11 +24,23 @@ const EXT_MIME: Record<string, string> = {
   webp: 'image/webp',
   mp4: 'video/mp4',
   mov: 'video/quicktime',
+  m4v: 'video/x-m4v',
+  webm: 'video/webm',
   m4a: 'audio/mp4',
   mp3: 'audio/mpeg',
   aac: 'audio/aac',
   ogg: 'audio/ogg',
+  wav: 'audio/wav',
   pdf: 'application/pdf',
+  doc: 'application/msword',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  ppt: 'application/vnd.ms-powerpoint',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  xls: 'application/vnd.ms-excel',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  zip: 'application/zip',
+  txt: 'text/plain',
+  apk: 'application/vnd.android.package-archive',
 };
 
 export function guessMime(fileName: string, fallback = 'application/octet-stream'): string {

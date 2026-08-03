@@ -1,4 +1,4 @@
-// FUTUREHAT web — browser notifications via the Notification API. Mirrors the
+// Lumixo web — browser notifications via the Notification API. Mirrors the
 // mobile behaviour: message + call notifications honoring the user's synced
 // preferences (mute / preview), permission handling, and click-to-open. The
 // sound is the browser/OS default (we never bundle sounds). Click focuses the tab

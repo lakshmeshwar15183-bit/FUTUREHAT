@@ -1,4 +1,4 @@
-/* FUTUREHAT — WhatsApp-style call overlay. UI/interaction only. */
+/* Lumixo — WhatsApp-style call overlay. UI/interaction only. */
 
 .call-overlay {
   position: fixed;
@@ -47,6 +47,16 @@
 .call-overlay.remote-on .call-vid.remote { opacity: 1; }
 .call-vid.local { opacity: 0; }
 .call-overlay.local-on .call-vid.local { opacity: 1; }
+
+/* WhatsApp: local preview is mirrored for front camera only. Remote is never mirrored.
+   Applied only in PiP (self-view). When local is expanded to full, keep mirror for front. */
+.call-vid.local.mirror {
+  transform: scaleX(-1);
+}
+.call-vid.local.mirror.pip:active {
+  /* keep mirror while grabbing */
+  transform: scaleX(-1);
+}
 
 /* Camera-loading placeholder over the local PiP. */
 .call-cam-loading {

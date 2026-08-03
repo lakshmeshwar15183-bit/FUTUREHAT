@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — Moderator Dashboard (Phase 1). Native equivalent of
+// Lumixo mobile — Moderator Dashboard (Phase 1). Native equivalent of
 // web/src/moderator/ModeratorDashboard.tsx. Two sections — Reported Messages and
 // Reported Profiles — over the reports surface (0017) + moderator RPCs (0023),
 // with exactly five per-report actions: Review · Issue Warning · Close – No
@@ -7,8 +7,16 @@
 // immutable audit row. No admin-only powers (ban/suspend/delete/premium) here.
 import React, { useCallback, useMemo, useState } from 'react';
 import {
-  ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
+  ActivityIndicator,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from 'react-native';
+import SafeScrollView from '../ui/SafeScrollView';
 import { useFocusEffect } from '@react-navigation/native';
 
 import { supabase } from '../lib/supabase';
@@ -168,12 +176,12 @@ export default function ModeratorDashboardScreen() {
 
       {error ? <Text style={styles.warn}>{error}</Text> : null}
 
-      <ScrollView contentContainerStyle={styles.listPad}>
+      <SafeScrollView contentContainerStyle={styles.listPad}>
         <Text style={styles.subhead}>Reported messages ({messages.length})</Text>
         {messages.length === 0 ? <Text style={styles.empty}>No reported messages.</Text> : messages.map((r) => renderRow(r, 'message'))}
         <Text style={styles.subhead}>Reported profiles ({profiles.length})</Text>
         {profiles.length === 0 ? <Text style={styles.empty}>No reported profiles.</Text> : profiles.map((r) => renderRow(r, 'profile'))}
-      </ScrollView>
+      </SafeScrollView>
 
       <WarningModal
         report={warnFor}
@@ -225,7 +233,7 @@ function WarningModal({
       <Pressable style={styles.modalBackdrop} onPress={onClose}>
         <Pressable style={styles.modalCard} onPress={(e) => e.stopPropagation()}>
           <Text style={styles.modalTitle}>⚠ Issue official warning</Text>
-          <Text style={styles.modalHint}>An official FUTUREHAT warning will be delivered to {who}’s mailbox and permanently recorded.</Text>
+          <Text style={styles.modalHint}>An official Lumixo warning will be delivered to {who}’s mailbox and permanently recorded.</Text>
           <Text style={styles.modalLabel}>Reason</Text>
           <View style={styles.chipWrap}>
             {WARNING_REASONS.map((r) => (

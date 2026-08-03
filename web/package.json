@@ -1,6 +1,6 @@
 {
   "name": "@futurehat/web",
-  "version": "2.4.6",
+  "version": "4.6.2",
   "type": "module",
   "private": true,
   "scripts": {
@@ -13,6 +13,7 @@
     "date-fns": "^3.0.0",
     "framer-motion": "^11.18.2",
     "pg": "^8.22.0",
+    "qrcode": "^1.5.4",
     "react": "^18.3.0",
     "react-dom": "^18.3.0"
   },

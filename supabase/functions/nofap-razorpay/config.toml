@@ -1,0 +1,3 @@
+# Firebase ID tokens are validated inside the function (NoFap uses Firebase Auth).
+# Gateway JWT verification disabled so Authorization can carry a Firebase ID token.
+verify_jwt = false

@@ -1,4 +1,4 @@
-// FUTUREHAT — "Export / request my data": gathers the signed-in user's own data
+// Lumixo — "Export / request my data": gathers the signed-in user's own data
 // via existing shared APIs (all RLS-scoped to them) and downloads it as a single
 // JSON file. Covers the spec's Export Account Data + Chat History export. Adding
 // messages is optional and capped to avoid an enormous file. Self-contained;
@@ -50,7 +50,7 @@ export function DataExportModal({ onClose }: { onClose: () => void }) {
 
       const payload = {
         export: {
-          app: 'FUTUREHAT',
+          app: 'Lumixo',
           version: APP_VERSION,
           generated_at: new Date().toISOString(),
           developer: OWNER,
@@ -70,7 +70,7 @@ export function DataExportModal({ onClose }: { onClose: () => void }) {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `futurehat-data-${new Date().toISOString().slice(0, 10)}.json`;
+      a.download = `lumixo-data-${new Date().toISOString().slice(0, 10)}.json`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -89,7 +89,7 @@ export function DataExportModal({ onClose }: { onClose: () => void }) {
         <button className="modal-close" onClick={onClose} aria-label="Close">✕</button>
         <h2 className="export-title">📦 Export my data</h2>
         <p className="export-desc">
-          Download a copy of your FUTUREHAT data — your profile, preferences, subscription,
+          Download a copy of your Lumixo data — your profile, preferences, subscription,
           conversations, communities, and support history — as a single JSON file.
         </p>
         <label className="export-check">

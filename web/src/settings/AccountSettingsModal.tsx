@@ -1,4 +1,4 @@
-// FUTUREHAT — Account & Security: email/password change, phone number, two-step
+// Lumixo — Account & Security: email/password change, phone number, two-step
 // verification (Supabase TOTP MFA), login/security history, data export, and
 // account deletion with a 30-day recovery window. Self-contained; persists via
 // accountApi + Supabase auth. Wiring into Settings is deferred (recovery list).
@@ -8,25 +8,60 @@ import { motion } from 'framer-motion';
 import { supabase } from '../supabase';
 import {
   changeEmail, changePassword, requestAccountDeletion, cancelAccountDeletion,
-  getDeletionRequest, getSecurityEvents, type DeletionRequest, type SecurityEvent,
+  getDeletionRequest, getSecurityEvents, getMyAccount, updateMyPhone, logoutAllDevices,
+  type DeletionRequest, type SecurityEvent,
 } from '@shared/accountApi';
+import { sessionIssuedAtMs } from '@shared/forceLogout';
+import { getSessionId } from '@shared/api';
+import {
+  listMySessions, revokeSession, sortSessionsForDisplay, relativeLastSeen,
+  type UserSession,
+} from '@shared/sessionsApi';
+import { maskPhoneE164 } from '@shared/phone';
+import { friendlyAuthError } from '@shared/authErrors';
 import { modalBackdrop, modalPanel } from '../motion';
 import './settings-panels.css';
 
 export function AccountSettingsModal({ onClose, onExport }: { onClose: () => void; onExport?: () => void }) {
   const [email, setEmail] = useState('');
+  const [currentEmail, setCurrentEmail] = useState('');
   const [password, setPassword] = useState('');
   const [phone, setPhone] = useState('');
+  const [savedPhoneMasked, setSavedPhoneMasked] = useState('');
   const [twofa, setTwofa] = useState<{ secret?: string; uri?: string; factorId?: string; code: string; enabled: boolean }>({ code: '', enabled: false });
   const [events, setEvents] = useState<SecurityEvent[]>([]);
   const [deletion, setDeletion] = useState<DeletionRequest | null>(null);
+  const [sessions, setSessions] = useState<UserSession[]>([]);
+  const [mySessionId, setMySessionId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
   function flash(m: string) { setToast(m); setTimeout(() => setToast(null), 2600); }
 
+  async function refreshSessions() {
+    try {
+      const [list, sid] = await Promise.all([listMySessions(supabase), getSessionId(supabase)]);
+      setSessions(sortSessionsForDisplay(list, sid));
+      setMySessionId(sid);
+    } catch { /* table may predate the migration */ }
+  }
+
   useEffect(() => {
-    getSecurityEvents(supabase).then(setEvents).catch(() => {});
+    (async () => {
+      const { data: sess } = await supabase.auth.getSession();
+      const since = sess?.session ? sessionIssuedAtMs(sess.session) : null;
+      const sinceIso = since ? new Date(since).toISOString() : null;
+      getSecurityEvents(supabase, 50, sinceIso).then(setEvents).catch(() => {});
+    })();
     getDeletionRequest(supabase).then(setDeletion).catch(() => {});
+    void refreshSessions();
+    getMyAccount(supabase).then(({ account }) => {
+      if (!account) return;
+      setCurrentEmail(account.email ?? '');
+      if (account.phone_e164) {
+        setPhone(account.phone_e164);
+        setSavedPhoneMasked(maskPhoneE164(account.phone_e164));
+      }
+    }).catch(() => {});
     (async () => {
       try {
         const { data } = await (supabase.auth as any).mfa.listFactors();
@@ -42,20 +77,33 @@ export function AccountSettingsModal({ onClose, onExport }: { onClose: () => voi
   async function saveEmail() {
     if (!email.trim()) return;
     const { error } = await changeEmail(supabase, email.trim());
-    flash(error ? error.message : 'Confirmation sent to your new email.');
+    flash(error ? friendlyAuthError(error) : 'Confirmation sent to your new email.');
     if (!error) setEmail('');
   }
   async function savePassword() {
     if (password.length < 8) return flash('Use at least 8 characters.');
     const { error } = await changePassword(supabase, password);
-    flash(error ? error.message : 'Password updated.');
+    flash(error ? friendlyAuthError(error) : 'Password updated. Other devices will be signed out.');
     if (!error) setPassword('');
   }
   async function savePhone() {
-    const { data: u } = await supabase.auth.getUser();
-    if (!u?.user) return;
-    const { error } = await supabase.from('profiles').update({ phone: phone.trim() || null }).eq('id', u.user.id);
-    flash(error ? 'Could not update phone.' : 'Phone updated.');
+    const { phoneE164, error } = await updateMyPhone(supabase, phone.trim() || null);
+    if (error) return flash(friendlyAuthError(error, 'Could not update phone.'));
+    setSavedPhoneMasked(phoneE164 ? maskPhoneE164(phoneE164) : '');
+    if (phoneE164) setPhone(phoneE164);
+    flash(phoneE164 ? 'Phone saved for contact discovery (never public).' : 'Phone removed.');
+  }
+  async function signOutEverywhere() {
+    if (!confirm('Sign out of all devices? You will need your email and password again.')) return;
+    const { error } = await logoutAllDevices(supabase);
+    if (error) flash(friendlyAuthError(error));
+  }
+  async function signOutDevice(s: UserSession) {
+    if (!confirm(`Sign out "${s.device_label || s.platform}"? It will be disconnected from your account.`)) return;
+    const { error } = await revokeSession(supabase, s.session_id);
+    if (error) flash(friendlyAuthError(error, 'Could not sign out that device.'));
+    else flash('Device signed out.');
+    void refreshSessions();
   }
 
   async function start2fa() {
@@ -108,6 +156,7 @@ export function AccountSettingsModal({ onClose, onExport }: { onClose: () => voi
 
         <section className="sp-section">
           <h3>Email</h3>
+          {currentEmail ? <div className="sp-note">Signed in as {currentEmail}</div> : null}
           <div className="sp-row">
             <input className="sp-input" type="email" placeholder="New email address" value={email} onChange={(e) => setEmail(e.target.value)} />
           </div>
@@ -123,11 +172,44 @@ export function AccountSettingsModal({ onClose, onExport }: { onClose: () => voi
         </section>
 
         <section className="sp-section">
-          <h3>Phone number</h3>
+          <h3>Phone number (optional)</h3>
+          <div className="sp-note">
+            Used only to find friends on Lumixo. Stored as E.164 and never shown publicly.
+            {savedPhoneMasked ? ` Current: ${savedPhoneMasked}` : ''}
+          </div>
           <div className="sp-row">
-            <input className="sp-input" type="tel" placeholder="+countrycode number" value={phone} onChange={(e) => setPhone(e.target.value)} />
+            <input className="sp-input" type="tel" placeholder="+919876543210" value={phone} onChange={(e) => setPhone(e.target.value)} />
           </div>
           <button className="sp-btn wide" onClick={savePhone}>Save phone</button>
+        </section>
+
+        <section className="sp-section">
+          <h3>Devices</h3>
+          {sessions.length === 0 ? (
+            <div className="sp-note">Device list is unavailable right now.</div>
+          ) : sessions.map((s) => {
+            const isThis = s.session_id === mySessionId;
+            return (
+              <div className="sp-row" key={s.session_id}>
+                <div className="sp-row-main">
+                  <div className="sp-row-name">
+                    {s.device_label || s.platform}
+                    {isThis ? <span style={{ color: 'var(--fh-accent, #7c5cff)', fontWeight: 700 }}> · This device</span> : null}
+                  </div>
+                  <div className="sp-row-desc">
+                    {s.platform === 'web' ? 'Web' : s.platform === 'ios' ? 'iPhone' : 'Android'}
+                    {isThis ? '' : ` · active ${relativeLastSeen(s.last_seen, Date.now())}`}
+                  </div>
+                </div>
+                {!isThis && <button className="sp-btn danger" onClick={() => signOutDevice(s)}>Sign out</button>}
+              </div>
+            );
+          })}
+          <div className="sp-note">
+            Your account can be signed in on 2 phones at a time — a third phone signs out the
+            oldest. Web sessions are unlimited.
+          </div>
+          <button className="sp-btn danger wide" onClick={signOutEverywhere}>Sign out of all devices</button>
         </section>
 
         <section className="sp-section">

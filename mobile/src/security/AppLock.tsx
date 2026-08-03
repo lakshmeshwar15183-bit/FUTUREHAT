@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — app lock. Holds lock state, persists settings in the OS
+// Lumixo mobile — app lock. Holds lock state, persists settings in the OS
 // secure store, and re-locks when the app returns from the background.
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { AppState, type AppStateStatus } from 'react-native';
@@ -81,7 +81,7 @@ export function AppLockProvider({ children }: { children: React.ReactNode }) {
 
   const unlockWithBiometric = useCallback(async () => {
     const res = await LocalAuthentication.authenticateAsync({
-      promptMessage: 'Unlock FUTUREHAT',
+      promptMessage: 'Unlock Lumixo',
       fallbackLabel: 'Use PIN',
     });
     if (res.success) {

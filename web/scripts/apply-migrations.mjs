@@ -1,4 +1,4 @@
-// One-off migration runner for FUTUREHAT. Applies the reactions + premium
+// One-off migration runner for Lumixo. Applies the reactions + premium
 // migrations via the Supabase session pooler. Connection details are passed
 // through env vars (never hardcode the password).
 import { readFileSync } from 'node:fs';

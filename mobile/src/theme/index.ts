@@ -1,12 +1,47 @@
-// FUTUREHAT mobile — theme barrel.
-export { palettes, spacing, radius, font } from './palettes';
+// Lumixo mobile — theme barrel (design system + motion).
+export {
+  palettes,
+  spacing,
+  radius,
+  font,
+  elevation,
+  iconSize,
+  touch,
+  density,
+  lineHeight,
+} from './palettes';
 export type { Palette, ThemeMode } from './palettes';
+export { DEFAULT_THEME_PREFERENCE } from './themeMode';
+export {
+  motion,
+  ease,
+  timingOpen,
+  timingClose,
+  timingSheetOpen,
+  timingSheetClose,
+  animateLayoutSoft,
+  enableLayoutAnimations,
+  listPerf,
+} from './motion';
 export {
   ThemeProvider,
   useTheme,
   useColors,
-  type ThemePreference,
+  useSystemScheme,
 } from './ThemeContext';
+export {
+  resolveThemeMode,
+  normalizeSystemScheme,
+  isValidThemePreference,
+  type ThemePreference,
+} from './themeMode';
+export {
+  subscribeSystemScheme,
+  readSystemScheme,
+  readAppearanceScheme,
+  applySystemChrome,
+  type SystemScheme,
+} from './systemScheme';
 export {
   COLOR_THEMES,
   WALLPAPERS,

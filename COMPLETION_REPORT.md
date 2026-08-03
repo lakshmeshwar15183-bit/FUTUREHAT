@@ -27,12 +27,12 @@
 - **Server-side gating in RLS** for premium-only data (hidden chats, scheduled messages) — not bypassable from the console
 - Customization: premium themes, animated wallpapers, bubble styles, fonts, app icons (live via CSS-variable engine)
 - Premium emoji + premium sticker pack (live)
-- AI (edge function → Anthropic-compatible endpoint): rewrite, translate, summarize, smart replies, assistant
+- Optional writing tools (premium edge function): rewrite, translate, summarize, suggested replies
 - Messaging: schedule messages, reminders, unlimited pins (free capped at 3)
 - Privacy: ghost mode, hide chats, app lock (salted SHA-256 PIN + WebAuthn biometric prompt)
 - Storage: higher upload limits
 - Identity: FUTUREHAT+ badge (next to names, never inside chat bubbles), profile decorations, early access
-- Registered + gated for future expansion: animated/AI stickers, auto-replies, longer edit history, larger backup, advanced media manager, advanced privacy
+- Registered + gated for future expansion: animated stickers, auto-replies, longer edit history, larger backup, advanced media manager, advanced privacy
 
 ### Experience / quality
 - Apple-grade motion (Framer Motion): animated mascot login that reacts to typing, page/modal transitions, message send/receive springs, animated typing + receipts, presence transitions
@@ -66,7 +66,7 @@
    cd web && FH_URL=<url> FH_ANON=<anon> node scripts/e2e.mjs
    ```
    It tests messaging, realtime, receipts, reactions, edit/delete/forward, premium gating, subscription, themes/prefs end-to-end, then prints a cleanup query. Re-enable confirmation afterward if you want email verification for real users.
-2. **AI features:** deploy the edge function + set secrets (key + base URL) — see `FUTUREHAT_PLUS.md §3`.
+2. **Optional writing tools:** deploy the edge function + set `AI_API_KEY` / `AI_BASE_URL` — see `FUTUREHAT_PLUS.md §3`.
 3. **Live payments (optional):** set `VITE_RAZORPAY_KEY_ID` and add server-side signature verification.
 4. **Scheduled delivery when offline:** enable `pg_cron` and schedule `dispatch_due_messages()` (FUTUREHAT_PLUS.md §5).
 5. **Rotate the database password** — it was shared in chat.

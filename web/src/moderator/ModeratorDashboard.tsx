@@ -1,4 +1,4 @@
-// FUTUREHAT — Moderator Dashboard (Phase 1). A focused console for moderators
+// Lumixo — Moderator Dashboard (Phase 1). A focused console for moderators
 // (role='moderator', or admins who are also moderators) over the reports surface
 // (0017) + moderator RPCs (0023). Two sections — Reported Messages and Reported
 // Profiles — each row carrying Report ID, Reason, Date/Time, Status, Reported
@@ -252,7 +252,7 @@ function WarningModal({
           <button className="modal-close" onClick={onCancel} aria-label="Close">✕</button>
         </div>
         <div className="mod-warn-body">
-          <p className="admin-hint">An official FUTUREHAT warning will be delivered to <strong>{who}</strong>’s mailbox and permanently recorded.</p>
+          <p className="admin-hint">An official Lumixo warning will be delivered to <strong>{who}</strong>’s mailbox and permanently recorded.</p>
           <label className="mod-warn-label">Reason</label>
           <select className="mod-warn-select" value={reason} onChange={(e) => setReason(e.target.value as WarningReason)}>
             {WARNING_REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}

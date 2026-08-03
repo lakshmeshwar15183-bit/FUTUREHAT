@@ -69,3 +69,61 @@ EXPO_PUBLIC_SUPABASE_ANON_KEY=...
 - Enroll in Play App Signing and upload the AAB.
 - Wire **Google Play Billing** for FUTUREHAT+ (currently activation is recorded
   via the shared API for testing; see `src/screens/PremiumScreen.tsx`).
+
+## Media picker (0030) — native rebuild required
+
+The production media picker adds **`expo-media-library`** (album enumeration + the
+full-screen gallery). This is a native module, so a plain JS/OTA update is NOT enough
+— you must regenerate the native project and rebuild:
+
+```bash
+cd mobile
+npm install --legacy-peer-deps          # picks up expo-media-library
+npx expo prebuild --clean               # regenerates android/ with the new module + permissions
+JAVA_HOME=/opt/homebrew/opt/openjdk@17 ./android/gradlew -p android :app:assembleRelease
+```
+
+The Android manifest gains `READ_MEDIA_IMAGES` / `READ_MEDIA_VIDEO` (Android 13+) via
+the `expo-media-library` config plugin in `app.json` (already wired). On first launch
+the app requests photo/video access; the picker shows a permission-denied state if the
+user declines.
+
+> Phase B/C (crop/draw/text via `@shopify/react-native-skia`, video trim via
+> `ffmpeg-kit-react-native`) add further native modules and will each require another
+> `expo prebuild --clean` + rebuild when those phases land.
+
+## Media editor Phase B/C (0030) — additional native modules
+
+The image editor (crop/draw/text/stickers) and video editor add native modules:
+
+- **`expo-image-manipulator`** — crop / rotate / flip / resize export (CropTool).
+- **`@shopify/react-native-skia`** — drawing brushes + text/sticker flattening
+  (DrawTool, mediaFlatten). Large native lib.
+- **`expo-video-thumbnails`** — video filmstrip + cover-thumbnail selection.
+
+Rebuild after installing (same as the picker):
+
+```bash
+cd mobile
+npm install --legacy-peer-deps
+npx expo prebuild --clean
+JAVA_HOME=/opt/homebrew/opt/openjdk@17 ./android/gradlew -p android :app:assembleRelease
+```
+
+### Video transcode — NOT YET WIRED (intentional)
+Trimming and muting are **recorded as intent** (`media_meta.trimStartMs / trimEndMs /
+muted`) and previewed in the VideoEditor, but the actual cut/re-encode needs a native
+transcoder that is **not installed**:
+
+- Add `ffmpeg-kit-react-native` (note its LGPL/GPL licensing) **or**
+  `react-native-video-trim`, then implement the transcode step in
+  `src/media/tools/VideoEditor.tsx` (`onDone`) / the send path in
+  `MediaPreviewScreen.tsx` to produce the cut file before upload.
+- Until then the ORIGINAL video is uploaded with the trim/mute intent stored; the UI
+  states this plainly. No compression is faked.
+
+### What is verifiable without a device
+`tsc --noEmit` passes for all editor code (it is written against the real module
+types). Actual on-device rendering (Skia canvas, crop export, thumbnails, gestures,
+60fps) can only be confirmed on a real Android/iOS build — do a smoke test of each
+tool after the prebuild+rebuild above.

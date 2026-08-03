@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <!-- Follow System: dark window canvas (matches palettes.dark.bg) — avoids
+       white flash when OS night mode flips while the activity stays alive. -->
+  <color name="window_background">#0A1116</color>
+  <color name="iconBackground">#0A1116</color>
+</resources>

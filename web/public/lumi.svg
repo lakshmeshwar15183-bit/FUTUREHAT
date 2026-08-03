@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" fill="none" role="img" aria-label="Lumi, the Lumixo mascot">
+  <defs>
+    <linearGradient id="fur" x1="0.2" y1="0" x2="0.8" y2="1">
+      <stop offset="0%" stop-color="#FFFCF7"/>
+      <stop offset="55%" stop-color="#F7F0E6"/>
+      <stop offset="100%" stop-color="#E8DFD2"/>
+    </linearGradient>
+    <linearGradient id="body" x1="0.3" y1="0" x2="0.7" y2="1">
+      <stop offset="0%" stop-color="#FFFCF7"/>
+      <stop offset="100%" stop-color="#D9CFC0"/>
+    </linearGradient>
+    <linearGradient id="ear" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#FFC4D4"/>
+      <stop offset="100%" stop-color="#F5A0B4"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#00A884"/>
+      <stop offset="50%" stop-color="#06CF9C"/>
+      <stop offset="100%" stop-color="#008F6F"/>
+    </linearGradient>
+    <radialGradient id="iris" cx="38%" cy="36%" r="68%">
+      <stop offset="0%" stop-color="#F0C878"/>
+      <stop offset="45%" stop-color="#C9954A"/>
+      <stop offset="100%" stop-color="#A67635"/>
+    </radialGradient>
+    <radialGradient id="bell" cx="40%" cy="30%" r="70%">
+      <stop offset="0%" stop-color="#FFE08A"/>
+      <stop offset="100%" stop-color="#E0A820"/>
+    </radialGradient>
+  </defs>
+  <ellipse cx="100" cy="186" rx="46" ry="6.5" fill="rgba(26,35,48,0.14)"/>
+  <path d="M132 128 C152 124, 168 112, 170 92 C172 74, 160 62, 148 68 C140 72, 138 84, 146 90" fill="none" stroke="url(#body)" stroke-width="15" stroke-linecap="round"/>
+  <circle cx="148" cy="68" r="8.5" fill="url(#fur)"/>
+  <circle cx="148" cy="68" r="4" fill="url(#accent)" opacity="0.85"/>
+  <ellipse cx="100" cy="142" rx="44" ry="34" fill="url(#body)"/>
+  <ellipse cx="100" cy="136" rx="22" ry="16" fill="#FFFCF7" opacity="0.55"/>
+  <path d="M66 124 Q100 138 134 124" fill="none" stroke="url(#accent)" stroke-width="5.5" stroke-linecap="round"/>
+  <circle cx="100" cy="134" r="5.5" fill="url(#bell)"/>
+  <ellipse cx="66" cy="158" rx="16" ry="12" fill="url(#fur)"/>
+  <ellipse cx="134" cy="158" rx="16" ry="12" fill="url(#fur)"/>
+  <path d="M62 70 C56 52, 48 38, 58 34 C70 30, 78 50, 76 64 Z" fill="url(#fur)"/>
+  <path d="M62 64 C58 50, 54 42, 60 40 C66 38, 72 52, 70 62 Z" fill="url(#ear)" opacity="0.92"/>
+  <path d="M138 70 C144 52, 152 38, 142 34 C130 30, 122 50, 124 64 Z" fill="url(#fur)"/>
+  <path d="M138 64 C142 50, 146 42, 140 40 C134 38, 128 52, 130 62 Z" fill="url(#ear)" opacity="0.92"/>
+  <ellipse cx="100" cy="86" rx="44" ry="40" fill="url(#fur)"/>
+  <ellipse cx="100" cy="72" rx="26" ry="16" fill="#FFFCF7" opacity="0.5"/>
+  <ellipse cx="70" cy="96" rx="9" ry="6.5" fill="rgba(255,180,198,0.42)"/>
+  <ellipse cx="130" cy="96" rx="9" ry="6.5" fill="rgba(255,180,198,0.42)"/>
+  <ellipse cx="84" cy="82" rx="11" ry="12.5" fill="#fff"/>
+  <ellipse cx="84" cy="83" rx="7.2" ry="8" fill="url(#iris)"/>
+  <ellipse cx="84" cy="83.5" rx="3.1" ry="3.6" fill="#3A2A1C"/>
+  <circle cx="81.5" cy="79.5" r="2.4" fill="#fff"/>
+  <ellipse cx="116" cy="82" rx="11" ry="12.5" fill="#fff"/>
+  <ellipse cx="116" cy="83" rx="7.2" ry="8" fill="url(#iris)"/>
+  <ellipse cx="116" cy="83.5" rx="3.1" ry="3.6" fill="#3A2A1C"/>
+  <circle cx="113.5" cy="79.5" r="2.4" fill="#fff"/>
+  <path d="M100 94 C97.5 94, 96 96.5, 97.2 98.2 C98.2 99.5, 101.8 99.5, 102.8 98.2 C104 96.5, 102.5 94, 100 94 Z" fill="#F4A0B4"/>
+  <path d="M94 102 Q97 105 100 102 Q103 105 106 102" fill="none" stroke="rgba(74,52,48,0.55)" stroke-width="1.8" stroke-linecap="round"/>
+  <ellipse cx="84" cy="164" rx="11" ry="8.5" fill="url(#fur)"/>
+  <ellipse cx="116" cy="164" rx="11" ry="8.5" fill="url(#fur)"/>
+</svg>

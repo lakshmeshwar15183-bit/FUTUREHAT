@@ -1,8 +1,9 @@
-// FUTUREHAT mobile — Chat settings: enter-to-send, font size, media visibility,
+// Lumixo mobile — Chat settings: enter-to-send, font size, media visibility,
 // upload quality, auto-download, voice transcripts. Standalone; persists via
 // privacyApi chat-settings (user_preferences.extra.chat).
 import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Switch, Text, View } from 'react-native';
+import SafeScrollView from '../ui/SafeScrollView';
 import { Ionicons } from '@expo/vector-icons';
 
 import { supabase } from '../lib/supabase';
@@ -10,6 +11,7 @@ import { getChatSettings, setChatSettings, type ChatSettings, type FontSize, typ
 import { getCache, setCache } from '../lib/localCache';
 import { queueAction } from '../lib/sync';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
+import { Alert } from '../ui/dialog';
 
 export default function ChatSettingsScreen() {
   const colors = useColors();
@@ -53,7 +55,7 @@ export default function ChatSettingsScreen() {
   const qualityLabel: Record<MediaQuality, string> = { auto: 'Auto', high: 'High', data_saver: 'Data saver' };
 
   return (
-    <ScrollView style={styles.container}>
+    <SafeScrollView style={styles.container}>
       {c && (
         <View style={styles.group}>
           <View style={styles.row}>
@@ -75,17 +77,40 @@ export default function ChatSettingsScreen() {
             <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
           </Pressable>
           <View style={styles.row}>
-            <Text style={styles.rowLabel}>Auto-download media</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rowLabel}>Auto-download media</Text>
+              <Text style={{ color: colors.textFaint, fontSize: 12, marginTop: 2 }}>
+                Prefer Storage &amp; Data for Wi‑Fi / cellular rules. Off by default.
+              </Text>
+            </View>
             <Switch value={c.autoDownload} onValueChange={(v) => update({ autoDownload: v })} trackColor={{ true: colors.primary, false: colors.border }} />
           </View>
-          <View style={[styles.row, styles.rowLast]}>
+          <View style={styles.row}>
             <Text style={styles.rowLabel}>Voice message transcripts</Text>
             <Switch value={c.voiceTranscripts} onValueChange={(v) => update({ voiceTranscripts: v })} trackColor={{ true: colors.primary, false: colors.border }} />
           </View>
+          <Pressable
+            style={[styles.row, styles.rowLast]}
+            onPress={() => {
+              Alert.alert('Default double-tap reaction', 'Used when you double-tap a message.', [
+                { text: '❤️ Heart', onPress: () => update({ defaultReaction: '❤️' }) },
+                { text: '👍 Like', onPress: () => update({ defaultReaction: '👍' }) },
+                { text: '😂 Laugh', onPress: () => update({ defaultReaction: '😂' }) },
+                { text: '😮 Wow', onPress: () => update({ defaultReaction: '😮' }) },
+                { text: '😢 Sad', onPress: () => update({ defaultReaction: '😢' }) },
+                { text: '🙏 Pray', onPress: () => update({ defaultReaction: '🙏' }) },
+                { text: 'Cancel', style: 'cancel' },
+              ]);
+            }}
+          >
+            <Text style={styles.rowLabel}>Double-tap reaction</Text>
+            <Text style={styles.rowValue}>{c.defaultReaction || '❤️'}</Text>
+            <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
+          </Pressable>
         </View>
       )}
       <View style={{ height: spacing(8) }} />
-    </ScrollView>
+    </SafeScrollView>
   );
 }
 

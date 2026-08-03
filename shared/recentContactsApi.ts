@@ -1,4 +1,4 @@
-// FUTUREHAT — recent contacts / previously-chatted-users history.
+// Lumixo — recent contacts / previously-chatted-users history.
 // Framework-agnostic; both web and mobile import this.
 //
 // Backed by public.recent_contacts (migration 0028). This list is INDEPENDENT
@@ -13,6 +13,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Profile, UUID } from './types.js';
+import { getProfilesPublic } from './api.js';
 
 export interface RecentContact {
   contact: Profile;
@@ -22,26 +23,28 @@ export interface RecentContact {
 
 /**
  * My recent-contact history, newest interaction first, with each contact's
- * profile embedded. RLS restricts the result to my own rows. The explicit FK
- * hint (`recent_contacts_contact_id_fkey`) is required because the table has two
- * foreign keys to `profiles` (owner_id + contact_id) and PostgREST would
- * otherwise be unable to pick which one to embed.
+ * PUBLIC profile (no phone). Under 0050/0051, embedding profiles(*) for peers
+ * returns null (RLS own-only) — so we load public_profiles in a second query.
  */
 export async function listRecentContacts(client: SupabaseClient): Promise<RecentContact[]> {
   const { data, error } = await client
     .from('recent_contacts')
-    .select('first_interaction_at, last_interaction_at, contact:profiles!recent_contacts_contact_id_fkey(*)')
+    .select('contact_id, first_interaction_at, last_interaction_at')
     .order('last_interaction_at', { ascending: false });
-  if (error || !data) return [];
-  return (data as any[])
-    .map((r) => ({
-      // PostgREST returns a many-to-one embed as an object, but the generated
-      // typing can widen it to an array — normalise defensively.
-      contact: (Array.isArray(r.contact) ? r.contact[0] : r.contact) as Profile,
-      first_interaction_at: r.first_interaction_at,
-      last_interaction_at: r.last_interaction_at,
-    }))
-    .filter((r) => !!r.contact);
+  if (error || !data?.length) return [];
+  const ids = data.map((r: { contact_id: UUID }) => r.contact_id as UUID);
+  const profs = await getProfilesPublic(client, ids);
+  return data
+    .map((r: { contact_id: UUID; first_interaction_at: string; last_interaction_at: string }) => {
+      const contact = profs.get(r.contact_id);
+      if (!contact) return null;
+      return {
+        contact,
+        first_interaction_at: r.first_interaction_at,
+        last_interaction_at: r.last_interaction_at,
+      };
+    })
+    .filter((r): r is RecentContact => !!r);
 }
 
 /**

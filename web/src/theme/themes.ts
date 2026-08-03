@@ -1,7 +1,9 @@
-// FUTUREHAT — appearance engine. Themes/fonts/bubbles/wallpapers are applied by
+// Lumixo — appearance engine. Themes/fonts/bubbles/wallpapers are applied by
 // setting CSS variables + data attributes on <html>; premium.css reacts to them.
 // Free users are always pinned to the base options (premium values are ignored
 // until the user is premium) so gating is enforced even if a stored pref leaks.
+
+import { applyAppearanceMode, getStoredAppearanceMode } from './appearanceMode';
 
 export interface ThemeDef {
   id: string;
@@ -121,17 +123,21 @@ export const WALLPAPERS: OptionDef[] = [
   { id: 'bubbles', label: 'Bubbles', premium: true, preview: 'background:radial-gradient(circle at 70% 40%,#b388ff,#120a24)' },
 ];
 
-// ── App icons (favicon emoji glyph) ──────────────────────────────────────────
-export const APP_ICONS: { id: string; label: string; premium: boolean; glyph: string }[] = [
-  { id: 'classic', label: 'Classic', premium: false, glyph: '🎩' },
-  { id: 'neon', label: 'Neon', premium: true, glyph: '🪩' },
-  { id: 'gold', label: 'Gold', premium: true, glyph: '👑' },
-  { id: 'star', label: 'Star', premium: true, glyph: '✨' },
-  { id: 'ghost', label: 'Ghost', premium: true, glyph: '👻' },
+// ── App icons (6 Lumixo launcher marks — free for everyone) ───────────────────
+export const APP_ICONS: { id: string; label: string; premium: boolean; glyph: string; color: string }[] = [
+  { id: 'icon1', label: 'Icon 1', premium: false, glyph: 'L', color: '#00A884' },
+  { id: 'icon2', label: 'Icon 2', premium: false, glyph: '💬', color: '#0B1A16' },
+  { id: 'icon3', label: 'Icon 3', premium: false, glyph: 'L', color: '#12B981' },
+  { id: 'icon4', label: 'Icon 4', premium: false, glyph: 'L', color: '#064E3B' },
+  { id: 'icon5', label: 'Icon 5', premium: false, glyph: 'L', color: '#022C22' },
+  { id: 'icon6', label: 'Icon 6', premium: false, glyph: '✦', color: '#00A884' },
 ];
 
-function setFavicon(glyph: string) {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y="0.9em" font-size="84">${glyph}</text></svg>`;
+function setFavicon(icon: { glyph: string; color: string }) {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+    <rect width="100" height="100" rx="22" fill="${icon.color}"/>
+    <text x="50" y="62" text-anchor="middle" font-size="48" font-family="system-ui,sans-serif" font-weight="700" fill="#fff">${icon.glyph}</text>
+  </svg>`;
   let link = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
   if (!link) {
     link = document.createElement('link');
@@ -147,11 +153,22 @@ export interface AppliedPrefs {
 
 // Apply preferences to the document. Premium-only choices are forced to base
 // values when `isPremium` is false.
+// Classic (default) theme respects Follow System / Light / Dark appearance mode.
+// Named premium themes keep their designed (dark-tinted) palettes.
 export function applyPreferences(p: AppliedPrefs, isPremium: boolean) {
   const root = document.documentElement;
 
   const theme = THEMES[p.theme] && (isPremium || !THEMES[p.theme].premium) ? THEMES[p.theme] : THEMES.default;
-  for (const [k, v] of Object.entries(theme.vars)) root.style.setProperty(k, v);
+  const useSystemChrome = theme.id === 'default';
+
+  if (useSystemChrome) {
+    // Light/dark chrome from appearance mode (default Follow System).
+    applyAppearanceMode(getStoredAppearanceMode());
+  } else {
+    for (const [k, v] of Object.entries(theme.vars)) root.style.setProperty(k, v);
+    root.dataset.appearance = 'dark';
+    root.style.colorScheme = 'dark';
+  }
 
   const font = FONTS[p.font] && (isPremium || !FONTS[p.font].premium) ? FONTS[p.font] : FONTS.system;
   root.style.setProperty('--fh-font', font.stack);
@@ -162,6 +179,6 @@ export function applyPreferences(p: AppliedPrefs, isPremium: boolean) {
   const wp = WALLPAPERS.find((w) => w.id === p.wallpaper);
   root.dataset.wallpaper = wp && (isPremium || !wp.premium) ? wp.id : 'default';
 
-  const icon = APP_ICONS.find((a) => a.id === p.app_icon);
-  setFavicon(icon && (isPremium || !icon.premium) ? icon.glyph : '🎩');
+  const icon = APP_ICONS.find((a) => a.id === p.app_icon) ?? APP_ICONS[0];
+  setFavicon(icon);
 }

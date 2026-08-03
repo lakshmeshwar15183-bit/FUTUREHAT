@@ -1,43 +1,63 @@
-// FUTUREHAT mobile — the chat thread. Realtime messages, media + voice,
+// Lumixo mobile — the chat thread. Realtime messages, media + voice,
 // reactions, reply/edit/delete/forward, typing, presence and read receipts.
 // All data flows through the shared API; this screen is presentation + glue.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
+  AppState,
+  BackHandler,
   FlatList,
+  InteractionManager,
   Keyboard,
   Dimensions,
   Modal,
   Platform,
   Pressable,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
-import Animated, { useAnimatedKeyboard, useAnimatedStyle } from 'react-native-reanimated';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
+import * as Sharing from 'expo-sharing';
 import { Image } from 'expo-image';
+
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import {
+  useReanimatedKeyboardAnimation,
+  useKeyboardHandler,
+} from 'react-native-keyboard-controller';
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  runOnJS,
+} from 'react-native-reanimated';
+import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import { Audio } from 'expo-av';
 import { useNavigation, useRoute, useFocusEffect, type RouteProp } from '@react-navigation/native';
-import { setOpenConversation, clearConversationNotification } from '../lib/notifications';
+import {
+  setOpenConversation,
+  clearConversationNotification,
+  syncBadgeFromServer,
+} from '../lib/notifications';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { supabase } from '../lib/supabase';
 import {
   getMessages,
   sendMessage,
+  clearRemoteChatNotification,
   editMessage,
-  deleteMessage,
+  deleteMessageForEveryone,
   forwardMessage,
   markMessageAsRead,
+  markMessageAsDelivered,
+  markMessagesAsDelivered,
   getReceipts,
   subscribeToMessages,
   subscribeToReceipts,
@@ -48,23 +68,41 @@ import {
   joinPresence,
   leavePresence,
   getCurrentUser,
+  getMyProfile,
   getMyConversations,
+  buildTickMap,
+  applyReceiptToTickMap,
+  computeOutboundTick,
+  tickLabel,
   createPoll,
   getPolls,
   getPollVotes,
+  getPollVoters,
   votePoll,
   unvotePoll,
+  closePoll,
+  createEvent,
+  getGroupMembers,
+  nextPinnedId,
+  activeMentionQuery,
+  filterMentionMembers,
+  applyMention,
+  resolveMentionedUserIds,
+  type GroupMember,
   messageMatchesKind,
   getStarredIds,
   starMessage,
   unstarMessage,
   getHiddenMessageIds,
   hideMessageForMe,
+  clearChatMessagesForMe,
+  deleteConversationForMe,
+  canDeleteMessageForEveryone,
+  shouldOmitDeletedFromTimeline,
   reportMessage,
   REPORT_REASONS,
   getChatSettings,
   getPreferences,
-  getServerPremium,
   scheduleMessage,
   dispatchDueMessages,
   messageExpired,
@@ -73,50 +111,139 @@ import {
   getDisappearing,
   FREE_LIMITS,
   PREMIUM_LIMITS,
-  sendPush,
+  markViewOnceSeen,
+  getViewOnceState,
+  isVideoMessage,
+  signedMediaUrl,
+  getMyGroupRole,
+  getPinnedMessageIds,
+  pinGroupMessage,
+  getStreak,
+  emojiForScore,
+  unpinGroupMessage,
+  canPinMessages,
+  canSendInGroup,
+  permissionsFromConversation,
+  getGroupConversation,
+  getMutedIds,
+  muteConversation,
+  unmuteConversation,
+  blockUser,
+  submitReport as submitSafetyReport,
+  type ParticipantRole,
+  resolveDisplayName,
+  resolveAvatarUrl,
+  mergeProfileIdentity,
 } from '../lib/shared';
 import type { Message, MessageReaction, Profile, ConversationSummary, Poll, PollVote, SearchKind, ChatSettings, ReportReason } from '../lib/shared';
 import {
   getCachedMessages,
   cacheMessages,
   upsertCachedMessage,
+  removeCachedMessages,
   getCachedConversations,
   getPendingMessages,
   enqueueOutbox,
   getDraft,
   setDraft,
   uuidv4,
+  getNickname,
+  getCachedProfile,
+  cacheProfile,
+  cacheProfiles,
 } from '../lib/localCache';
-import { flushOutbox, onOutboxSent, queueAction } from '../lib/sync';
-import { uploadMediaFromUri } from '../lib/media';
+import { flushOutbox, onOutboxSent, onOutboxDeadLetter, queueAction } from '../lib/sync';
+import { guessMime } from '../lib/media';
+import { registerMediaHandler, type MediaSubmission } from '../media/mediaSendBridge';
+import { resolvePickedUri } from '../media/resolveLocalMedia';
+import type { PickedAsset } from './MediaPickerScreen';
 import { formatLastSeen, formatDaySeparator, formatTime } from '../lib/time';
-import { useColors, useTheme, spacing, radius, font, type Palette } from '../theme';
-import MessageBubble, { type TickStatus, isVideoUrl, replySummary } from '../components/MessageBubble';
+import { useColors, useTheme, spacing, radius, font, listPerf, motion, type Palette } from '../theme';
+import { usePremium } from '../premium';
+import {
+  invertedListContentPadding,
+  composerInnerBottomPad,
+  isInvertedAtLatest,
+  shouldRepinToLatestOnComposerResize,
+  composerHeightChanged,
+  chatBottomSpacer,
+  composerTrayHeight,
+  KEYBOARD_CLOSED_EPSILON_PX,
+} from '../lib/chatThreadLayout';
+import { sheetBottomPad } from '../lib/safeLayout';
+import MessageBubble, { type TickStatus, replySummary } from '../components/MessageBubble';
+import { ChatHeaderTitle, ChatHeaderRight } from '../components/ChatHeaderTitle';
+import {
+  bindChatHeaderLive,
+  patchChatHeaderLive,
+  setChatHeaderTyping,
+  clearChatHeaderLive,
+} from '../lib/chatHeaderLive';
+import { createMessageBatcher } from '../lib/messageBatch';
 import SwipeToReply from '../components/SwipeToReply';
 import MediaViewer, { type ViewerItem } from '../components/MediaViewer';
+import { ensureMediaCached } from '../lib/mediaCache';
+import { requestMediaDownload } from '../lib/mediaDownloadManager';
+import ForwardSheet, { type ForwardPreview } from '../components/ForwardSheet';
 import PollCard from '../components/PollCard';
 import ScheduleMessageModal from '../components/ScheduleMessageModal';
+import EventComposerModal, { type EventDraft } from '../components/EventComposerModal';
 import ErrorBoundary from '../components/ErrorBoundary';
-import { STICKERS } from '../lib/stickers';
+import Avatar from '../components/Avatar';
+import ProfileAvatar from '../components/ProfileAvatar';
+import {
+  pushRecentSticker,
+  stickerMediaMeta,
+  preloadStickerCache,
+  type Sticker,
+} from '../lib/stickers';
+import { preloadEmojiCache } from '../lib/emojiCache';
+import { QUICK_REACTIONS } from '../lib/emojiData';
+import EmojiPicker from '../components/EmojiPicker';
+import StickerPicker from '../components/StickerPicker';
 import { useCalls } from '../calls/CallContext';
 import { useChatLock } from '../security/ChatLock';
 import type { RootStackParamList } from '../navigation/types';
+import { Alert, showSheet } from '../ui/dialog';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'Chat'>;
 type Rt = RouteProp<RootStackParamList, 'Chat'>;
 
-const QUICK_EMOJI = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
-// Full reaction palette shown when the user taps "＋" on the quick-emoji row —
-// mirrors the web emoji picker so reactions reach parity across platforms.
-const MORE_EMOJI = [
-  '👍', '❤️', '😂', '😮', '😢', '🙏', '🔥', '🎉', '👏', '💯',
-  '😍', '🤔', '😭', '😅', '🙌', '💪', '✅', '❌', '👀', '🤝',
-  '😎', '🥳', '😴', '🤯', '😇', '🤗', '😡', '💔', '⭐', '🚀',
-];
+// WhatsApp quick reaction strip (long-press message).
+const QUICK_EMOJI = [...QUICK_REACTIONS];
 
 // WhatsApp-style one-line summary for the reply/edit preview bar — delegates to
 // the shared helper so the composer bar and in-bubble quote read identically.
 const previewLabel = (m: Message | null | undefined): string => (m ? replySummary(m) : '');
+
+/** Parse call-history system lines ("Missed voice call [call:uuid]"). */
+function parseCallHistory(msg: Message): {
+  isCall: boolean;
+  label: string;
+  callId: string | null;
+  isMissed: boolean;
+  isVideo: boolean;
+} {
+  if (msg.type !== 'system') {
+    return { isCall: false, label: msg.content ?? '', callId: null, isMissed: false, isVideo: false };
+  }
+  const raw = msg.content ?? '';
+  const callMatch = raw.match(/\[call:([0-9a-f-]{36})\]\s*$/i);
+  const label = callMatch ? raw.replace(/\s*\[call:[0-9a-f-]{36}\]\s*$/i, '').trim() : raw;
+  const isCall =
+    !!callMatch || /^(missed|declined|cancelled|canceled|voice|video)\b/i.test(label);
+  return {
+    isCall,
+    label,
+    callId: callMatch?.[1] ?? null,
+    isMissed: /^missed\b/i.test(label),
+    isVideo: /\bvideo\b/i.test(label),
+  };
+}
+
+function isCallHistoryMessage(msg: Message): boolean {
+  return parseCallHistory(msg).isCall;
+}
 
 // Merge two message arrays by id (server rows win over optimistic ones with the
 // same id), then sort chronologically for the (inverted) thread. Used to reconcile
@@ -142,17 +269,21 @@ function ChatScreenInner() {
   const { conversationId } = params;
 
   // Tell the notifications bridge which chat is open so it never notifies for it,
-  // and clear any pending notification for this chat while it's focused.
+  // clear the tray entry, and re-sync the launcher badge from the server.
   useFocusEffect(
     useCallback(() => {
       setOpenConversation(conversationId);
       void clearConversationNotification(conversationId);
+      // Multi-device: clear tray on phone B when this chat is open here.
+      void clearRemoteChatNotification(supabase, conversationId);
+      void syncBadgeFromServer();
       return () => setOpenConversation(null);
     }, [conversationId]),
   );
 
   const colors = useColors();
-  const { wallpaperColor, isPremium } = useTheme();
+  const { wallpaperColor } = useTheme();
+  const { isPremium } = usePremium();
   const insets = useSafeAreaInsets();
   const { startCall } = useCalls();
   const chatLock = useChatLock();
@@ -177,22 +308,65 @@ function ChatScreenInner() {
   // Disappearing-messages timer for this chat (0 = off) — drives the header badge.
   const [disappearSecs, setDisappearSecs] = useState(0);
   useEffect(() => {
-    getDisappearing(supabase, conversationId).then(setDisappearSecs).catch(() => {});
+    let alive = true;
+    getDisappearing(supabase, conversationId)
+      .then((s) => { if (alive) setDisappearSecs(s); })
+      .catch(() => {});
+    return () => { alive = false; };
   }, [conversationId]);
 
-  // WhatsApp-identical keyboard handling. We do NOT use KeyboardAvoidingView:
-  // targetSdk 35 forces edge-to-edge on Android 15+, which makes the manifest's
-  // `adjustResize` a no-op (the window no longer shrinks for the IME), so the
-  // composer would sit BEHIND the keyboard. Instead we read the live IME height
-  // from reanimated's useAnimatedKeyboard (driven off the system WindowInsets
-  // animation, so it tracks the keyboard 1:1 with matching speed/curve) and pad
-  // the whole thread up by it — works under forced edge-to-edge and on iOS, with
-  // no hardcoded offsets. When the keyboard is down we fall back to the bottom
-  // safe-area inset (gesture-nav bar / home indicator).
-  const keyboard = useAnimatedKeyboard();
-  const keyboardStyle = useAnimatedStyle(() => ({
-    paddingBottom: Math.max(keyboard.height.value, insets.bottom),
-  }));
+  // ── Keyboard / IME (WhatsApp-class) ─────────────────────────────────────
+  // react-native-keyboard-controller drives height from Android WindowInsets
+  // IME animation (works under EDGE_TO_EDGE_ENFORCED on Realme/Oppo/Samsung/…).
+  // A bottom spacer under the composer grows with the IME so the bar sits
+  // flush above any keyboard / 3-button / gesture nav — no hard-coded dp.
+  const safeBottom = insets.bottom;
+  const winH = Dimensions.get('window').height;
+  /** Last real keyboard height — emoji/sticker tray matches this (WhatsApp). */
+  const [lastImeHeight, setLastImeHeight] = useState(280);
+  const { height: kbAnimHeight } = useReanimatedKeyboardAnimation();
+  const safeBottomSV = useSharedValue(safeBottom);
+  useEffect(() => {
+    safeBottomSV.value = safeBottom;
+  }, [safeBottom, safeBottomSV]);
+
+  const rememberImeHeight = useCallback((h: number) => {
+    if (h > 40) setLastImeHeight(h);
+  }, []);
+
+  // Track live IME height for tray sizing + re-pin (JS thread).
+  useKeyboardHandler(
+    {
+      onStart: (e) => {
+        'worklet';
+        if (e.height > KEYBOARD_CLOSED_EPSILON_PX) {
+          runOnJS(rememberImeHeight)(e.height);
+        }
+      },
+      onEnd: (e) => {
+        'worklet';
+        if (e.height > KEYBOARD_CLOSED_EPSILON_PX) {
+          runOnJS(rememberImeHeight)(e.height);
+        }
+      },
+    },
+    [rememberImeHeight],
+  );
+
+  // Opaque paper canvas — never translucent over Main tabs.
+  const chatCanvasBg =
+    wallpaperColor ?? (colors.isLight ? '#EFEAE2' : colors.bg);
+  const trayH = composerTrayHeight(lastImeHeight, winH);
+  // Bottom spacer style must be declared before any early return (rules of hooks).
+  // IME open → live WindowInsets height; closed → system nav inset.
+  const imeSpacerStyle = useAnimatedStyle(() => {
+    const ime = Math.abs(kbAnimHeight.value);
+    return {
+      height: chatBottomSpacer(ime, safeBottomSV.value, 0),
+    };
+  }, []);
+  // Green header chrome: always white glyphs (not muted palette text).
+  const headerOnGreen = '#FFFFFF';
 
   const [uid, setUid] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -200,24 +374,60 @@ function ChatScreenInner() {
   const [reactions, setReactions] = useState<MessageReaction[]>([]);
   const [receipts, setReceipts] = useState<Map<string, TickStatus>>(new Map());
   const [loading, setLoading] = useState(true);
+  /** Cursor pagination: more history may exist older than the local window. */
+  const [hasMoreOlder, setHasMoreOlder] = useState(true);
+  const loadingOlderRef = useRef(false);
 
   const [peers, setPeers] = useState<Profile[]>([]);
   const peersRef = useRef<Profile[]>([]);
   useEffect(() => { peersRef.current = peers; }, [peers]);
+  // Header avatar: group avatar_url from conversation, or peer avatar for DMs.
+  const [chatAvatarUrl, setChatAvatarUrl] = useState<string | null>(null);
 
-  // Dispatch scheduled messages whose send-time has arrived — on open + every 60s.
-  // Mirrors web ChatView (dispatchDueMessages). Without this, messages scheduled
-  // on mobile would sit in the queue and never actually send.
+  // Dispatch scheduled messages whose send-time has arrived — on open + while
+  // foreground (every 60s). Pause interval in background to save battery.
   useEffect(() => {
-    void dispatchDueMessages(supabase).catch(() => {});
-    const id = setInterval(() => { void dispatchDueMessages(supabase).catch(() => {}); }, 60000);
-    return () => clearInterval(id);
+    let id: ReturnType<typeof setInterval> | null = null;
+    const kick = () => { void dispatchDueMessages(supabase).catch(() => {}); };
+    const arm = () => {
+      if (id) clearInterval(id);
+      id = setInterval(kick, 60_000);
+    };
+    kick();
+    arm();
+    const sub = AppState.addEventListener('change', (s) => {
+      if (s === 'active') { kick(); arm(); }
+      else if (id) { clearInterval(id); id = null; }
+    });
+    return () => {
+      if (id) clearInterval(id);
+      sub.remove();
+    };
   }, []);
   const [isGroup, setIsGroup] = useState(false);
+  const [myGroupRole, setMyGroupRole] = useState<ParticipantRole | null>(null);
+  const [groupSendBlocked, setGroupSendBlocked] = useState(false);
+  const [groupPerms, setGroupPerms] = useState(permissionsFromConversation(null));
+  const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
+  const [pinnedCycleId, setPinnedCycleId] = useState<string | null>(null);
+  const [groupMembers, setGroupMembers] = useState<GroupMember[]>([]);
+  const [mentionOpen, setMentionOpen] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState('');
+  const [mentionStart, setMentionStart] = useState(0);
   const [onlineIds, setOnlineIds] = useState<Set<string>>(new Set());
-  const [typingName, setTypingName] = useState<string | null>(null);
+  // Typing lives in chatHeaderLive (not React state) so message list does not re-render.
+  /** Nav action refs — setOptions stays stable; presses read latest handlers. */
+  const headerNavRef = useRef({
+    placeCall: (_k: 'audio' | 'video') => {},
+    openChatMenu: () => {},
+    openHeaderProfile: () => {},
+    openHeaderStreak: () => {},
+  });
 
   const [text, setText] = useState('');
+  // Keep latest draft for multi-emoji inserts (picker stays open like WhatsApp).
+  const textRef = useRef(text);
+  textRef.current = text;
   const [reply, setReply] = useState<Message | null>(null);
   const [editing, setEditing] = useState<Message | null>(null);
   const [selected, setSelected] = useState<Message | null>(null);
@@ -227,7 +437,8 @@ function ChatScreenInner() {
   const [reportDetails, setReportDetails] = useState('');
   const [reportBusy, setReportBusy] = useState(false);
   const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
-  const [emojiComposerOpen, setEmojiComposerOpen] = useState(false);
+  /** Composer tray: none | emoji | stickers (WhatsApp keyboard replacement). */
+  const [composerTray, setComposerTray] = useState<'none' | 'emoji' | 'stickers'>('none');
   const [starredIds, setStarredIds] = useState<Set<string>>(new Set());
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
   // Disappearing messages (0022): a tick that advances to the next-soonest
@@ -235,27 +446,66 @@ function ChatScreenInner() {
   const [now, setNow] = useState<number>(() => Date.now());
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [selectionForward, setSelectionForward] = useState(false);
+  /** Telegram delete sheet: optional “Also delete for everyone” checkbox. */
+  const [deletePrompt, setDeletePrompt] = useState<{
+    ids: string[];
+    allowForEveryone: boolean;
+    everyoneLabel: string;
+  } | null>(null);
+  /** When true → also delete for everyone (hard delete). Default false. */
+  const [deleteAlsoEveryone, setDeleteAlsoEveryone] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
+  /** Modal sticker picker (from attach sheet). */
   const [stickersOpen, setStickersOpen] = useState(false);
+  const inputRef = useRef<TextInput>(null);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [viewerUrl, setViewerUrl] = useState<string | null>(null);
+  // View-Once (0030): ids of View-Once messages the current user has already
+  // consumed (server-authoritative). Once spent, the bubble shows an opened state
+  // and can't be re-opened. Hydrated on load for messages sent TO me.
+  const [voSpent, setVoSpent] = useState<Set<string>>(new Set());
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [searchKind, setSearchKind] = useState<SearchKind>('all');
   const [activeMatch, setActiveMatch] = useState(0);
   const [forwardOpen, setForwardOpen] = useState(false);
   const [forwardList, setForwardList] = useState<ConversationSummary[]>([]);
+  /** Mute state for chat ⋮ menu. */
+  const [chatMuted, setChatMuted] = useState(false);
+  // Messages queued to forward (from a message menu, multi-select, or the media
+  // viewer) + an optional media preview shown on the ForwardSheet confirm step.
+  const [forwardSources, setForwardSources] = useState<Message[]>([]);
+  const [forwardPreview, setForwardPreview] = useState<ForwardPreview | null>(null);
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [recSecs, setRecSecs] = useState(0); // live elapsed seconds while recording (web parity)
+  // Hold-to-record: slide left past threshold cancels instead of sending on release.
+  // Guards against the common race where pressOut fires before createAsync resolves
+  // (permission dialog / cold start) — without this the UI can stick in recording mode.
+  const recCancelRef = useRef(false);
+  const recStartX = useRef(0);
+  const [recCanceling, setRecCanceling] = useState(false);
+  const recordingRef = useRef<Audio.Recording | null>(null);
+  const recStartingRef = useRef(false);
+  /** null while finger is down; boolean = desired send/cancel after async start finishes. */
+  const recPendingStopRef = useRef<boolean | null>(null);
+  const recStoppingRef = useRef(false);
+  const recStartedAtRef = useRef(0);
+  useEffect(() => { recordingRef.current = recording; }, [recording]);
   const [sending, setSending] = useState(false);
   // Whether pressing Return sends the message (WhatsApp-style), from Chat settings.
   const [enterToSend, setEnterToSend] = useState(true);
+  /** Double-tap reaction (Chat settings · default ❤️). */
+  const [defaultReaction, setDefaultReaction] = useState('❤️');
+  /** Brief highlight after jump-to-quoted-message (search + reply tap). */
+  const [flashId, setFlashId] = useState<string | null>(null);
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Floating "jump to latest" button appears once the user scrolls up an inverted list.
   const [atBottom, setAtBottom] = useState(true);
   // Ref mirror so the keyboard-show listener can read "am I at the bottom?" at
-  // fire time without re-subscribing every scroll.
+  // fire time without re-subscribing every scroll. Tight slack (16px) — a wide
+  // threshold left a visible empty band while still counting as "at bottom".
   const atBottomRef = useRef(true);
+  const composerHRef = useRef(0);
 
   const [polls, setPolls] = useState<Poll[]>([]);
   const [pollVotes, setPollVotes] = useState<Map<string, PollVote[]>>(new Map());
@@ -263,6 +513,14 @@ function ChatScreenInner() {
   const [pollQuestion, setPollQuestion] = useState('');
   const [pollOptions, setPollOptions] = useState<string[]>(['', '']);
   const [pollMultiple, setPollMultiple] = useState(false);
+  const [pollAnonymous, setPollAnonymous] = useState(false);
+  const [pollVotersOption, setPollVotersOption] = useState<{
+    pollId: string;
+    option: number;
+  } | null>(null);
+  const [pollVoters, setPollVoters] = useState<{ userId: string; displayName: string | null }[]>([]);
+  const [pollClosingId, setPollClosingId] = useState<string | null>(null);
+  const [eventBuilder, setEventBuilder] = useState(false);
 
   const listRef = useRef<FlatList<TimelineItem>>(null);
   const typingChannel = useRef<ReturnType<typeof createTypingChannel> | null>(null);
@@ -281,21 +539,94 @@ function ChatScreenInner() {
     });
   }, []);
 
-  // Keep the latest message in view as the keyboard opens. The composer already
-  // follows the keyboard via useAnimatedKeyboard (padding), which shrinks the
-  // inverted list from the bottom; if the user was at the newest message we nudge
-  // it back to offset 0 so the last bubble stays visible above the composer.
-  // Covers open/close, emoji keyboard, and height changes (each fires a fresh
-  // show event); rotation re-runs via new metrics.
+  // Keep the latest message in view as the keyboard opens. The composer rides
+  // the IME spacer (WhatsApp); if the user was at the newest message we re-pin
+  // to offset 0 so the last bubble stays visible above the composer.
+  /** Message held for reaction while the action sheet is fully dismissed. */
+  const pendingReactMsg = useRef<Message | null>(null);
+  /** After loading deep history, scroll to oldest once the list lays out. */
+  const scrollToOldestPending = useRef(false);
+
+  // Warm emoji/sticker caches as soon as a chat mounts (instant open).
   useEffect(() => {
-    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const onShow = Keyboard.addListener(showEvt, () => {
-      if (atBottomRef.current) {
-        requestAnimationFrame(() => listRef.current?.scrollToOffset({ offset: 0, animated: true }));
+    void preloadEmojiCache();
+    void preloadStickerCache();
+  }, []);
+
+  // Re-pin newest messages when IME opens/closes or emoji keyboard resizes.
+  // Without re-pin, inverted lists can leave a blank band above the composer.
+  const pinToLatest = useCallback((animated: boolean) => {
+    if (!atBottomRef.current) return;
+    requestAnimationFrame(() => {
+      try {
+        listRef.current?.scrollToOffset({ offset: 0, animated });
+      } catch {
+        /* list unmounted */
       }
     });
-    return () => onShow.remove();
   }, []);
+
+  const openComposerEmoji = useCallback(() => {
+    Keyboard.dismiss();
+    setStickersOpen(false);
+    setComposerTray('emoji');
+    pinToLatest(false);
+  }, [pinToLatest]);
+
+  const openComposerStickers = useCallback(() => {
+    Keyboard.dismiss();
+    setAttachOpen(false);
+    setComposerTray('stickers');
+    pinToLatest(false);
+  }, [pinToLatest]);
+
+  const closeComposerTray = useCallback(() => {
+    setComposerTray('none');
+    // Restore system keyboard after tray closes (WhatsApp parity).
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }, []);
+
+  const hideComposerTrayOnly = useCallback(() => {
+    setComposerTray('none');
+  }, []);
+
+  useEffect(() => {
+    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    // System keyboard opens → close emoji/sticker tray so they never stack.
+    const onShow = Keyboard.addListener(showEvt, () => {
+      setComposerTray('none');
+      pinToLatest(true);
+    });
+    const onHide = Keyboard.addListener(hideEvt, () => pinToLatest(false));
+    return () => {
+      onShow.remove();
+      onHide.remove();
+    };
+  }, [pinToLatest]);
+
+  // App resume: clear any residual scroll offset that looks like a bottom gap.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (s) => {
+      if (s === 'active') pinToLatest(false);
+    });
+    return () => sub.remove();
+  }, [pinToLatest]);
+
+  const onComposerLayout = useCallback(
+    (e: { nativeEvent: { layout: { height: number } } }) => {
+      const h = e.nativeEvent.layout.height;
+      if (!composerHeightChanged(composerHRef.current, h)) return;
+      composerHRef.current = h;
+      if (shouldRepinToLatestOnComposerResize(atBottomRef.current)) {
+        pinToLatest(false);
+      }
+    },
+    [pinToLatest],
+  );
+
+  const listContentPad = useMemo(() => invertedListContentPadding(), []);
+  const composerPadBottom = composerInnerBottomPad();
 
   const loadPolls = useCallback(async () => {
     const ps = await getPolls(supabase, conversationId);
@@ -334,7 +665,14 @@ function ChatScreenInner() {
       return;
     }
     setPollBuilder(false);
-    const { error } = await createPoll(supabase, conversationId, q, opts, pollMultiple);
+    const { error } = await createPoll(
+      supabase,
+      conversationId,
+      q,
+      opts,
+      pollMultiple,
+      pollAnonymous,
+    );
     if (error) {
       Alert.alert('Could not create poll', error.message);
       return;
@@ -342,16 +680,20 @@ function ChatScreenInner() {
     setPollQuestion('');
     setPollOptions(['', '']);
     setPollMultiple(false);
+    setPollAnonymous(false);
     await loadPolls();
     requestAnimationFrame(() => listRef.current?.scrollToOffset({ offset: 0, animated: true }));
   }
 
   // ── Bootstrap: who am I, conversation peers, history ──────────────────────
   // Local-first: paint cached messages + queued (outbox) messages INSTANTLY with
-  // no network wait or spinner (WhatsApp-style), then reconcile with Supabase in
-  // the background. If we're offline the cached view simply stays.
+  // no network wait or spinner (WhatsApp-style), then reconcile with Supabase
+  // AFTER interactions (smooth first scroll). Offline → cached view stays.
   useEffect(() => {
     let active = true;
+    const interactTasks: { cancel?: () => void }[] = [];
+    bindChatHeaderLive(conversationId, { title: params.title || '' });
+
     (async () => {
       const user = await getCurrentUser(supabase); // local session read — instant
       if (!active) return;
@@ -363,18 +705,63 @@ function ChatScreenInner() {
         getCachedMessages(conversationId),
         getPendingMessages(conversationId),
       ]);
+      if (active) setHasMoreOlder(true);
       if (active && (cachedMsgs.length || pending.length)) {
         setMsgs(() => mergeById(cachedMsgs, pending));
         setLoading(false); // never block on the network once we have something
       }
 
       // 2) INSTANT: header peers from the cached conversation list (no network).
+      // Never paint "Unknown" — prefer cached conversation title + profile rows.
       if (myId) {
         const cachedConvs = await getCachedConversations(myId);
         const cs = cachedConvs.find((s) => s.conversation.id === conversationId);
         if (cs && active) {
-          setIsGroup(cs.conversation.type === 'group');
-          setPeers(cs.participants.filter((p) => p.id !== myId));
+          const group = cs.conversation.type === 'group';
+          setIsGroup(group);
+          const peerList = cs.participants.filter((p) => p.id !== myId);
+          // Enrich each peer from per-profile cache (stronger offline identity).
+          const enriched = await Promise.all(
+            peerList.map(async (p) => {
+              const cachedP = await getCachedProfile(p.id).catch(() => null);
+              return (mergeProfileIdentity(cachedP, p) as Profile) ?? p;
+            }),
+          );
+          setPeers(enriched);
+          setChatAvatarUrl(cs.avatarUrl ?? enriched[0]?.avatar_url ?? null);
+          if (cs.title && !/^unknown$/i.test(cs.title)) {
+            setHeaderTitle(cs.title);
+          }
+          cacheProfiles(enriched).catch(() => {});
+          // Group metadata is secondary — defer so first paint/scroll stay smooth.
+          if (group) {
+            const runGroup = () => {
+              if (!active) return;
+              Promise.all([
+                getMyGroupRole(supabase, conversationId),
+                getGroupConversation(supabase, conversationId),
+                getPinnedMessageIds(supabase, conversationId),
+                getGroupMembers(supabase, conversationId).catch(() => [] as GroupMember[]),
+              ])
+                .then(([role, gconv, pins, mems]) => {
+                  if (!active) return;
+                  setMyGroupRole(role);
+                  const perms = permissionsFromConversation(gconv ?? cs.conversation);
+                  setGroupPerms(perms);
+                  setGroupSendBlocked(!canSendInGroup(role, perms));
+                  setPinnedIds(new Set(pins));
+                  setGroupMembers(mems || []);
+                })
+                .catch(() => {});
+            };
+            interactTasks.push(InteractionManager.runAfterInteractions(runGroup));
+          } else {
+            setMyGroupRole(null);
+            setGroupSendBlocked(false);
+            setGroupPerms(permissionsFromConversation(null));
+            setPinnedIds(new Set());
+            setGroupMembers([]);
+          }
         }
       }
 
@@ -383,142 +770,245 @@ function ChatScreenInner() {
       // already hide expired ones regardless.
       purgeExpiredMessages(supabase).catch(() => {});
 
-      // 3) BACKGROUND: fetch fresh history, merge with pending, refresh cache.
-      try {
-        const msgs = await getMessages(supabase, conversationId, 100);
+      // 3) BACKGROUND (after interactions): delta/full sync + receipts/reactions.
+      const runNetwork = async () => {
         if (!active) return;
-        const pend = await getPendingMessages(conversationId);
-        setMsgs(() => mergeById(msgs, pend));
-        setLoading(false);
-        cacheMessages(conversationId, msgs).catch(() => {});
-
-        const ids = msgs.map((m) => m.id);
-        const [rx, rc] = await Promise.all([getReactions(supabase, ids), getReceipts(supabase, ids)]);
-        if (!active) return;
-        setReactions(rx);
-        applyReceipts(rc);
-        loadPolls().catch(() => {});
-
-        // Per-user message extras (star + delete-for-me). Degrade to empty if the
-        // 0011/0014 migrations aren't applied — the shared helpers already do.
-        Promise.all([getStarredIds(supabase), getHiddenMessageIds(supabase)])
-          .then(([starred, hidden]) => {
-            if (!active) return;
-            setStarredIds(new Set(starred));
-            setHiddenIds(new Set(hidden));
-          })
-          .catch(() => {});
-
-        // mark unread incoming as read (unless ghost mode suppresses receipts)
-        if (!ghostRef.current) {
-          msgs
-            .filter((m) => m.sender_id !== myId)
-            .forEach((m) => markMessageAsRead(supabase, m.id).catch(() => {}));
-        }
-      } catch {
-        // Offline / transient error: keep the cached view already on screen.
-        if (active) setLoading(false);
-      }
-
-      // Fallback peer resolution if the conversation wasn't in the cache yet
-      // (e.g. opened via a deep link before the Chats tab was visited).
-      if (myId && peersRef.current.length === 0) {
         try {
-          const summaries = await getMyConversations(supabase);
-          const summary = summaries.find((s) => s.conversation.id === conversationId);
-          if (summary && active) {
-            setIsGroup(summary.conversation.type === 'group');
-            setPeers(summary.participants.filter((p) => p.id !== myId));
+          const watermark = (() => {
+            let latest: string | null = null;
+            for (const m of cachedMsgs) {
+              const f = m as Message & { pending?: boolean; failed?: boolean };
+              if (f.pending || f.failed) continue;
+              if (!latest || m.created_at > latest) latest = m.created_at;
+            }
+            return latest;
+          })();
+
+          let msgs: Message[];
+          if (watermark && cachedMsgs.length > 0) {
+            const delta = await getMessages(supabase, conversationId, { after: watermark, limit: 200 });
+            if (!active) return;
+            if (delta.length) {
+              const map = new Map<string, Message>();
+              for (const m of cachedMsgs) map.set(m.id, m);
+              for (const m of delta) map.set(m.id, m);
+              msgs = [...map.values()].sort((a, b) =>
+                a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0,
+              );
+              cacheMessages(conversationId, msgs).catch(() => {});
+            } else {
+              msgs = cachedMsgs;
+            }
+          } else {
+            msgs = await getMessages(supabase, conversationId, 100);
+            if (!active) return;
+            cacheMessages(conversationId, msgs).catch(() => {});
           }
-        } catch { /* offline */ }
+
+          const pend = await getPendingMessages(conversationId);
+          if (!active) return;
+          setMsgs(() => mergeById(msgs, pend));
+          setLoading(false);
+          // Do NOT prefetch full media blobs on history sync (WhatsApp/Telegram).
+
+          const ids = msgs.map((m) => m.id);
+          const [rx, rc] = await Promise.all([getReactions(supabase, ids), getReceipts(supabase, ids)]);
+          if (!active) return;
+          setReactions(rx);
+          const mineIds = msgs.filter((m) => m.sender_id === myId).map((m) => m.id);
+          const built = buildTickMap(rc, myId, mineIds);
+          setReceipts((prev) => {
+            const next = new Map(built);
+            for (const [id, t] of prev) {
+              if (t === 'sending' || t === 'failed') next.set(id, t);
+            }
+            return next;
+          });
+          loadPolls().catch(() => {});
+
+          Promise.all([getStarredIds(supabase), getHiddenMessageIds(supabase)])
+            .then(([starred, hidden]) => {
+              if (!active) return;
+              setStarredIds(new Set(starred));
+              setHiddenIds(new Set(hidden));
+            })
+            .catch(() => {});
+
+          const incomingIds = msgs.filter((m) => m.sender_id !== myId).map((m) => m.id);
+          if (incomingIds.length) {
+            markMessagesAsDelivered(supabase, incomingIds).catch(() => {});
+            if (!ghostRef.current) {
+              incomingIds.forEach((id) => markMessageAsRead(supabase, id).catch(() => {}));
+            }
+          }
+        } catch {
+          if (active) setLoading(false);
+        }
+
+        // Fallback peer resolution if conversation wasn't in the cache yet.
+        if (myId && peersRef.current.length === 0) {
+          try {
+            const summaries = await getMyConversations(supabase);
+            const summary = summaries.find((s) => s.conversation.id === conversationId);
+            if (summary && active) {
+              setIsGroup(summary.conversation.type === 'group');
+              const peerList = summary.participants.filter((p) => p.id !== myId);
+              const enriched = await Promise.all(
+                peerList.map(async (p) => {
+                  const cachedP = await getCachedProfile(p.id).catch(() => null);
+                  return (mergeProfileIdentity(cachedP, p) as Profile) ?? p;
+                }),
+              );
+              setPeers((prev) => {
+                if (!prev.length) return enriched;
+                return enriched.map((p) => {
+                  const old = prev.find((x) => x.id === p.id);
+                  return (mergeProfileIdentity(old, p) as Profile) ?? p;
+                });
+              });
+              setChatAvatarUrl(summary.avatarUrl ?? enriched[0]?.avatar_url ?? null);
+              if (summary.title && !/^unknown$/i.test(summary.title)) {
+                setHeaderTitle((t) => (/^unknown$/i.test(t) ? summary.title : t));
+              }
+              cacheProfiles(enriched).catch(() => {});
+            }
+          } catch { /* offline */ }
+        }
+      };
+
+      // If we already painted cache, wait for transitions; if cold, start soon.
+      if (cachedMsgs.length || pending.length) {
+        interactTasks.push(
+          InteractionManager.runAfterInteractions(() => {
+            void runNetwork();
+          }),
+        );
+      } else {
+        void runNetwork();
       }
     })();
     return () => {
       active = false;
+      interactTasks.forEach((t) => t.cancel?.());
+      clearChatHeaderLive(conversationId);
     };
-  }, [conversationId, setMsgs]);
+  }, [conversationId, setMsgs, params.title]);
 
-  const applyReceipts = useCallback((rows: { message_id: string; status: string }[]) => {
+  // Monotonic receipt merge via shared messageStatus (never downgrade ticks).
+  const applyReceipts = useCallback((rows: { message_id: string; user_id: string; status: string }[]) => {
     setReceipts((prev) => {
-      const next = new Map(prev);
+      let next = prev;
       for (const r of rows) {
-        const cur = next.get(r.message_id);
-        if (r.status === 'read' || cur !== 'read') {
-          next.set(r.message_id, r.status as TickStatus);
-        }
+        next = applyReceiptToTickMap(next, r, uid);
       }
-      return next;
+      return next === prev ? prev : next;
     });
-  }, []);
+  }, [uid]);
 
   // ── Realtime subscriptions ────────────────────────────────────────────────
   useEffect(() => {
     if (!uid) return;
 
+    const removeLocally = (id: string) => {
+      setMsgs((prev) => prev.filter((m) => m.id !== id));
+      removeCachedMessages(conversationId, [id]).catch(() => {});
+    };
+
+    // Coalesce rapid inserts so one setState per frame during active chat.
+    const insertBatch = createMessageBatcher((batch) => {
+      setMsgs((prev) => {
+        let next = prev;
+        for (const incoming of batch) {
+          next = next.some((m) => m.id === incoming.id)
+            ? next.map((m) => (m.id === incoming.id ? incoming : m))
+            : [...next, incoming];
+        }
+        return next;
+      });
+      for (const incoming of batch) {
+        upsertCachedMessage(conversationId, incoming).catch(() => {});
+        if (incoming.type === 'system') {
+          getDisappearing(supabase, conversationId).then(setDisappearSecs).catch(() => {});
+        }
+        if (incoming.sender_id !== uid) {
+          markMessageAsDelivered(supabase, incoming.id).catch(() => {});
+          if (!ghostRef.current) {
+            markMessageAsRead(supabase, incoming.id).catch(() => {});
+          }
+        }
+      }
+      requestAnimationFrame(() => listRef.current?.scrollToOffset({ offset: 0, animated: true }));
+    });
+
     const msgChannel = subscribeToMessages(
       supabase,
       conversationId,
       (incoming) => {
-        // Replace any optimistic row sharing this id (offline send confirmed), or
-        // append if new. Keep the local cache in sync so a reopen is instant.
-        setMsgs((prev) => (prev.some((m) => m.id === incoming.id)
-          ? prev.map((m) => (m.id === incoming.id ? incoming : m))
-          : [...prev, incoming]));
-        upsertCachedMessage(conversationId, incoming).catch(() => {});
-        // A system message means the disappearing timer was just changed — refresh
-        // the header indicator to match.
-        if (incoming.type === 'system') {
-          getDisappearing(supabase, conversationId).then(setDisappearSecs).catch(() => {});
-        }
-        if (incoming.sender_id !== uid && !ghostRef.current) {
-          markMessageAsRead(supabase, incoming.id).catch(() => {});
-        }
-        requestAnimationFrame(() => listRef.current?.scrollToOffset({ offset: 0, animated: true }));
+        insertBatch.push(incoming);
       },
       (updated) => {
+        // Updates/deletes apply immediately (not batched) for correct ticks/unsend.
+        if (shouldOmitDeletedFromTimeline(updated)) {
+          removeLocally(updated.id);
+          return;
+        }
         setMsgs((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
         upsertCachedMessage(conversationId, updated).catch(() => {});
       },
+      (deletedId) => {
+        removeLocally(deletedId);
+      },
     );
 
+    let alive = true;
     const rxChannel = subscribeToReactions(supabase, conversationId, () => {
       getReactions(
         supabase,
         messagesRef.current.map((m) => m.id),
-      ).then(setReactions);
+      ).then((r) => { if (alive) setReactions(r); }).catch(() => {});
     });
 
     const rcChannel = subscribeToReceipts(supabase, conversationId, (r) =>
-      applyReceipts([r as any]),
+      applyReceipts([r]),
     );
 
-    const presenceChannel = joinPresence(supabase, uid, setOnlineIds);
+    const presenceChannel = joinPresence(supabase, uid, (ids) => {
+      if (alive) setOnlineIds(ids);
+    });
 
     const tc = createTypingChannel(supabase, conversationId, (p) => {
-      if (p.userId === uid) return;
-      setTypingName(p.typing ? p.name : null);
+      if (!alive || p.userId === uid) return;
+      // Header-only update — does not re-render the message list.
+      setChatHeaderTyping(conversationId, p.typing ? p.name : null);
       if (p.typing) {
         if (typingTimeout.current) clearTimeout(typingTimeout.current);
-        typingTimeout.current = setTimeout(() => setTypingName(null), 4000);
+        typingTimeout.current = setTimeout(() => {
+          if (alive) setChatHeaderTyping(conversationId, null);
+        }, 4000);
       }
     });
     typingChannel.current = tc;
 
     return () => {
+      alive = false;
+      insertBatch.clear();
       supabase.removeChannel(msgChannel);
       supabase.removeChannel(rxChannel);
       supabase.removeChannel(rcChannel);
       leavePresence(presenceChannel); // shared room: unhook this screen only
       supabase.removeChannel(tc.channel);
-      // Cancel any pending "typing…" auto-clear so it can't fire setTypingName
-      // after this screen has unmounted (no state updates after unmount).
       if (typingTimeout.current) { clearTimeout(typingTimeout.current); typingTimeout.current = null; }
+      setChatHeaderTyping(conversationId, null);
     };
   }, [uid, conversationId, setMsgs, applyReceipts]);
 
-  // Restore a persisted draft when the chat opens.
+  // Restore a persisted draft when the chat opens (cancel on switch — no cross-chat bleed).
   useEffect(() => {
-    getDraft(conversationId).then((d) => { if (d) setText(d); }).catch(() => {});
+    let alive = true;
+    getDraft(conversationId)
+      .then((d) => { if (alive && d) setText(d); })
+      .catch(() => {});
+    return () => { alive = false; };
   }, [conversationId]);
 
   // When a queued (offline) message finally sends, swap its optimistic row for
@@ -536,83 +1026,415 @@ function ChatScreenInner() {
       // clear the pending flag so the clock disappears.
       setMsgs((prev) => prev.map((m) => (m.id === sentId ? { ...m, pending: false } : m)));
     });
-    return off;
+    // Permanently failed after MAX_OUTBOX_ATTEMPTS — surface failed state (no silent drop).
+    const offDead = onOutboxDeadLetter((item) => {
+      if (item.conversationId !== conversationId) return;
+      setReceipts((prev) => {
+        const next = new Map(prev);
+        next.set(item.tempId, 'failed' as TickStatus);
+        return next;
+      });
+      setMsgs((prev) =>
+        prev.map((m) => (m.id === item.tempId ? { ...m, pending: false, failed: true } as typeof m : m)),
+      );
+    });
+    return () => {
+      off();
+      offDead();
+    };
   }, [conversationId]);
 
   // ── Header (title + presence / typing subtitle) ───────────────────────────
+  // Typing/online/title live in chatHeaderLive — setOptions does NOT re-run on them.
   const peerOnline = peers.some((p) => onlineIds.has(p.id));
-  const subtitle = typingName
-    ? isGroup
-      ? `${typingName} is typing…`
-      : 'typing…'
-    : isGroup
-      ? `${peers.length + 1} members`
-      : peerOnline
-        ? 'online'
-        : formatLastSeen(peers[0]?.last_seen);
+  const baseSubtitle = isGroup
+    ? `${peers.length + 1} members`
+    : peerOnline
+      ? 'online'
+      : formatLastSeen(peers[0]?.last_seen);
+  // Direct chats prefer the peer avatar; groups use conversation avatar.
+  const [peerNickname, setPeerNickname] = useState<string | null>(null);
+  const [headerTitle, setHeaderTitle] = useState(params.title);
+  // Relationship streak (DMs only) — additive header badge; never blocks chat load.
+  const [streakScore, setStreakScore] = useState(0);
+  const [streakEmoji, setStreakEmoji] = useState('');
+
+  // Load local nickname + never let a weak network peer wipe the nav title.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      if (isGroup || !uid || !peers[0]?.id) {
+        if (alive) {
+          setPeerNickname(null);
+          if (params.title && !/^unknown$/i.test(params.title)) setHeaderTitle(params.title);
+        }
+        return;
+      }
+      const nick = await getNickname(uid, peers[0].id).catch(() => null);
+      if (!alive) return;
+      setPeerNickname(nick);
+      const name = resolveDisplayName(peers[0], {
+        nickname: nick,
+        fallback: params.title,
+      });
+      setHeaderTitle(name);
+    })();
+    return () => { alive = false; };
+  }, [uid, peers, isGroup, params.title]);
+
+  // Streak badge: read-only, DM-only, best-effort. Failures leave score 0 (hidden).
+  // Does not call processMyStreaks — list screen already does catch-up.
+  useFocusEffect(
+    useCallback(() => {
+      if (isGroup) {
+        setStreakScore(0);
+        setStreakEmoji('');
+        return;
+      }
+      let alive = true;
+      getStreak(supabase, conversationId)
+        .then((d) => {
+          if (!alive) return;
+          const score = d?.streak?.score ?? 0;
+          setStreakScore(score > 0 ? score : 0);
+          setStreakEmoji(
+            score > 0
+              ? (d?.streak?.tier && d.streak.tier.trim()) || emojiForScore(score)
+              : '',
+          );
+        })
+        .catch(() => {
+          if (!alive) return;
+          setStreakScore(0);
+          setStreakEmoji('');
+        });
+      return () => {
+        alive = false;
+      };
+    }, [conversationId, isGroup]),
+  );
+
+  const headerAvatarUri = isGroup
+    ? chatAvatarUrl
+    : (resolveAvatarUrl(peers[0], chatAvatarUrl));
+  const headerAvatarName = isGroup
+    ? (headerTitle || params.title)
+    : resolveDisplayName(peers[0], { nickname: peerNickname, fallback: headerTitle || params.title });
+
+  // Push live header fields without navigation.setOptions (typing/online/title).
+  useEffect(() => {
+    patchChatHeaderLive(conversationId, {
+      title: headerTitle || params.title || '',
+      baseSubtitle,
+      avatarUri: headerAvatarUri ?? null,
+      avatarName: headerAvatarName || params.title || '',
+      peerUserId: isGroup ? null : (peers[0]?.id ?? null),
+      isGroup,
+      streakScore,
+      streakEmoji,
+      disappearSecs,
+      ghost,
+    });
+  }, [
+    conversationId,
+    headerTitle,
+    params.title,
+    baseSubtitle,
+    headerAvatarUri,
+    headerAvatarName,
+    isGroup,
+    peers,
+    streakScore,
+    streakEmoji,
+    disappearSecs,
+    ghost,
+  ]);
+
+  function openHeaderProfile() {
+    if (isGroup) {
+      navigation.navigate('GroupInfo', { conversationId });
+    } else if (peers[0]) {
+      navigation.navigate('Profile', { userId: peers[0].id, conversationId });
+    }
+  }
+
+  function openHeaderStreak() {
+    if (isGroup || streakScore <= 0) return;
+    navigation.navigate('StreakDetail', {
+      conversationId,
+      title: headerTitle || params.title || 'Streak',
+    });
+  }
 
   useEffect(() => {
+    const winW = Dimensions.get('window').width;
+    // Reserve right chrome so the title never runs under call/menu icons.
+    // 1:1 = voice + video + ⋮ ; group = ⋮ only. Left back ≈ 52.
+    const rightReserve = isGroup ? 52 : 132;
+    const titleMax = Math.max(120, winW - 52 - rightReserve - 8);
+
     if (selectionMode) {
+      // WhatsApp selection chrome:
+      //   Left  = back + "N selected" (never under icons)
+      //   Right = Copy? · Forward · ⋮ · Delete  (secondary actions in overflow)
+      const selectedMsgs = messagesRef.current.filter((m) => selectedIds.has(m.id));
+      const onlyCallHistory =
+        selectedMsgs.length > 0 && selectedMsgs.every((m) => isCallHistoryMessage(m));
+      const single = selectedMsgs.length === 1 ? selectedMsgs[0] : null;
+      // Copy only when every selected message is plain text with body.
+      const canCopy =
+        selectedMsgs.length > 0 &&
+        selectedMsgs.every(
+          (m) =>
+            !m.is_deleted &&
+            m.type === 'text' &&
+            !!(m.content && m.content.trim()),
+        );
+      // Right cluster: up to 4 × 40px icons — reserve so left count never collides.
+      const selRightIcons = onlyCallHistory
+        ? 2
+        : (canCopy ? 1 : 0) + 3; // forward + more + delete
+      const selRightW = selRightIcons * 40 + 8;
+      const selLeftMax = Math.max(100, winW - selRightW - 16);
+
+      const openSelectionMore = () => {
+        const actions: Parameters<typeof showSheet>[0]['actions'] = [];
+        if (single) {
+          actions.push({
+            text: 'Message info',
+            icon: 'info',
+            onPress: () => showInfoForMessage(single),
+          });
+        }
+        if (!onlyCallHistory) {
+          actions.push({
+            text: 'Star',
+            icon: 'star',
+            onPress: () => starSelectedMany(),
+          });
+        }
+        if (single && !single.is_deleted && !onlyCallHistory) {
+          actions.push({
+            text: 'Reply',
+            icon: 'reply',
+            onPress: () => {
+              setEditing(null);
+              setReply(single);
+              exitSelection();
+            },
+          });
+        }
+        if (
+          isGroup &&
+          single &&
+          !single.is_deleted &&
+          canPinMessages(myGroupRole, groupPerms)
+        ) {
+          const pinned = pinnedIds.has(single.id);
+          const pinTarget = single;
+          actions.push({
+            text: pinned ? 'Unpin' : 'Pin',
+            icon: 'pin',
+            onPress: () => {
+              exitSelection();
+              void (async () => {
+                const res = pinned
+                  ? await unpinGroupMessage(supabase, conversationId, pinTarget.id)
+                  : await pinGroupMessage(supabase, conversationId, pinTarget.id);
+                if (res.error) {
+                  Alert.alert('Pin', res.error.message);
+                  return;
+                }
+                setPinnedIds((prev) => {
+                  const next = new Set(prev);
+                  if (pinned) next.delete(pinTarget.id);
+                  else next.add(pinTarget.id);
+                  return next;
+                });
+              })();
+            },
+          });
+        }
+        actions.push({
+          text: 'Select all',
+          icon: 'select',
+          onPress: () => {
+            const all = messagesRef.current
+              .filter((m) => m.type !== 'system' || isCallHistoryMessage(m))
+              .map((m) => m.id);
+            setSelectedIds(new Set(all));
+          },
+        });
+        if (single && !single.is_deleted && !onlyCallHistory) {
+          actions.push({
+            text: 'More…',
+            onPress: () => {
+              const t = single;
+              exitSelection();
+              requestAnimationFrame(() => setSelected(t));
+            },
+          });
+        }
+        showSheet({ title: `${selectedIds.size} selected`, actions });
+      };
+
       navigation.setOptions({
-        headerTitle: () => <Text style={styles.headerTitle}>{selectedIds.size} selected</Text>,
+        // Empty center title — count lives next to back (no overlap with actions).
+        headerTitle: () => null,
+        headerTitleContainerStyle: { width: 0, maxWidth: 0, overflow: 'hidden' },
+        headerLeftContainerStyle: {
+          flexGrow: 1,
+          flexShrink: 1,
+          maxWidth: selLeftMax,
+          marginRight: 4,
+        },
+        headerRightContainerStyle: {
+          flexGrow: 0,
+          flexShrink: 0,
+          marginLeft: 4,
+        },
         headerLeft: () => (
-          <Pressable hitSlop={8} onPress={exitSelection}>
-            <Ionicons name="close" size={24} color={colors.text} />
-          </Pressable>
+          <View style={[styles.selLeft, { maxWidth: selLeftMax }]}>
+            <Pressable
+              hitSlop={10}
+              onPress={exitSelection}
+              accessibilityLabel="Cancel selection"
+              style={styles.headerIconBtn}
+            >
+              <Ionicons name="arrow-back" size={24} color={headerOnGreen} />
+            </Pressable>
+            <Text
+              style={styles.selCount}
+              numberOfLines={1}
+              ellipsizeMode="tail"
+              maxFontSizeMultiplier={1.3}
+              accessibilityRole="header"
+            >
+              {selectedIds.size} selected
+            </Text>
+          </View>
         ),
         headerRight: () => (
-          <View style={styles.headerActions}>
-            <Pressable hitSlop={8} onPress={copySelected}>
-              <Ionicons name="copy-outline" size={21} color={colors.text} />
-            </Pressable>
-            <Pressable hitSlop={8} onPress={forwardSelectedMany} style={{ marginLeft: 18 }}>
-              <Ionicons name="arrow-redo-outline" size={22} color={colors.text} />
-            </Pressable>
-            <Pressable hitSlop={8} onPress={() => deleteMany([...selectedIds])} style={{ marginLeft: 18 }}>
-              <Ionicons name="trash-outline" size={21} color={colors.danger} />
-            </Pressable>
-          </View>
-        ),
-      });
-      return;
-    }
-    navigation.setOptions({
-      headerLeft: undefined,
-      headerTitle: () => (
-        <Pressable onPress={() => peers[0] && navigation.navigate('Profile', { userId: peers[0].id, conversationId })}>
-          <View style={styles.headerTitleRow}>
-            <Text style={styles.headerTitle} numberOfLines={1}>
-              {ghost ? '👻 ' : ''}{params.title}
-            </Text>
-            {/* Disappearing-messages indicator (WhatsApp parity). */}
-            {disappearSecs > 0 && (
-              <Ionicons name="timer-outline" size={15} color={colors.textMuted} style={{ marginLeft: 5 }} />
+          <View style={styles.selRight}>
+            {onlyCallHistory ? (
+              <>
+                <Pressable
+                  hitSlop={8}
+                  onPress={openSelectionMore}
+                  accessibilityLabel="More"
+                  style={styles.headerIconBtn}
+                >
+                  <Ionicons name="ellipsis-vertical" size={20} color={headerOnGreen} />
+                </Pressable>
+                <Pressable
+                  hitSlop={8}
+                  onPress={() => deleteMany([...selectedIds])}
+                  accessibilityLabel="Delete"
+                  style={styles.headerIconBtn}
+                >
+                  <Ionicons name="trash-outline" size={21} color={colors.danger} />
+                </Pressable>
+              </>
+            ) : (
+              <>
+                {canCopy && (
+                  <Pressable
+                    hitSlop={8}
+                    onPress={copySelected}
+                    accessibilityLabel="Copy"
+                    style={styles.headerIconBtn}
+                  >
+                    <Ionicons name="copy-outline" size={21} color={headerOnGreen} />
+                  </Pressable>
+                )}
+                <Pressable
+                  hitSlop={8}
+                  onPress={forwardSelectedMany}
+                  accessibilityLabel="Forward"
+                  style={styles.headerIconBtn}
+                >
+                  <Ionicons name="arrow-redo-outline" size={21} color={headerOnGreen} />
+                </Pressable>
+                <Pressable
+                  hitSlop={8}
+                  onPress={openSelectionMore}
+                  accessibilityLabel="More options"
+                  style={styles.headerIconBtn}
+                >
+                  <Ionicons name="ellipsis-vertical" size={20} color={headerOnGreen} />
+                </Pressable>
+                <Pressable
+                  hitSlop={8}
+                  onPress={() => deleteMany([...selectedIds])}
+                  accessibilityLabel="Delete"
+                  style={styles.headerIconBtn}
+                >
+                  <Ionicons name="trash-outline" size={21} color={colors.danger} />
+                </Pressable>
+              </>
             )}
           </View>
-          {!!subtitle && <Text style={styles.headerSub}>{subtitle}</Text>}
-        </Pressable>
+        ),
+      } as any);
+      return;
+    }
+    // Stable header chrome: live title/typing/online update via chatHeaderLive
+    // (ChatHeaderTitle). Do NOT list typing/subtitle/title here — that was jank.
+    navigation.setOptions({
+      headerLeft: undefined,
+      headerTitleAlign: 'left',
+      headerTitleContainerStyle: {
+        flex: 1,
+        maxWidth: titleMax,
+        marginHorizontal: 0,
+        paddingRight: 4,
+      },
+      headerRightContainerStyle: {
+        flexGrow: 0,
+        flexShrink: 0,
+        paddingLeft: 0,
+      },
+      headerTitle: () => (
+        <ChatHeaderTitle
+          styles={styles}
+          titleMax={titleMax}
+          onPressProfile={() => headerNavRef.current.openHeaderProfile()}
+          onPressStreak={() => headerNavRef.current.openHeaderStreak()}
+        />
       ),
-      // Group calling isn't implemented yet, so 1:1 call buttons are only shown
-      // in direct chats — no dead/"coming soon" buttons in groups.
       headerRight: () => (
-        <View style={styles.headerActions}>
-          <Pressable hitSlop={8} onPress={() => setSearchOpen((v) => !v)}>
-            <Ionicons name="search-outline" size={21} color={colors.text} />
-          </Pressable>
-          {!isGroup && (
-            <>
-              <Pressable hitSlop={8} onPress={() => placeCall('audio')} style={{ marginLeft: 18 }}>
-                <Ionicons name="call-outline" size={22} color={colors.text} />
-              </Pressable>
-              <Pressable hitSlop={8} onPress={() => placeCall('video')} style={{ marginLeft: 18 }}>
-                <Ionicons name="videocam-outline" size={24} color={colors.text} />
-              </Pressable>
-            </>
-          )}
-        </View>
+        <ChatHeaderRight
+          styles={styles}
+          isGroup={isGroup}
+          headerOnGreen={headerOnGreen}
+          onAudio={() => headerNavRef.current.placeCall('audio')}
+          onVideo={() => headerNavRef.current.placeCall('video')}
+          onMore={() => headerNavRef.current.openChatMenu()}
+        />
       ),
-    });
-  }, [navigation, params.title, subtitle, peers, colors, styles, selectionMode, selectedIds, isGroup, ghost, disappearSecs]);
+      headerTintColor: headerOnGreen,
+      headerStyle: { backgroundColor: colors.header },
+      headerShadowVisible: false,
+      contentStyle: { backgroundColor: chatCanvasBg },
+    } as any);
+  }, [
+    navigation,
+    colors,
+    styles,
+    selectionMode,
+    selectedIds,
+    isGroup,
+    headerOnGreen,
+    chatCanvasBg,
+    // selection-mode actions only (kept for correct menu wiring when selecting)
+    chatMuted,
+    chatLock,
+    starredIds,
+    myGroupRole,
+    groupPerms,
+    pinnedIds,
+    conversationId,
+  ]);
 
   function placeCall(kind: 'audio' | 'video') {
     // Only reachable from direct chats (call buttons are hidden in groups).
@@ -620,25 +1442,115 @@ function ChatScreenInner() {
     if (!peer) return;
     startCall(conversationId, peer, kind);
   }
+  // Keep nav header handlers fresh without re-running setOptions.
+  headerNavRef.current.placeCall = placeCall;
+  headerNavRef.current.openHeaderProfile = openHeaderProfile;
+  headerNavRef.current.openHeaderStreak = openHeaderStreak;
 
   // ── Compose / send ────────────────────────────────────────────────────────
-  // Honour the "Enter to send" chat setting (mirrors web). Defaults to true.
+  // Honour the "Enter to send" + double-tap reaction chat settings.
   useEffect(() => {
-    getChatSettings(supabase).then((s) => setEnterToSend(s.enterToSend)).catch(() => {});
-  }, []);
-
-  // Load ghost mode = premium AND ghost_mode pref (mirrors web `isPremium && prefs.ghost_mode`).
-  useEffect(() => {
-    Promise.all([getServerPremium(supabase).catch(() => false), getPreferences(supabase).catch(() => null)])
-      .then(([premium, prefs]) => { const g = !!premium && !!prefs?.ghost_mode; ghostRef.current = g; setGhost(g); })
+    getChatSettings(supabase)
+      .then((s) => {
+        setEnterToSend(s.enterToSend);
+        if (s.defaultReaction) setDefaultReaction(s.defaultReaction);
+      })
       .catch(() => {});
   }, []);
+
+  // Ghost mode = premium AND ghost_mode pref. Reacts instantly when premium unlocks.
+  useEffect(() => {
+    getPreferences(supabase)
+      .catch(() => null)
+      .then((prefs) => {
+        const g = !!isPremium && !!prefs?.ghost_mode;
+        ghostRef.current = g;
+        setGhost(g);
+      })
+      .catch(() => {});
+  }, [isPremium]);
+
+  // First name used in group typing broadcasts ("Asha is typing…").
+  const selfNameRef = useRef<string>('User');
+  useEffect(() => {
+    let alive = true;
+    getMyProfile(supabase)
+      .then((p) => {
+        if (!alive || !p?.display_name) return;
+        selfNameRef.current = p.display_name.trim().split(/\s+/)[0] || 'User';
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [uid]);
 
   function onChangeText(t: string) {
     setText(t);
     setDraft(conversationId, t).catch(() => {}); // persist draft so it survives close/offline
+    // Group mentions: open picker when trailing `@query` is active.
+    if (isGroup) {
+      const m = activeMentionQuery(t);
+      if (m) {
+        setMentionOpen(true);
+        setMentionQuery(m.query);
+        setMentionStart(m.start);
+      } else {
+        setMentionOpen(false);
+      }
+    } else {
+      setMentionOpen(false);
+    }
     // Ghost mode: never broadcast typing.
-    if (!ghostRef.current) typingChannel.current?.notify({ userId: uid ?? '', name: 'Someone', typing: t.length > 0 });
+    if (!ghostRef.current) {
+      typingChannel.current?.notify({
+        userId: uid ?? '',
+        name: selfNameRef.current,
+        typing: t.length > 0,
+      });
+    }
+  }
+
+  function pickMention(member: GroupMember) {
+    const label =
+      member.profile.username ||
+      (member.profile.display_name || 'member').replace(/\s+/g, '');
+    const next = applyMention(text, mentionStart, label);
+    setText(next.text);
+    setDraft(conversationId, next.text).catch(() => {});
+    setMentionOpen(false);
+  }
+
+  const mentionCandidates = useMemo(() => {
+    if (!mentionOpen || !isGroup) return [];
+    return filterMentionMembers(groupMembers, mentionQuery, uid, 8);
+  }, [mentionOpen, isGroup, groupMembers, mentionQuery, uid]);
+
+  const pinnedPreview = useMemo(() => {
+    if (!isGroup || pinnedIds.size === 0) return null;
+    const id =
+      pinnedCycleId && pinnedIds.has(pinnedCycleId)
+        ? pinnedCycleId
+        : [...pinnedIds][0];
+    const m = messages.find((x) => x.id === id);
+    const text = m
+      ? m.type === 'text'
+        ? (m.content || '').slice(0, 80)
+        : m.type === 'image'
+          ? '📷 Photo'
+          : m.type === 'video'
+            ? '🎬 Video'
+            : m.type === 'audio'
+              ? '🎤 Voice'
+              : m.content || 'Pinned message'
+      : 'Pinned message';
+    return { id, text };
+  }, [isGroup, pinnedIds, pinnedCycleId, messages]);
+
+  function jumpPinned() {
+    const ids = [...pinnedIds];
+    const next = nextPinnedId(ids, pinnedCycleId);
+    if (!next) return;
+    setPinnedCycleId(next);
+    scrollToMessage(next);
   }
 
   // WhatsApp-style Return-to-send. On a hardware keyboard, Enter without Shift
@@ -653,125 +1565,297 @@ function ChatScreenInner() {
     }
   }
 
+  // Re-entrancy guard: `sending` state is not set for text, so double-tap/Enter
+  // can race two handleSends before re-render without this ref.
+  const sendInFlight = useRef(false);
+
   async function handleSend() {
     const body = text.trim();
-    if (!body || sending) return;
-    setText('');
-    setDraft(conversationId, '').catch(() => {}); // clear persisted draft
-    typingChannel.current?.notify({ userId: uid ?? '', name: 'Someone', typing: false });
-
-    if (editing) {
-      const target = editing;
-      setEditing(null);
-      await editMessage(supabase, target.id, body);
+    if (!body || sendInFlight.current) return;
+    if (groupSendBlocked) {
+      Alert.alert('Only admins', 'Only admins can send messages in this group.');
       return;
     }
+    sendInFlight.current = true;
+    try {
+      setText('');
+      setDraft(conversationId, '').catch(() => {}); // clear persisted draft
+      typingChannel.current?.notify({ userId: uid ?? '', name: selfNameRef.current, typing: false });
 
-    const replyId = reply?.id;
-    setReply(null);
+      if (editing) {
+        const target = editing;
+        setEditing(null);
+        // Optimistic + durable action queue (works offline).
+        setMsgs((prev) =>
+          prev.map((m) =>
+            m.id === target.id
+              ? { ...m, content: body, edited_at: new Date().toISOString() }
+              : m,
+          ),
+        );
+        await queueAction('editMessage', { messageId: target.id, content: body });
+        return;
+      }
 
-    // Optimistic: render the message immediately with a client-generated id and a
-    // "sending" (clock) tick. The SAME id is used for the server insert so the
-    // realtime echo dedupes cleanly.
+      const replyId = reply?.id;
+      setReply(null);
+
+      // Optimistic: render the message immediately with a client-generated id and a
+      // "sending" (clock) tick. The SAME id is used for the server insert so the
+      // realtime echo dedupes cleanly.
+      const tempId = uuidv4();
+      const optimistic: Message = {
+        id: tempId,
+        conversation_id: conversationId,
+        sender_id: uid ?? '',
+        type: 'text',
+        content: body,
+        media_url: null,
+        reply_to: replyId ?? null,
+        is_deleted: false,
+        created_at: new Date().toISOString(),
+        edited_at: null,
+        pending: true,
+      };
+      setMsgs((prev) => [...prev, optimistic]);
+      setReceipts((prev) => new Map(prev).set(tempId, 'sending'));
+      upsertCachedMessage(conversationId, optimistic).catch(() => {});
+      requestAnimationFrame(() => listRef.current?.scrollToOffset({ offset: 0, animated: true }));
+
+      // Queue durably first so the message survives an app kill, then try to send.
+      await enqueueOutbox({
+        tempId,
+        conversationId,
+        senderId: uid ?? '',
+        content: body,
+        type: 'text',
+        replyTo: replyId,
+        createdAt: optimistic.created_at,
+        attempts: 0,
+      });
+      // flushOutbox inserts then sendPush (with messageId dedupe). Do NOT push
+      // here — FCM can arrive before the row exists (ghost notification).
+      flushOutbox().catch(() => {});
+    } finally {
+      sendInFlight.current = false;
+    }
+  }
+
+  // Free: WhatsApp-class everyday uploads (100 MB). Premium extends to 2 GB.
+  // Soft limit here; server hard ceiling matches premium max.
+  function withinUploadLimit(bytes: number | undefined): boolean {
+    if (bytes == null) return true; // size unknown — let the server be the backstop
+    const limit = isPremium ? PREMIUM_LIMITS.uploadBytes : FREE_LIMITS.uploadBytes;
+    if (bytes <= limit) return true;
+    const freeMb = Math.round(FREE_LIMITS.uploadBytes / (1024 * 1024));
+    const premMb = Math.round(PREMIUM_LIMITS.uploadBytes / (1024 * 1024));
+    if (!isPremium) {
+      Alert.alert(
+        'File too large',
+        `You can send files up to ${freeMb} MB for free (like WhatsApp). Upgrade to Lumixo+ for up to ${premMb} MB.`,
+        [{ text: 'Not now', style: 'cancel' }, { text: 'Upgrade', onPress: () => navigation.navigate('Premium') }],
+      );
+    } else {
+      Alert.alert('File too large', `This file exceeds the ${premMb} MB Lumixo+ limit.`);
+    }
+    return false;
+  }
+
+  /** Camera / mic / document path — same durable outbox as MediaPreview (survives kill + offline). */
+  async function sendMedia(
+    uri: string,
+    fileName: string,
+    type: 'image' | 'video' | 'file' | 'audio',
+    caption?: string,
+    mediaMeta?: import('../lib/shared').MediaMeta,
+  ) {
+    const body =
+      type === 'file'
+        ? (caption?.trim() || fileName)
+        : (caption ?? '');
     const tempId = uuidv4();
     const optimistic: Message = {
       id: tempId,
       conversation_id: conversationId,
       sender_id: uid ?? '',
-      type: 'text',
+      type,
       content: body,
-      media_url: null,
-      reply_to: replyId ?? null,
+      media_url: uri,
+      reply_to: null,
       is_deleted: false,
       created_at: new Date().toISOString(),
       edited_at: null,
       pending: true,
+      media_meta: (mediaMeta ?? null) as Message['media_meta'],
     };
     setMsgs((prev) => [...prev, optimistic]);
     setReceipts((prev) => new Map(prev).set(tempId, 'sending'));
     upsertCachedMessage(conversationId, optimistic).catch(() => {});
-    requestAnimationFrame(() => listRef.current?.scrollToOffset({ offset: 0, animated: true }));
-
-    // Queue durably first so the message survives an app kill, then try to send.
     await enqueueOutbox({
       tempId,
       conversationId,
       senderId: uid ?? '',
       content: body,
-      type: 'text',
-      replyTo: replyId,
+      type,
+      createdAt: optimistic.created_at,
+      attempts: 0,
+      localUri: uri,
+      fileName,
+      mediaMeta: mediaMeta as Record<string, unknown> | undefined,
+    });
+    requestAnimationFrame(() => listRef.current?.scrollToOffset({ offset: 0, animated: true }));
+    flushOutbox().catch(() => {});
+  }
+
+  // Open the full-screen media picker (replaces the old bottom-sheet gallery).
+  function openMediaPicker() {
+    setAttachOpen(false);
+    navigation.navigate('MediaPicker', { conversationId });
+  }
+
+  // Receive finished attachments from the MediaPreview editor (via the send bridge).
+  // Each is rendered optimistically and DURABLY QUEUED with its local file:// URI, so
+  // the actual upload happens in flushOutbox — surviving an app kill and auto-sending
+  // on reconnect (offline upload queue, spec §13). No network wait blocks the UI.
+  const sendMediaSubmission = useCallback(async (sub: MediaSubmission) => {
+    for (const item of sub.items) {
+      const tempId = uuidv4();
+      const optimistic: Message = {
+        id: tempId,
+        conversation_id: conversationId,
+        sender_id: uid ?? '',
+        type: item.type,
+        content: item.caption ?? '',
+        media_url: item.uri,               // local preview until the upload completes
+        reply_to: null,
+        is_deleted: false,
+        created_at: new Date().toISOString(),
+        edited_at: null,
+        pending: true,
+        media_meta: (item.mediaMeta ?? null) as Message['media_meta'],
+      };
+      setMsgs((prev) => [...prev, optimistic]);
+      setReceipts((prev) => new Map(prev).set(tempId, 'sending'));
+      upsertCachedMessage(conversationId, optimistic).catch(() => {});
+      // eslint-disable-next-line no-await-in-loop
+      await enqueueOutbox({
+        tempId,
+        conversationId,
+        senderId: uid ?? '',
+        content: item.caption ?? '',
+        type: item.type,
+        createdAt: optimistic.created_at,
+        attempts: 0,
+        localUri: item.uri,                // flushOutbox uploads this, then inserts
+        fileName: item.fileName,
+        mediaMeta: item.mediaMeta as Record<string, unknown> | undefined,
+      });
+    }
+    requestAnimationFrame(() => listRef.current?.scrollToOffset({ offset: 0, animated: true }));
+    flushOutbox().catch(() => {});
+  }, [conversationId, uid]);
+
+  // Register this chat as the handler for media coming back from the picker while
+  // it's mounted; unregister on unmount so a backgrounded chat never receives it.
+  useEffect(() => {
+    const off = registerMediaHandler(conversationId, (sub) => { void sendMediaSubmission(sub); });
+    return off;
+  }, [conversationId, sendMediaSubmission]);
+
+  // Stickers — durable outbox. Native emoji cards (no upload); media_meta drives render.
+  async function sendSticker(sticker: Sticker) {
+    setStickersOpen(false);
+    setComposerTray('none');
+    pushRecentSticker(sticker.id);
+    if (groupSendBlocked) {
+      Alert.alert('Only admins', 'Only admins can send messages in this group.');
+      return;
+    }
+    const meta = stickerMediaMeta(sticker);
+    const tempId = uuidv4();
+    const optimistic: Message = {
+      id: tempId,
+      conversation_id: conversationId,
+      sender_id: uid ?? '',
+      type: 'image',
+      content: sticker.emoji,
+      media_url: sticker.url,
+      reply_to: null,
+      is_deleted: false,
+      created_at: new Date().toISOString(),
+      edited_at: null,
+      pending: true,
+      media_meta: meta as Message['media_meta'],
+    };
+    setMsgs((prev) => [...prev, optimistic]);
+    setReceipts((prev) => new Map(prev).set(tempId, 'sending'));
+    upsertCachedMessage(conversationId, optimistic).catch(() => {});
+    await enqueueOutbox({
+      tempId,
+      conversationId,
+      senderId: uid ?? '',
+      content: sticker.emoji,
+      type: 'image',
+      mediaUrl: sticker.url,
+      mediaMeta: meta,
       createdAt: optimistic.created_at,
       attempts: 0,
     });
-    // flushOutbox sends it (reusing tempId as the row id) and removes it from the
-    // queue on success; the onOutboxSent listener swaps the pending row for the
-    // confirmed one. If offline, it stays queued and auto-sends on reconnect.
     flushOutbox().catch(() => {});
-
-    // Best-effort push so a killed/backgrounded recipient still gets notified.
-    // No-ops until FCM (google-services.json + push function + secret) is set up.
-    void sendPush(supabase, {
-      conversationId,
-      kind: isGroup ? 'group' : 'message',
-      title: isGroup ? (params.title || 'Group') : 'New message',
-      body,
-      data: {},
-    });
   }
 
-  // Free tier caps uploads at 5 MB; premium lifts it to 100 MB (web parity via
-  // FREE_LIMITS/PREMIUM_LIMITS). Returns true if the file is within the limit.
-  function withinUploadLimit(bytes: number | undefined): boolean {
-    if (bytes == null) return true; // size unknown — let the server be the backstop
-    const limit = isPremium ? PREMIUM_LIMITS.uploadBytes : FREE_LIMITS.uploadBytes;
-    if (bytes <= limit) return true;
-    if (!isPremium) {
-      Alert.alert(
-        'File too large',
-        `Free accounts can send files up to ${Math.round(FREE_LIMITS.uploadBytes / (1024 * 1024))} MB. Upgrade to FUTUREHAT+ to send files up to ${Math.round(PREMIUM_LIMITS.uploadBytes / (1024 * 1024))} MB.`,
-        [{ text: 'Not now', style: 'cancel' }, { text: 'Upgrade', onPress: () => navigation.navigate('Premium') }],
-      );
-    } else {
-      Alert.alert('File too large', `This file exceeds the ${Math.round(PREMIUM_LIMITS.uploadBytes / (1024 * 1024))} MB limit.`);
+  // Open a media message, enforcing View Once (0030). For a View-Once item the
+  // RECIPIENT may open exactly once (server-authoritative via mark_view_once_seen);
+  // the SENDER can re-see their own. A spent item shows an alert and never reopens.
+  const openMedia = useCallback(async (msg: Message) => {
+    const url = msg.media_url;
+    if (!url) return;
+    // Stickers are native cards — no full-screen image viewer.
+    if (msg.media_meta?.sticker || url.startsWith('lumixo-sticker://')) return;
+    const vo = msg.media_meta?.viewOnce;
+    if (!vo) { setViewerUrl(url); return; }          // normal media
+    const mine = msg.sender_id === uid;
+    if (mine) { setViewerUrl(url); return; }         // sender may re-see their own
+    if (voSpent.has(msg.id)) {
+      Alert.alert('View Once', 'You’ve already viewed this once. It can’t be opened again.');
+      return;
     }
-    return false;
-  }
+    // Consume server-side FIRST (one open, authoritative), then reveal.
+    // Fail closed: network error must not open media (would burn the one view locally).
+    const res = await markViewOnceSeen(supabase, msg.id);
+    if (!res) {
+      Alert.alert('View Once', 'Could not open. Check your connection and try again.');
+      return;
+    }
+    if (res.consumed && res.first_view === false) {
+      setVoSpent((prev) => new Set(prev).add(msg.id));
+      Alert.alert('View Once', 'You’ve already viewed this once. It can’t be opened again.');
+      return;
+    }
+    setVoSpent((prev) => new Set(prev).add(msg.id));
+    setViewerUrl(url);
+  }, [uid, voSpent]);
 
-  async function sendMedia(
-    uri: string,
-    fileName: string,
-    type: 'image' | 'file' | 'audio',
-    caption?: string,
-  ) {
-    setSending(true);
-    try {
-      const { url, error } = await uploadMediaFromUri(conversationId, uri, fileName);
-      if (error || !url) {
-        Alert.alert('Upload failed', error?.message ?? 'Could not upload file.');
-        return;
+  // Hydrate which View-Once messages I've already consumed, so a reopened chat shows
+  // them as spent (not re-openable). Only checks View-Once items sent TO me.
+  useEffect(() => {
+    if (!uid) return;
+    const pending = messages.filter(
+      (m) => m.media_meta?.viewOnce && m.sender_id !== uid && !voSpent.has(m.id),
+    );
+    if (!pending.length) return;
+    let alive = true;
+    (async () => {
+      const spent: string[] = [];
+      for (const m of pending) {
+        // eslint-disable-next-line no-await-in-loop
+        const st = await getViewOnceState(supabase, m.id).catch(() => null);
+        if (st && st.seen) spent.push(m.id);
       }
-      const { message } = await sendMessage(supabase, conversationId, caption ?? fileName, type, url);
-      if (message) {
-        setMsgs((prev) => (prev.some((m) => m.id === message.id) ? prev : [...prev, message]));
-        setReceipts((prev) => new Map(prev).set(message.id, 'sent'));
-        upsertCachedMessage(conversationId, message).catch(() => {}); // keep offline cache warm
-      }
-    } finally {
-      setSending(false);
-    }
-  }
-
-  // Premium stickers — sent as an image message carrying the SVG data URI
-  // (web parity: ChatView.sendSticker). No upload needed.
-  async function sendSticker(url: string) {
-    setStickersOpen(false);
-    const { message } = await sendMessage(supabase, conversationId, '', 'image', url);
-    if (message) {
-      setMsgs((prev) => (prev.some((m) => m.id === message.id) ? prev : [...prev, message]));
-      setReceipts((prev) => new Map(prev).set(message.id, 'sent'));
-      upsertCachedMessage(conversationId, message).catch(() => {});
-    }
-  }
+      if (alive && spent.length) setVoSpent((prev) => new Set([...prev, ...spent]));
+    })();
+    return () => { alive = false; };
+  }, [messages, uid]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Scheduled messages (premium) — persist the current draft to send later
   // (web parity: ChatView.handleSchedule). Future-time validation lives in the
@@ -786,31 +1870,86 @@ function ChatScreenInner() {
     Alert.alert('Scheduled', `Your message will send ${when.toLocaleString()}.`);
   }
 
+  // Camera capture (photo or short video). Gallery path is MediaPicker.
+  /** Camera → same MediaPreview editor as gallery (crop/caption/HD, never black). */
   async function pickImage(fromCamera: boolean) {
     setAttachOpen(false);
-    const perm = fromCamera
-      ? await ImagePicker.requestCameraPermissionsAsync()
-      : await ImagePicker.requestMediaLibraryPermissionsAsync();
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
     if (!perm.granted) return;
-    const res = fromCamera
-      ? await ImagePicker.launchCameraAsync({ quality: 0.7 })
-      : await ImagePicker.launchImageLibraryAsync({
-          mediaTypes: ImagePicker.MediaTypeOptions.Images,
-          quality: 0.7,
-        });
+    const res = await ImagePicker.launchCameraAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.All,
+      quality: 0.85,
+      videoMaxDuration: 60,
+      allowsEditing: false,
+    });
     if (res.canceled || !res.assets?.length) return;
     const a = res.assets[0];
     if (!withinUploadLimit(a.fileSize)) return;
-    await sendMedia(a.uri, a.fileName ?? `photo_${Date.now()}.jpg`, 'image');
+    const isVid = a.type === 'video' || /\.(mp4|mov|m4v)(\?|$)/i.test(a.uri);
+    const name =
+      a.fileName ??
+      (isVid ? `video_${Date.now()}.mp4` : `photo_${Date.now()}.jpg`);
+    // Prefer full editor path (parity with Gallery). Fall back to direct send.
+    try {
+      const resolved = await resolvePickedUri(a.uri, {
+        id: `cam_${Date.now()}`,
+        fileName: name,
+        mediaType: isVid ? 'video' : 'image',
+        width: a.width,
+        height: a.height,
+      });
+      navigation.navigate('MediaPreview', {
+        conversationId,
+        assets: [
+          {
+            id: `cam_${Date.now()}`,
+            uri: resolved.uri,
+            type: isVid ? 'video' : 'image',
+            fileName: name,
+            width: a.width || resolved.width || 0,
+            height: a.height || resolved.height || 0,
+            durationMs: a.duration ? Math.round(a.duration * 1000) : undefined,
+            fileSize: a.fileSize,
+          },
+        ],
+        startIndex: 0,
+      });
+    } catch {
+      await sendMedia(a.uri, name, isVid ? 'video' : 'image');
+    }
+    void fromCamera;
   }
 
   async function pickDocument() {
     setAttachOpen(false);
-    const res = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true });
+    const res = await DocumentPicker.getDocumentAsync({
+      copyToCacheDirectory: true,
+      multiple: false,
+    });
     if (res.canceled || !res.assets?.length) return;
     const a = res.assets[0];
     if (!withinUploadLimit(a.size ?? undefined)) return;
-    await sendMedia(a.uri, a.name, 'file');
+    await sendMedia(a.uri, a.name || `file_${Date.now()}`, 'file');
+  }
+
+  /** Open a document attachment — download only when the user taps. */
+  async function openDocument(msg: Message) {
+    const url = msg.media_url;
+    if (!url) return;
+    try {
+      const local = (await requestMediaDownload(url)) ?? (await ensureMediaCached(url));
+      const target = local ?? (await signedMediaUrl(supabase, url)) ?? url;
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(target, {
+          dialogTitle: msg.content || 'Document',
+          mimeType: guessMime(msg.content || url),
+        });
+      } else {
+        await Share.share({ url: target, message: msg.content || 'Document' });
+      }
+    } catch {
+      Alert.alert('Could not open', 'Download failed. Check your connection and try again.');
+    }
   }
 
   // ── Voice notes ───────────────────────────────────────────────────────────
@@ -823,38 +1962,130 @@ function ChatScreenInner() {
   }, [recording]);
 
   async function startRecording() {
+    // Ignore re-entry (double press-in) and in-flight starts.
+    if (recordingRef.current || recStartingRef.current || recStoppingRef.current) return;
+    recStartingRef.current = true;
+    recPendingStopRef.current = null;
     try {
       const perm = await Audio.requestPermissionsAsync();
-      if (!perm.granted) return;
+      if (!perm.granted) {
+        recStartingRef.current = false;
+        recPendingStopRef.current = null;
+        return;
+      }
+      // User already released during the permission prompt — do not start.
+      if (recPendingStopRef.current !== null) {
+        recStartingRef.current = false;
+        recPendingStopRef.current = null;
+        return;
+      }
       await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
-      const { recording } = await Audio.Recording.createAsync(
+      if (recPendingStopRef.current !== null) {
+        recStartingRef.current = false;
+        recPendingStopRef.current = null;
+        return;
+      }
+      const { recording: rec } = await Audio.Recording.createAsync(
         Audio.RecordingOptionsPresets.HIGH_QUALITY,
       );
-      setRecording(recording);
+      // Released mid-createAsync: discard immediately, never flash stuck UI.
+      if (recPendingStopRef.current !== null) {
+        const wantSend = recPendingStopRef.current;
+        recPendingStopRef.current = null;
+        recStartingRef.current = false;
+        try {
+          await rec.stopAndUnloadAsync();
+          const uri = rec.getURI();
+          // Only auto-send if they held long enough and didn't cancel.
+          const heldMs = Date.now() - recStartedAtRef.current;
+          if (wantSend && !recCancelRef.current && uri && heldMs >= 400) {
+            await sendMedia(uri, `voice_${Date.now()}.m4a`, 'audio');
+          }
+        } catch { /* discard */ }
+        return;
+      }
+      recCancelRef.current = false;
+      setRecCanceling(false);
+      recStartedAtRef.current = Date.now();
+      setRecording(rec);
+      recordingRef.current = rec;
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
     } catch {
-      // ignore
+      setRecording(null);
+      recordingRef.current = null;
+    } finally {
+      recStartingRef.current = false;
     }
   }
 
   async function stopRecording(send: boolean) {
-    if (!recording) return;
+    if (recStoppingRef.current) return;
+    const rec = recordingRef.current;
+    if (!rec) return;
+    recStoppingRef.current = true;
     try {
-      await recording.stopAndUnloadAsync();
-      const uri = recording.getURI();
+      // Drop ultra-short taps (accidental) so we never send a broken note.
+      const heldMs = Date.now() - recStartedAtRef.current;
+      const shouldSend = send && !recCancelRef.current && heldMs >= 400;
+      await rec.stopAndUnloadAsync();
+      const uri = rec.getURI();
       setRecording(null);
-      if (send && uri) await sendMedia(uri, `voice_${Date.now()}.m4a`, 'audio');
+      recordingRef.current = null;
+      setRecCanceling(false);
+      if (shouldSend && uri) await sendMedia(uri, `voice_${Date.now()}.m4a`, 'audio');
+      else if (!shouldSend) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
     } catch {
       setRecording(null);
+      recordingRef.current = null;
+      setRecCanceling(false);
+    } finally {
+      recStoppingRef.current = false;
+      recPendingStopRef.current = null;
+    }
+  }
+
+  function onMicPressIn(e: { nativeEvent: { pageX: number } }) {
+    recStartX.current = e.nativeEvent.pageX;
+    recCancelRef.current = false;
+    recPendingStopRef.current = null;
+    recStartedAtRef.current = Date.now();
+    setRecCanceling(false);
+    void startRecording();
+  }
+
+  function onMicTouchMove(e: { nativeEvent: { pageX: number } }) {
+    // Track cancel even while start is still in flight so release uses correct intent.
+    if (!recordingRef.current && !recStartingRef.current) return;
+    const dx = e.nativeEvent.pageX - recStartX.current;
+    const canceling = dx < -64;
+    if (canceling !== recCancelRef.current) {
+      recCancelRef.current = canceling;
+      setRecCanceling(canceling);
+      if (canceling) Haptics.selectionAsync().catch(() => {});
+    }
+  }
+
+  function onMicPressOut() {
+    const send = !recCancelRef.current;
+    if (recordingRef.current) {
+      void stopRecording(send);
+      return;
+    }
+    // Still starting — remember the release intent so startRecording can finish cleanly.
+    if (recStartingRef.current) {
+      recPendingStopRef.current = send;
     }
   }
 
   // ── Multi-select ──────────────────────────────────────────────────────────
   function enterSelection(m: Message) {
+    setSelected(null);
     setSelectionMode(true);
     setSelectedIds(new Set([m.id]));
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
   }
   function toggleSelect(m: Message) {
+    Haptics.selectionAsync().catch(() => {});
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(m.id)) next.delete(m.id); else next.add(m.id);
@@ -865,30 +2096,129 @@ function ChatScreenInner() {
   function exitSelection() {
     setSelectionMode(false);
     setSelectedIds(new Set());
-    setSelectionForward(false);
   }
+
+  /** Multi-star selected messages (queueAction = offline-safe). */
+  function starSelectedMany() {
+    const ids = [...selectedIds];
+    if (!ids.length) return;
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    setStarredIds((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) {
+        if (!next.has(id)) {
+          next.add(id);
+          queueAction('star', { messageId: id });
+        }
+      }
+      return next;
+    });
+    exitSelection();
+  }
+
+  // Hardware / gesture back exits multi-select (restore normal chat header).
+  useEffect(() => {
+    if (!selectionMode) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      exitSelection();
+      return true;
+    });
+    return () => sub.remove();
+  }, [selectionMode]);
   async function copySelected() {
     const texts = messagesRef.current.filter((m) => selectedIds.has(m.id) && m.content).map((m) => m.content as string);
     if (texts.length) await Clipboard.setStringAsync(texts.join('\n'));
     exitSelection();
   }
-  async function forwardSelectedMany() {
+  // Open the forward sheet for a set of source messages (+ optional media preview).
+  async function beginForward(sources: Message[], preview: ForwardPreview | null = null) {
+    if (!sources.length) return;
+    setForwardSources(sources);
+    setForwardPreview(preview);
+    setForwardOpen(true);
+    // Fetch recipients lazily; the sheet renders its own loading-empty state until here.
     const list = await getMyConversations(supabase);
     setForwardList(list);
-    setSelectionForward(true);
-    setForwardOpen(true);
+  }
+
+  function previewFor(m: Message): ForwardPreview | null {
+    if (m.type === 'image' && m.media_url) return { kind: 'image', url: m.media_url, caption: m.content };
+    if (m.media_url && isVideoMessage(m)) return { kind: 'video', url: m.media_url, caption: m.content };
+    return null;
+  }
+
+  async function forwardSelectedMany() {
+    const sources = messagesRef.current.filter((m) => selectedIds.has(m.id));
+    await beginForward(sources);
   }
 
   // ── Message actions ───────────────────────────────────────────────────────
   // Toggle a reaction. From the action sheet `target` is omitted (uses `selected`);
   // tapping an existing reaction pill passes the message directly so the sheet
   // needn't be open (WhatsApp/web parity — tap a pill to add/remove your reaction).
+  // Optimistic UI: reaction appears immediately; server sync in background.
+  // Duplicate inserts are prevented by toggle semantics (same emoji removes).
   async function react(emoji: string, target?: Message) {
-    const t = target ?? selected;
-    if (!t) return;
+    const t = target ?? selected ?? pendingReactMsg.current;
+    if (!t || !uid) return;
     if (!target) setSelected(null);
-    await toggleReaction(supabase, t.id, emoji);
-    getReactions(supabase, messagesRef.current.map((m) => m.id)).then(setReactions);
+    const mid = t.id;
+
+    // Optimistic toggle for this user + emoji (no duplicates).
+    setReactions((prev) => {
+      const mine = prev.find((r) => r.message_id === mid && r.user_id === uid && r.emoji === emoji);
+      if (mine) {
+        return prev.filter((r) => !(r.message_id === mid && r.user_id === uid && r.emoji === emoji));
+      }
+      return [
+        ...prev.filter((r) => !(r.message_id === mid && r.user_id === uid && r.emoji === emoji)),
+        {
+          message_id: mid,
+          user_id: uid,
+          emoji,
+          created_at: new Date().toISOString(),
+        } as MessageReaction,
+      ];
+    });
+
+    try {
+      await toggleReaction(supabase, mid, emoji);
+    } catch {
+      /* network — will resync below / via realtime */
+    }
+    getReactions(supabase, messagesRef.current.map((m) => m.id)).then(setReactions).catch(() => {});
+  }
+
+  /** Open full reaction emoji picker — capture target first so sheet close can't drop it. */
+  function openReactionPicker() {
+    const target = selected ?? pendingReactMsg.current;
+    if (!target) return;
+    pendingReactMsg.current = target;
+    setSelected(null);
+    // Open on next frame after sheet dismiss starts — avoids stacked-modal blank on Android.
+    requestAnimationFrame(() => {
+      setEmojiPickerOpen(true);
+    });
+  }
+
+  async function togglePin() {
+    if (!selected || !isGroup) return;
+    const target = selected;
+    setSelected(null);
+    const was = pinnedIds.has(target.id);
+    const res = was
+      ? await unpinGroupMessage(supabase, conversationId, target.id)
+      : await pinGroupMessage(supabase, conversationId, target.id);
+    if (res.error) {
+      Alert.alert('Pin', res.error.message);
+      return;
+    }
+    setPinnedIds((prev) => {
+      const next = new Set(prev);
+      if (was) next.delete(target.id);
+      else next.add(target.id);
+      return next;
+    });
   }
 
   // Star / unstar a message (per-user bookmark). Optimistic; the browser screen
@@ -908,25 +2238,397 @@ function ChatScreenInner() {
     queueAction(isStarred ? 'unstar' : 'star', { messageId: target.id });
   }
 
-  // Delete-for-me: hide a single message locally for this user only (unlike
-  // delete-for-everyone). Backed by hidden_messages.
-  async function deleteForMe() {
-    if (!selected) return;
-    const target = selected;
-    setSelected(null);
-    setHiddenIds((prev) => new Set(prev).add(target.id));
-    // Instant + durable: hide locally now, queue the server write (auto-retries).
-    queueAction('hideMessage', { messageId: target.id });
+  // ── Chat overflow (⋮) — WhatsApp-class chat options ──────────────────────
+  useEffect(() => {
+    let alive = true;
+    getMutedIds(supabase)
+      .then((ids) => { if (alive) setChatMuted(ids.includes(conversationId)); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [conversationId]);
+
+  /** Scroll-up pagination: fetch older messages before the oldest local row. */
+  const loadOlderMessages = useCallback(async () => {
+    if (loadingOlderRef.current || !hasMoreOlder) return;
+    const oldest = messagesRef.current.reduce<string | null>((acc, m) => {
+      if (!acc || m.created_at < acc) return m.created_at;
+      return acc;
+    }, null);
+    if (!oldest) return;
+    loadingOlderRef.current = true;
+    try {
+      const older = await getMessages(supabase, conversationId, { before: oldest, limit: 60 });
+      if (older.length === 0) {
+        setHasMoreOlder(false);
+      } else {
+        if (older.length < 60) setHasMoreOlder(false);
+        setMsgs((prev) => {
+          const merged = mergeById(older, prev);
+          cacheMessages(conversationId, merged).catch(() => {});
+          return merged;
+        });
+      }
+    } catch {
+      /* offline — keep local history */
+    } finally {
+      loadingOlderRef.current = false;
+    }
+  }, [conversationId, hasMoreOlder, setMsgs]);
+
+  async function goToFirstMessage() {
+    try {
+      scrollToOldestPending.current = true;
+      // Page older history until we have a deep window (no single 1000-row blast).
+      let guard = 0;
+      while (guard < 8) {
+        guard += 1;
+        const oldest = messagesRef.current.reduce<string | null>((acc, m) => {
+          if (!acc || m.created_at < acc) return m.created_at;
+          return acc;
+        }, null);
+        if (!oldest) break;
+        const older = await getMessages(supabase, conversationId, { before: oldest, limit: 100 });
+        if (!older.length) {
+          setHasMoreOlder(false);
+          break;
+        }
+        setMsgs((prev) => {
+          const merged = mergeById(older, prev);
+          cacheMessages(conversationId, merged).catch(() => {});
+          return merged;
+        });
+        if (older.length < 100) {
+          setHasMoreOlder(false);
+          break;
+        }
+      }
+      // Actual scroll runs in FlatList onContentSizeChange (after layout).
+      // Fallback if content size does not fire (short threads).
+      setTimeout(() => {
+        if (!scrollToOldestPending.current) return;
+        scrollToOldestPending.current = false;
+        try { listRef.current?.scrollToEnd({ animated: true }); } catch { /* ignore */ }
+      }, 400);
+    } catch {
+      scrollToOldestPending.current = false;
+      Alert.alert('Could not jump', 'Try again in a moment.');
+    }
   }
 
-  // Message info — delivery/read status + timestamps, mirroring web's info view.
-  function showInfo() {
-    if (!selected) return;
-    const target = selected;
+  async function clearThisChat(keepStarred: boolean) {
+    const { error, cleared } = await clearChatMessagesForMe(supabase, conversationId, { keepStarred });
+    if (error) {
+      Alert.alert('Could not clear chat', error.message);
+      return;
+    }
+    // Update local UI: hide cleared messages (respect keepStarred).
+    setHiddenIds((prev) => {
+      const next = new Set(prev);
+      for (const m of messagesRef.current) {
+        if (keepStarred && starredIds.has(m.id)) continue;
+        next.add(m.id);
+      }
+      return next;
+    });
+    Alert.alert(
+      'Chat cleared',
+      cleared
+        ? keepStarred
+          ? 'Messages cleared except starred. Media saved outside Lumixo is untouched.'
+          : 'Messages cleared for you. Media saved outside Lumixo is untouched.'
+        : 'Nothing to clear.',
+    );
+  }
+
+  function confirmClearChat() {
+    Alert.alert(
+      'Clear this chat?',
+      'Messages are removed from this device only. The conversation stays in your list. Media already saved to your gallery is not deleted.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Clear except starred',
+          onPress: () => { void clearThisChat(true); },
+        },
+        {
+          text: 'Clear all messages',
+          style: 'destructive',
+          onPress: () => { void clearThisChat(false); },
+        },
+      ],
+    );
+  }
+
+  function confirmDeleteChat() {
+    Alert.alert(
+      'Delete this chat?',
+      'The conversation will be removed from your list. Media already saved on your device is not deleted. The other person keeps their copy.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete chat',
+          style: 'destructive',
+          onPress: async () => {
+            const { error } = await deleteConversationForMe(supabase, conversationId);
+            if (error) Alert.alert('Could not delete', error.message);
+            else navigation.goBack();
+          },
+        },
+      ],
+    );
+  }
+
+  function openChatMenu() {
+    // Prebuilt actions — showSheet presents same-frame on DialogHost (no Modal cold start).
+    const peer = peers[0];
+    showSheet({
+      title: isGroup ? 'Group options' : 'Chat options',
+      actions: [
+        {
+          text: isGroup ? 'Group info' : 'View contact',
+          icon: isGroup ? 'group' : 'person',
+          onPress: openHeaderProfile,
+        },
+        ...(!isGroup && peer
+          ? [{
+              text: peerNickname ? 'Edit nickname' : 'Add nickname',
+              icon: 'edit' as const,
+              onPress: () => {
+                if (peer) navigation.navigate('Profile', { userId: peer.id, conversationId });
+              },
+            }]
+          : []),
+        {
+          text: 'Search',
+          icon: 'search',
+          onPress: () => setSearchOpen(true),
+        },
+        {
+          text: 'Media, links & docs',
+          icon: 'photo',
+          onPress: () => {
+            if (isGroup) navigation.navigate('GroupInfo', { conversationId });
+            else if (peer) navigation.navigate('Profile', { userId: peer.id, conversationId });
+          },
+        },
+        {
+          text: 'Starred messages',
+          icon: 'star',
+          onPress: () => navigation.navigate('Starred' as any),
+        },
+        {
+          text: chatMuted ? 'Unmute notifications' : 'Mute notifications',
+          icon: chatMuted ? 'unmute' : 'mute',
+          onPress: async () => {
+            if (chatMuted) {
+              await unmuteConversation(supabase, conversationId).catch(() => {});
+              setChatMuted(false);
+            } else {
+              await muteConversation(supabase, conversationId).catch(() => {});
+              setChatMuted(true);
+            }
+          },
+        },
+        {
+          text: 'Wallpaper',
+          icon: 'wallpaper',
+          onPress: () => navigation.navigate('Appearance' as any),
+        },
+        {
+          text: 'Go to first message',
+          icon: 'first',
+          subtitle: 'Jump to the oldest message',
+          onPress: () => { void goToFirstMessage(); },
+        },
+        {
+          text: 'Export chat',
+          icon: 'export',
+          onPress: () => { void exportChatTranscript(); },
+        },
+        {
+          text: 'Clear chat',
+          icon: 'clear',
+          onPress: confirmClearChat,
+        },
+        {
+          text: 'Delete chat',
+          icon: 'trash',
+          style: 'destructive',
+          onPress: confirmDeleteChat,
+        },
+        ...(!isGroup && peer
+          ? [
+              {
+                text: 'Block',
+                icon: 'block' as const,
+                style: 'destructive' as const,
+                onPress: () => {
+                  Alert.alert(
+                    'Block contact?',
+                    `${peer.display_name || 'This user'} won’t be able to message or call you.`,
+                    [
+                      { text: 'Cancel', style: 'cancel' },
+                      {
+                        text: 'Block',
+                        style: 'destructive',
+                        onPress: async () => {
+                          const { error } = await blockUser(supabase, peer.id);
+                          if (error) Alert.alert('Could not block', error.message);
+                          else Alert.alert('Blocked', `${peer.display_name || 'User'} is blocked.`);
+                        },
+                      },
+                    ],
+                  );
+                },
+              },
+              {
+                text: 'Report',
+                icon: 'report' as const,
+                style: 'destructive' as const,
+                onPress: () => {
+                  Alert.alert('Report contact?', 'Our safety team will review this report.', [
+                    { text: 'Cancel', style: 'cancel' },
+                    {
+                      text: 'Report',
+                      style: 'destructive',
+                      onPress: async () => {
+                        const { error } = await submitSafetyReport(
+                          supabase,
+                          'user',
+                          peer.id,
+                          'other',
+                          'Reported from chat menu',
+                        );
+                        if (error) Alert.alert('Could not report', error.message);
+                        else Alert.alert('Thanks', 'Report submitted.');
+                      },
+                    },
+                  ]);
+                },
+              },
+            ]
+          : [
+              {
+                text: 'Report group',
+                icon: 'report' as const,
+                style: 'destructive' as const,
+                onPress: () => {
+                  Alert.alert('Report group?', 'Our safety team will review this group.', [
+                    { text: 'Cancel', style: 'cancel' },
+                    {
+                      text: 'Report',
+                      style: 'destructive',
+                      onPress: async () => {
+                        const { error } = await submitSafetyReport(
+                          supabase,
+                          'conversation',
+                          conversationId,
+                          'other',
+                          'Reported from chat menu',
+                        );
+                        if (error) Alert.alert('Could not report', error.message);
+                        else Alert.alert('Thanks', 'Report submitted.');
+                      },
+                    },
+                  ]);
+                },
+              },
+            ]),
+        ...(chatLock.isLocked(conversationId)
+          ? [{
+              text: 'Chat lock is on',
+              icon: 'lock' as const,
+              subtitle: 'Managed in contact / group settings',
+              onPress: () => {
+                if (isGroup) navigation.navigate('GroupInfo', { conversationId });
+                else if (peer) navigation.navigate('Profile', { userId: peer.id, conversationId });
+              },
+            }]
+          : [{
+              text: 'Chat lock',
+              icon: 'lock' as const,
+              subtitle: 'Lock this chat with device biometrics',
+              onPress: () => {
+                if (isGroup) navigation.navigate('GroupInfo', { conversationId });
+                else if (peer) navigation.navigate('Profile', { userId: peer.id, conversationId });
+              },
+            }]),
+      ],
+    });
+  }
+  headerNavRef.current.openChatMenu = openChatMenu;
+
+  async function exportChatTranscript() {
+    try {
+      const { data } = await supabase
+        .from('messages')
+        .select('content, type, created_at, sender_id, is_deleted')
+        .eq('conversation_id', conversationId)
+        .eq('is_deleted', false)
+        .order('created_at', { ascending: true })
+        .limit(500);
+      const nameById = new Map(
+        peers.map((p) => [
+          p.id,
+          resolveDisplayName(p, {
+            nickname: !isGroup && p.id === peers[0]?.id ? peerNickname : null,
+            fallback: 'Contact',
+          }),
+        ]),
+      );
+      if (uid) nameById.set(uid, 'You');
+      const lines = (data || []).map((m: any) => {
+        const who = nameById.get(m.sender_id) || 'Contact';
+        const body =
+          m.type === 'system'
+            ? m.content
+            : m.type === 'text'
+              ? m.content
+              : `[${m.type}] ${m.content || ''}`.trim();
+        return `[${new Date(m.created_at).toLocaleString()}] ${who}: ${body || ''}`;
+      });
+      const title = headerTitle || params.title || (isGroup ? 'Group' : 'Chat');
+      await Share.share({ message: `Lumixo — ${title}\n\n${lines.join('\n')}` });
+    } catch (e: any) {
+      Alert.alert('Export failed', e?.message || 'Could not export chat');
+    }
+  }
+
+  /** Close the RN message Modal fully before opening DialogHost (no stacked UI). */
+  function afterMessageSheetClosed(fn: () => void) {
     setSelected(null);
+    setTimeout(fn, motion.sheetCloseMs + 30);
+  }
+
+  // Delete-for-me: hide a single message locally for this user only (unlike
+  // delete-for-everyone). Backed by hidden_messages.
+  function hideOneMessage(messageId: string) {
+    setHiddenIds((prev) => new Set(prev).add(messageId));
+    queueAction('hideMessage', { messageId });
+  }
+
+  /** Message details for any message (call history included). */
+  function showInfoForMessage(target: Message) {
+    const call = parseCallHistory(target);
+    if (call.isCall) {
+      const lines = [
+        call.label || 'Call',
+        `Time: ${new Date(target.created_at).toLocaleString()}`,
+        call.isVideo ? 'Type: Video call' : 'Type: Voice call',
+        call.callId ? `Call ID: ${call.callId.slice(0, 8)}…` : null,
+      ].filter(Boolean).join('\n');
+      Alert.alert('Call details', lines);
+      return;
+    }
     const mine = target.sender_id === uid;
-    const rc = receipts.get(target.id);
-    const status = target.pending ? 'Sending…' : rc === 'read' ? 'Read' : rc === 'delivered' ? 'Delivered' : 'Sent';
+    const tick = computeOutboundTick({
+      messageId: target.id,
+      pending: target.pending,
+      failed: !!(target as { failed?: boolean }).failed,
+      senderId: uid,
+      tickMap: receipts,
+    });
+    const status = tickLabel(tick);
     const lines = [
       `Sent: ${new Date(target.created_at).toLocaleString()}`,
       target.edited_at ? `Edited: ${new Date(target.edited_at).toLocaleString()}` : null,
@@ -936,24 +2638,61 @@ function ChatScreenInner() {
     Alert.alert('Message info', lines || 'No details available.');
   }
 
+  // Message info — delivery/read status + timestamps, mirroring web's info view.
+  function showInfo() {
+    if (!selected) return;
+    const target = selected;
+    afterMessageSheetClosed(() => {
+      showInfoForMessage(target);
+    });
+  }
+
+  /** Confirm + hide call history (delete for me only — does not touch other messages). */
+  function confirmDeleteCallHistory(msg: Message) {
+    const call = parseCallHistory(msg);
+    Alert.alert(
+      'Delete call history?',
+      `Remove "${call.label || 'this call'}" from your chat only. Other messages are not affected.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            hideOneMessage(msg.id);
+            if (selectionMode) {
+              setSelectedIds((prev) => {
+                const next = new Set(prev);
+                next.delete(msg.id);
+                if (next.size === 0) setSelectionMode(false);
+                return next;
+              });
+            }
+          },
+        },
+      ],
+    );
+  }
+
   // Report a message (WhatsApp/Telegram style): confirm → pick a reason → submit.
   // Only offered on messages you did NOT send. Step 1 is the confirmation dialog.
   function startReport() {
     if (!selected) return;
     const target = selected;
-    setSelected(null);
-    Alert.alert(
-      'Report message',
-      'Report this message to the FUTUREHAT moderators?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Report',
-          style: 'destructive',
-          onPress: () => { setReportDetails(''); setReportTarget(target); },
-        },
-      ],
-    );
+    afterMessageSheetClosed(() => {
+      Alert.alert(
+        'Report message',
+        'Report this message to the Lumixo moderators?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Report',
+            style: 'destructive',
+            onPress: () => { setReportDetails(''); setReportTarget(target); },
+          },
+        ],
+      );
+    });
   }
 
   // Step 2: a reason was chosen — submit and give clear success/failure feedback.
@@ -972,67 +2711,140 @@ function ChatScreenInner() {
     }
   }
 
-  async function doDelete() {
-    if (!selected) return;
-    const target = selected;
-    const mine = target.sender_id === uid;
-    const buttons: any[] = [{ text: 'Cancel', style: 'cancel' }];
-    // Delete-for-me is available on any message; delete-for-everyone only on own.
-    buttons.push({ text: 'Delete for me', onPress: deleteForMe });
-    if (mine) {
-      buttons.push({
-        text: 'Unsend',
-        style: 'destructive',
-        onPress: async () => {
-          setSelected(null);
-          await deleteMessage(supabase, target.id);
-          setMsgs((prev) => prev.map((m) => (m.id === target.id ? { ...m, is_deleted: true } : m)));
-        },
+  /** Hard-delete for everyone (optimistic remove; rollback if server rejects). */
+  async function deleteMessagesForEveryone(ids: string[]) {
+    const snapshot = messagesRef.current.filter((m) => ids.includes(m.id));
+    // Optimistic: disappear immediately (Telegram).
+    setMsgs((prev) => prev.filter((m) => !ids.includes(m.id)));
+    removeCachedMessages(conversationId, ids).catch(() => {});
+    const results = await Promise.all(
+      ids.map(async (id) => {
+        const { error } = await deleteMessageForEveryone(supabase, id);
+        return { id, error };
+      }),
+    );
+    const failed = results.filter((r) => r.error);
+    if (failed.length) {
+      // Rollback rows that failed.
+      setMsgs((prev) => {
+        const map = new Map(prev.map((m) => [m.id, m]));
+        for (const s of snapshot) {
+          if (failed.some((f) => f.id === s.id)) map.set(s.id, s);
+        }
+        return [...map.values()].sort((a, b) =>
+          a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0,
+        );
       });
+      for (const s of snapshot) {
+        if (failed.some((f) => f.id === s.id)) {
+          upsertCachedMessage(conversationId, s).catch(() => {});
+        }
+      }
+      Alert.alert(
+        'Could not delete',
+        failed[0]?.error?.message || 'Some messages could not be deleted for everyone.',
+      );
     }
-    Alert.alert('Delete message', 'Choose how to delete this message.', buttons);
   }
 
-  // Bulk delete for multi-select (delete-for-everyone).
+  function openDeletePrompt(ids: string[]) {
+    if (!ids.length) return;
+    const rows = messagesRef.current.filter((m) => ids.includes(m.id));
+    const allowForEveryone =
+      rows.length > 0 && rows.every((m) => canDeleteMessageForEveryone(m, uid));
+    const peerName =
+      !isGroup && peers[0]
+        ? resolveDisplayName(peers[0], { nickname: peerNickname, fallback: 'recipient' })
+        : null;
+    const everyoneLabel = isGroup
+      ? 'Also delete for everyone'
+      : `Also delete for ${peerName || 'recipient'}`;
+    setDeleteAlsoEveryone(false);
+    setDeletePrompt({ ids, allowForEveryone, everyoneLabel });
+  }
+
+  async function confirmDeletePrompt() {
+    if (!deletePrompt) return;
+    const { ids, allowForEveryone } = deletePrompt;
+    const alsoEveryone = deleteAlsoEveryone && allowForEveryone;
+    setDeletePrompt(null);
+    if (selectionMode) exitSelection();
+    if (alsoEveryone) {
+      await deleteMessagesForEveryone(ids);
+    } else {
+      ids.forEach((id) => hideOneMessage(id));
+    }
+  }
+
+  /** Telegram delete flow: close action sheet first, then confirm dialog. */
+  function doDelete() {
+    if (!selected) return;
+    const target = selected;
+    afterMessageSheetClosed(() => {
+      openDeletePrompt([target.id]);
+    });
+  }
+
+  // Bulk delete for multi-select.
   async function deleteMany(ids: string[]) {
-    Alert.alert('Unsend messages', `Unsend ${ids.length} message${ids.length === 1 ? '' : 's'}? This removes ${ids.length === 1 ? 'it' : 'them'} for everyone.`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Unsend',
-        style: 'destructive',
-        onPress: async () => {
-          exitSelection();
-          await Promise.all(ids.map((id) => deleteMessage(supabase, id).catch(() => {})));
-          setMsgs((prev) => prev.map((m) => (ids.includes(m.id) ? { ...m, is_deleted: true } : m)));
-        },
-      },
-    ]);
+    const selected = messagesRef.current.filter((m) => ids.includes(m.id));
+    const onlyCallHistory = selected.length > 0 && selected.every((m) => isCallHistoryMessage(m));
+    // Call history is always "delete for me" (local hide) — never unsend for everyone.
+    if (onlyCallHistory) {
+      Alert.alert(
+        ids.length === 1 ? 'Delete call history?' : 'Delete call history?',
+        `Remove ${ids.length} call entr${ids.length === 1 ? 'y' : 'ies'} from your chat only. Other messages are not affected.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Delete',
+            style: 'destructive',
+            onPress: () => {
+              exitSelection();
+              ids.forEach((id) => hideOneMessage(id));
+            },
+          },
+        ],
+      );
+      return;
+    }
+    openDeletePrompt(ids);
   }
 
   async function openForward() {
-    const list = await getMyConversations(supabase);
-    setForwardList(list);
-    setForwardOpen(true);
-  }
-
-  async function doForward(targetId: string) {
-    setForwardOpen(false);
-    if (selectionForward) {
-      const srcs = messagesRef.current.filter((m) => selectedIds.has(m.id));
-      for (const m of srcs) {
-        await forwardMessage(supabase, targetId, { type: m.type, content: m.content, media_url: m.media_url });
-      }
-      exitSelection();
-      return;
-    }
     if (!selected) return;
     const src = selected;
     setSelected(null);
-    await forwardMessage(supabase, targetId, {
-      type: src.type,
-      content: src.content,
-      media_url: src.media_url,
-    });
+    await beginForward([src], previewFor(src));
+  }
+
+  // ── Media viewer actions (forward / delete a single item by its message id) ──
+  function forwardFromViewer(item: ViewerItem) {
+    const msg = messageById.get(item.id);
+    if (!msg) return;
+    void beginForward([msg], previewFor(msg));
+  }
+
+  function deleteFromViewer(item: ViewerItem) {
+    const msg = messageById.get(item.id);
+    if (!msg) return;
+    setViewerUrl(null);
+    setTimeout(() => openDeletePrompt([msg.id]), motion.sheetCloseMs + 30);
+  }
+
+  // Forward the queued source messages to every chosen target (multi-recipient).
+  async function doForward(targetIds: string[]) {
+    const sources = forwardSources;
+    for (const targetId of targetIds) {
+      for (const m of sources) {
+        // eslint-disable-next-line no-await-in-loop
+        await forwardMessage(supabase, targetId, { type: m.type, content: m.content, media_url: m.media_url });
+      }
+    }
+    setForwardOpen(false);
+    setForwardSources([]);
+    setForwardPreview(null);
+    if (selectionMode) exitSelection();
   }
 
   const reactionsByMsg = useMemo(() => {
@@ -1050,12 +2862,16 @@ function ChatScreenInner() {
   const timeline = useMemo<TimelineItem[]>(() => {
     const merged: TimelineItem[] = [
       ...messages
-        // delete-for-me: never show to this user. is_deleted: an UNSENT message
-        // (Instagram-style) vanishes entirely for everyone — no tombstone. The
-        // realtime UPDATE (is_deleted → true) makes it disappear live on all clients.
-        // messageExpired: disappearing message (0022) past its expiry — hide it
-        // instantly; the `now` tick re-runs this filter as each one expires.
-        .filter((m) => !hiddenIds.has(m.id) && !m.is_deleted && !messageExpired(m, now))
+        // delete-for-me (hiddenIds): never show to this user.
+        // User soft-deletes (legacy): omit entirely (Telegram — no tombstone).
+        // Moderation soft-deletes: keep tombstone.
+        // messageExpired: disappearing message past expiry — hide instantly.
+        .filter(
+          (m) =>
+            !hiddenIds.has(m.id) &&
+            !messageExpired(m, now) &&
+            !shouldOmitDeletedFromTimeline(m),
+        )
         .map((m): TimelineItem => ({ kind: 'msg', id: m.id, at: m.created_at, message: m })),
       ...polls.map((p): TimelineItem => ({ kind: 'poll', id: `poll:${p.id}`, at: p.created_at, poll: p })),
     ];
@@ -1104,22 +2920,47 @@ function ChatScreenInner() {
   }, [messages]);
   const peerNameById = useMemo(() => {
     const m = new Map<string, string | null>();
-    for (const p of peers) m.set(p.id, p.display_name);
+    for (const p of peers) {
+      const nick = !isGroup && p.id === peers[0]?.id ? peerNickname : null;
+      m.set(p.id, resolveDisplayName(p, { nickname: nick, fallback: null }));
+    }
     return m;
-  }, [peers]);
+  }, [peers, peerNickname, isGroup]);
 
   // Image/video messages — backs the swipeable full-screen viewer (web MediaLightbox parity).
   const viewerItems = useMemo<ViewerItem[]>(() => messages
-    .filter((m) => !m.is_deleted && m.media_url && (m.type === 'image' || (m.type === 'file' && isVideoUrl(m.media_url))))
-    .map((m) => ({
-      id: m.id,
-      url: m.media_url!,
-      kind: m.type === 'image' ? ('image' as const) : ('video' as const),
-      caption: m.type === 'image' ? (m.content || null) : null,
-      sender: m.sender_id === uid ? 'You' : (peerNameById.get(m.sender_id) || null),
-      time: formatTime(m.created_at),
-    })),
-    [messages, uid, peerNameById]);
+    .filter((m) =>
+      !m.is_deleted &&
+      m.media_url &&
+      !m.media_meta?.sticker &&
+      !m.media_url.startsWith('lumixo-sticker://') &&
+      (m.type === 'image' || isVideoMessage(m)))
+    .map((m) => {
+      const mine = m.sender_id === uid;
+      const status = mine
+        ? tickLabel(computeOutboundTick({
+            messageId: m.id,
+            pending: m.pending,
+            failed: !!(m as { failed?: boolean }).failed,
+            senderId: uid,
+            tickMap: receipts,
+          }))
+        : null;
+      return {
+        id: m.id,
+        url: m.media_url!,
+        kind: m.type === 'image' ? ('image' as const) : ('video' as const),
+        caption: m.type === 'image' ? (m.content || null) : null,
+        sender: mine ? 'You' : (peerNameById.get(m.sender_id) || null),
+        time: formatTime(m.created_at),
+        createdAt: m.created_at,
+        mine,
+        status,
+        meta: m.media_meta ?? null,
+        viewOnce: !!m.media_meta?.viewOnce,
+      };
+    }),
+    [messages, uid, peerNameById, receipts]);
   const viewerIndex = viewerUrl ? Math.max(0, viewerItems.findIndex((v) => v.url === viewerUrl)) : -1;
 
   // Plain function (not useCallback): MessageBubble is React.memo'd with a
@@ -1140,35 +2981,210 @@ function ChatScreenInner() {
           votes={pollVotes.get(item.poll.id) ?? []}
           myUserId={uid}
           onVote={(optionIndex) => onVotePoll(item.poll, optionIndex)}
+          closing={pollClosingId === item.poll.id}
+          votersOption={
+            pollVotersOption?.pollId === item.poll.id ? pollVotersOption.option : null
+          }
+          voters={pollVotersOption?.pollId === item.poll.id ? pollVoters : []}
+          onClose={async () => {
+            if (pollClosingId) return;
+            setPollClosingId(item.poll.id);
+            const { error } = await closePoll(supabase, item.poll.id);
+            setPollClosingId(null);
+            if (error) {
+              Alert.alert('Could not close poll', error.message);
+              return;
+            }
+            setPolls((prev) =>
+              prev.map((p) =>
+                p.id === item.poll.id
+                  ? { ...p, closes_at: new Date().toISOString() }
+                  : p,
+              ),
+            );
+          }}
+          onViewVoters={async (optionIndex) => {
+            if (item.poll.anonymous) return;
+            if (
+              pollVotersOption?.pollId === item.poll.id &&
+              pollVotersOption.option === optionIndex
+            ) {
+              setPollVotersOption(null);
+              setPollVoters([]);
+              return;
+            }
+            setPollVotersOption({ pollId: item.poll.id, option: optionIndex });
+            const list = await getPollVoters(supabase, item.poll.id, optionIndex);
+            setPollVoters(list);
+          }}
         />
       );
     }
     const msg = item.message;
-    // System messages (0027): centered WhatsApp-style info notice. Not selectable,
-    // replyable, editable or deletable — just an informational pill.
+    // System messages (0027): centered WhatsApp-style info notice.
+    // Call-history lines are first-class (select / delete / info / swipe).
+    // Other system notices stay non-interactive pills.
     if (msg.type === 'system') {
-      return (
-        <View style={styles.systemNotice}>
-          <View style={styles.systemPill}>
-            <Ionicons name="timer-outline" size={12} color={colors.textMuted} style={{ marginRight: 5 }} />
-            <Text style={styles.systemNoticeText}>{msg.content}</Text>
+      const call = parseCallHistory(msg);
+      if (!call.isCall) {
+        return (
+          <View style={styles.systemNotice}>
+            <View style={styles.systemPill}>
+              <Ionicons
+                name="timer-outline"
+                size={12}
+                color={colors.textMuted}
+                style={{ marginRight: 5 }}
+              />
+              <Text style={styles.systemNoticeText}>{call.label}</Text>
+            </View>
           </View>
-        </View>
+        );
+      }
+
+      const onCallBack =
+        !selectionMode && !isGroup && peers[0]
+          ? () => placeCall(call.isVideo ? 'video' : 'audio')
+          : undefined;
+      const selected = selectionMode && selectedIds.has(msg.id);
+
+      return (
+        <SwipeToReply
+          enabled={!selectionMode}
+          // Call history: swipe left to delete (no swipe-to-reply).
+          onSwipeDelete={() => confirmDeleteCallHistory(msg)}
+          deleteTint={colors.danger}
+          onLongPress={() => {
+            if (selectionMode) {
+              Haptics.selectionAsync().catch(() => {});
+              toggleSelect(msg);
+            } else {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+              enterSelection(msg);
+            }
+          }}
+        >
+          <View style={styles.systemNotice}>
+            <Pressable
+              style={[
+                styles.systemPill,
+                styles.callHistoryPill,
+                selected && styles.callHistoryPillSelected,
+              ]}
+              onPress={() => {
+                if (selectionMode) {
+                  Haptics.selectionAsync().catch(() => {});
+                  toggleSelect(msg);
+                  return;
+                }
+                onCallBack?.();
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={
+                selectionMode
+                  ? `${selected ? 'Deselect' : 'Select'} ${call.label}`
+                  : onCallBack
+                    ? `Call back: ${call.label}`
+                    : call.label
+              }
+              accessibilityState={{ selected }}
+            >
+              {selectionMode && (
+                <Ionicons
+                  name={selected ? 'checkmark-circle' : 'ellipse-outline'}
+                  size={16}
+                  color={selected ? colors.primary : colors.textFaint}
+                  style={{ marginRight: 6 }}
+                />
+              )}
+              <Ionicons
+                name={call.isMissed ? 'call' : 'call-outline'}
+                size={12}
+                color={call.isMissed ? colors.danger : colors.textMuted}
+                style={{
+                  marginRight: 5,
+                  transform: call.isMissed ? [{ rotate: '135deg' }] : undefined,
+                }}
+              />
+              <Text
+                style={[
+                  styles.systemNoticeText,
+                  call.isMissed && { color: colors.danger },
+                ]}
+              >
+                {call.label}
+              </Text>
+              {!selectionMode && !!onCallBack && (
+                <Ionicons
+                  name={call.isVideo ? 'videocam' : 'call'}
+                  size={14}
+                  color={colors.primary}
+                  style={{ marginLeft: 8 }}
+                />
+              )}
+            </Pressable>
+          </View>
+        </SwipeToReply>
       );
     }
     const mine = msg.sender_id === uid;
-    const replyTo = msg.reply_to ? messageById.get(msg.reply_to) ?? null : null;
+    // Hard-deleted parents vanish; mark reply quote unavailable without crashing.
+    const replyTo = msg.reply_to
+      ? messageById.get(msg.reply_to) ??
+        ({
+          id: msg.reply_to,
+          conversation_id: conversationId,
+          sender_id: '',
+          type: 'text',
+          content: null,
+          media_url: null,
+          reply_to: null,
+          is_deleted: true,
+          deleted_kind: 'user',
+          created_at: msg.created_at,
+          edited_at: null,
+        } as Message)
+      : null;
     const senderName = isGroup ? peerNameById.get(msg.sender_id) ?? null : null;
+    const interactive = !msg.is_deleted;
     return (
       <SwipeToReply
-        enabled={!selectionMode && !msg.is_deleted}
+        enabled={!selectionMode && interactive}
         tint={colors.primary}
-        onReply={() => { setEditing(null); setReply(msg); }}
+        onReply={
+          interactive
+            ? () => {
+                setEditing(null);
+                setReply(msg);
+              }
+            : undefined
+        }
+        // Long-press → multi-select (toolbar: copy / forward / star / info / delete).
+        // Single-message menu still available via "Select" path or long-press while selected.
+        onLongPress={
+          interactive
+            ? () => {
+                if (selectionMode) {
+                  toggleSelect(msg);
+                } else {
+                  enterSelection(msg);
+                }
+              }
+            : undefined
+        }
+        onDoubleTap={
+          interactive && !selectionMode
+            ? () => {
+                void react(defaultReaction || '❤️', msg);
+              }
+            : undefined
+        }
       >
         <MessageBubble
           message={msg}
           mine={mine}
           myId={uid}
+          isGroup={isGroup}
           grouped={item.grouped}
           senderName={senderName}
           replyTo={replyTo}
@@ -1176,23 +3192,23 @@ function ChatScreenInner() {
           reactions={reactionsByMsg.get(msg.id)}
           onReactionPress={(emoji) => react(emoji, msg)}
           starred={starredIds.has(msg.id)}
-          tick={mine ? (msg.pending ? 'sending' : receipts.get(msg.id) ?? 'sent') : undefined}
+          tick={mine
+            ? computeOutboundTick({
+                messageId: msg.id,
+                pending: msg.pending,
+                failed: !!(msg as { failed?: boolean }).failed,
+                senderId: uid,
+                tickMap: receipts,
+              })
+            : undefined}
           selected={selectionMode && selectedIds.has(msg.id)}
           selectionMode={selectionMode}
-          onLongPress={() => {
-            if (selectionMode) {
-              Haptics.selectionAsync().catch(() => {});
-              toggleSelect(msg);
-            } else {
-              // Firmer WhatsApp-style buzz as the context menu opens.
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-              setSelected(msg);
-            }
-          }}
           onPress={selectionMode ? () => toggleSelect(msg) : undefined}
-          onOpenImage={(url) => (selectionMode ? toggleSelect(msg) : setViewerUrl(url))}
+          onOpenImage={() => (selectionMode ? toggleSelect(msg) : void openMedia(msg))}
+          onOpenDocument={(m) => (selectionMode ? toggleSelect(m) : void openDocument(m))}
+          viewOnceSpent={voSpent.has(msg.id)}
           highlight={searchActive ? search : ''}
-          activeMatch={msg.id === activeMatchId}
+          activeMatch={msg.id === activeMatchId || msg.id === flashId}
         />
       </SwipeToReply>
     );
@@ -1200,12 +3216,36 @@ function ChatScreenInner() {
 
   const inverted = useMemo(() => [...timeline].reverse(), [timeline]);
 
+  // Pin newest messages to the composer after load (inverted list can leave a
+  // blank band if offset is non-zero on first paint).
+  useEffect(() => {
+    if (loading) return;
+    let cancelled = false;
+    const id1 = requestAnimationFrame(() => {
+      const id2 = requestAnimationFrame(() => {
+        if (cancelled) return;
+        try {
+          listRef.current?.scrollToOffset({ offset: 0, animated: false });
+        } catch {
+          /* ignore */
+        }
+      });
+      // stash for cleanup via outer cancel flag only
+      void id2;
+    });
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(id1);
+    };
+  }, [loading, conversationId, inverted.length]);
+
   // In-chat search: jump between matching messages (no filtering).
   const search = searchTerm.trim().toLowerCase();
   const searchActive = searchOpen && (!!search || searchKind !== 'all');
   const matchIds = useMemo(() => {
     if (!searchActive) return [] as string[];
     return messages
+      // Soft-deleted rows have content cleared — never match original body in search.
       .filter((m) => !m.is_deleted && messageMatchesKind(m, searchKind) && (!search || (m.content ?? '').toLowerCase().includes(search)))
       .map((m) => m.id);
   }, [messages, search, searchKind, searchActive]);
@@ -1214,8 +3254,16 @@ function ChatScreenInner() {
   const scrollToMessage = useCallback((id: string) => {
     const idx = inverted.findIndex((it) => it.id === id);
     if (idx >= 0) {
-      try { listRef.current?.scrollToIndex({ index: idx, animated: true, viewPosition: 0.5 }); } catch { /* measured later */ }
+      try {
+        listRef.current?.scrollToIndex({ index: idx, animated: true, viewPosition: 0.5 });
+      } catch {
+        /* measured later */
+      }
     }
+    // WhatsApp-style brief highlight on the jumped-to message.
+    setFlashId(id);
+    if (flashTimer.current) clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(() => setFlashId(null), 1400);
   }, [inverted]);
   function jumpMatch(delta: number) {
     if (matchIds.length === 0) return;
@@ -1250,15 +3298,17 @@ function ChatScreenInner() {
 
   if (loading) {
     return (
-      <View style={styles.center}>
+      <View style={[styles.center, { backgroundColor: chatCanvasBg }]}>
         <ActivityIndicator color={colors.primary} />
       </View>
     );
   }
 
   return (
-    <Animated.View
-      style={[styles.flex, wallpaperColor ? { backgroundColor: wallpaperColor } : null, keyboardStyle]}
+    // Single opaque column. Bottom Animated spacer lifts composer above IME/nav.
+    <View
+      style={[styles.flex, { backgroundColor: chatCanvasBg }]}
+      collapsable={false}
     >
       {searchOpen && (
         <View style={styles.searchBar}>
@@ -1306,32 +3356,107 @@ function ChatScreenInner() {
         </View>
       )}
 
+      {isGroup && pinnedPreview && (
+        <Pressable style={styles.pinnedBanner} onPress={jumpPinned}>
+          <Ionicons name="pin" size={16} color={colors.primary} />
+          <View style={styles.pinnedBannerBody}>
+            <Text style={styles.pinnedBannerTitle}>
+              {pinnedIds.size} pinned{pinnedIds.size > 1 ? ' · tap to cycle' : ''}
+            </Text>
+            <Text style={styles.pinnedBannerText} numberOfLines={1}>
+              {pinnedPreview.text}
+            </Text>
+          </View>
+        </Pressable>
+      )}
+
       <FlatList
         ref={listRef}
+        style={[styles.list, { backgroundColor: chatCanvasBg }]}
         data={inverted}
         inverted
         keyExtractor={(it) => it.id}
         renderItem={renderItem}
-        contentContainerStyle={styles.listContent}
+        // inverted: paddingTop = near composer (keep tiny); paddingBottom = thread top.
+        // Never flexGrow:1 here — it creates a permanent blank band above the composer.
+        contentContainerStyle={[styles.listContent, listContentPad, { backgroundColor: chatCanvasBg }]}
+        // "handled" lets long-press land while the keyboard is open (WhatsApp parity).
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+        // iOS: do not auto-inset for nav bars — we own bottom chrome via paddingBottom.
+        {...(Platform.OS === 'ios'
+          ? { contentInsetAdjustmentBehavior: 'never' as const }
+          : null)}
+        // Footer is at the VISUAL TOP of an inverted list (encryption notice).
         ListFooterComponent={
           <View style={styles.encNote}>
             <Ionicons name="lock-closed" size={11} color={colors.textMuted} />
             <Text style={styles.encNoteText}>Encrypted in transit</Text>
           </View>
         }
-        initialNumToRender={18}
-        maxToRenderPerBatch={12}
-        windowSize={11}
-        updateCellsBatchingPeriod={40}
+        initialNumToRender={listPerf.messageList.initialNumToRender}
+        maxToRenderPerBatch={listPerf.messageList.maxToRenderPerBatch}
+        windowSize={listPerf.messageList.windowSize}
+        updateCellsBatchingPeriod={listPerf.messageList.updateCellsBatchingPeriod}
+        // inverted + removeClippedSubviews blanks cells near the composer on Android.
+        removeClippedSubviews={false}
         onScroll={(e) => {
-          const bottom = e.nativeEvent.contentOffset.y < 240;
-          atBottomRef.current = bottom;
-          setAtBottom(bottom);
+          const bottom = isInvertedAtLatest(e.nativeEvent.contentOffset.y);
+          // Only re-render when the jump-to-latest FAB visibility flips.
+          if (atBottomRef.current !== bottom) {
+            atBottomRef.current = bottom;
+            setAtBottom(bottom);
+          }
         }}
-        scrollEventThrottle={80}
+        // 16ms ≈ 60fps sampling; state only updates on FAB visibility edge.
+        scrollEventThrottle={16}
+        // Inverted list: end ≈ visual TOP (older history). Cursor-paginate silently.
+        onEndReached={() => { void loadOlderMessages(); }}
+        onEndReachedThreshold={0.4}
+        onContentSizeChange={() => {
+          // Reliable jump after deep history load ("Go to first message").
+          if (scrollToOldestPending.current) {
+            scrollToOldestPending.current = false;
+            try {
+              listRef.current?.scrollToEnd({ animated: true });
+            } catch {
+              try {
+                listRef.current?.scrollToOffset({ offset: 999999, animated: true });
+              } catch {
+                /* ignore */
+              }
+            }
+            return;
+          }
+          // New/deleted message while following latest → keep last bubble glued.
+          if (atBottomRef.current) {
+            try {
+              listRef.current?.scrollToOffset({ offset: 0, animated: false });
+            } catch {
+              /* ignore */
+            }
+          }
+        }}
+        onLayout={() => {
+          if (atBottomRef.current) {
+            try {
+              listRef.current?.scrollToOffset({ offset: 0, animated: false });
+            } catch {
+              /* ignore */
+            }
+          }
+        }}
         onScrollToIndexFailed={(info) => {
           setTimeout(() => {
-            try { listRef.current?.scrollToIndex({ index: info.index, animated: true, viewPosition: 0.5 }); } catch { /* give up */ }
+            try {
+              listRef.current?.scrollToIndex({
+                index: info.index,
+                animated: true,
+                viewPosition: 0.5,
+              });
+            } catch {
+              /* give up */
+            }
           }, 120);
         }}
       />
@@ -1347,12 +3472,58 @@ function ChatScreenInner() {
         </Pressable>
       )}
 
-      {/* Reply / edit preview bar */}
+      {/* @mention picker (groups) */}
+      {mentionOpen && mentionCandidates.length > 0 && (
+        <View style={styles.mentionSheet}>
+          {mentionCandidates.map((m) => (
+            <Pressable
+              key={m.userId}
+              style={styles.mentionRow}
+              onPress={() => pickMention(m)}
+            >
+              <ProfileAvatar
+                uri={m.profile.avatar_url}
+                name={m.profile.display_name || m.profile.username}
+                size={32}
+                userId={m.userId}
+                mode="auto"
+              />
+              <View style={{ marginLeft: 10, flex: 1 }}>
+                <Text style={styles.mentionName} numberOfLines={1}>
+                  {m.profile.display_name || m.profile.username || 'Member'}
+                </Text>
+                {!!m.profile.username && (
+                  <Text style={styles.mentionUser} numberOfLines={1}>
+                    @{m.profile.username}
+                  </Text>
+                )}
+              </View>
+            </Pressable>
+          ))}
+        </View>
+      )}
+
+      {/* Reply / edit preview bar (WhatsApp-class: sender + snippet + media thumb) */}
       {(reply || editing) && (
         <View style={styles.previewBar}>
           <View style={styles.previewLine} />
-          <View style={{ flex: 1 }}>
-            <Text style={styles.previewTitle}>{editing ? 'Edit message' : 'Reply'}</Text>
+          {!!reply && !editing && reply.type === 'image' && !!reply.media_url && (
+            <Image
+              source={{ uri: reply.media_url }}
+              style={styles.previewThumb}
+              contentFit="cover"
+            />
+          )}
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={styles.previewTitle} numberOfLines={1}>
+              {editing
+                ? 'Edit message'
+                : reply
+                  ? reply.sender_id === uid
+                    ? 'You'
+                    : peerNameById.get(reply.sender_id) || 'Reply'
+                  : 'Reply'}
+            </Text>
             <Text style={styles.previewText} numberOfLines={1}>
               {previewLabel(editing ?? reply)}
             </Text>
@@ -1364,133 +3535,238 @@ function ChatScreenInner() {
               setEditing(null);
               setText('');
             }}
+            accessibilityLabel="Cancel reply"
           >
             <Ionicons name="close" size={20} color={colors.textMuted} />
           </Pressable>
         </View>
       )}
 
-      {/* Composer */}
+      {/* Composer — holds above keyboard; WhatsApp-class pill field + aligned icons. */}
       {recording ? (
-        <View style={[styles.composer, { paddingBottom: 6 }]}>
-          <Pressable onPress={() => stopRecording(false)} hitSlop={8}>
-            <Ionicons name="trash-outline" size={24} color={colors.danger} />
-          </Pressable>
+        <View
+          style={[styles.composer, styles.recordingComposer, { paddingBottom: composerPadBottom }]}
+          onLayout={onComposerLayout}
+        >
+          <Ionicons
+            name={recCanceling ? 'trash' : 'mic'}
+            size={22}
+            color={recCanceling ? colors.danger : colors.primary}
+          />
           <View style={styles.recordingPill}>
-            <View style={styles.recDot} />
-            <Text style={styles.recText}>
-              {`${Math.floor(recSecs / 60)}:${String(recSecs % 60).padStart(2, '0')}`} · 🗑 cancel · ➤ send
+            <View style={[styles.recDot, recCanceling && { backgroundColor: colors.danger }]} />
+            <Text style={[styles.recText, recCanceling && { color: colors.danger }]}>
+              {recCanceling
+                ? 'Release to cancel'
+                : `${Math.floor(recSecs / 60)}:${String(recSecs % 60).padStart(2, '0')}  ·  ← slide to cancel`}
             </Text>
           </View>
-          <Pressable onPress={() => stopRecording(true)} style={styles.sendBtn}>
-            <Ionicons name="send" size={20} color="#fff" />
-          </Pressable>
         </View>
       ) : (
-        <View style={[styles.composer, { paddingBottom: 6 }]}>
-          <Pressable onPress={() => { Keyboard.dismiss(); setAttachOpen(true); }} hitSlop={8}>
-            <Ionicons name="add-circle-outline" size={28} color={colors.textMuted} />
-          </Pressable>
-          <TextInput
-            style={styles.input}
-            placeholder="Message"
-            placeholderTextColor={colors.textFaint}
-            value={text}
-            onChangeText={onChangeText}
-            onKeyPress={onInputKeyPress}
-            onSubmitEditing={enterToSend ? handleSend : undefined}
-            blurOnSubmit={false}
-            returnKeyType={enterToSend ? 'send' : 'default'}
-            multiline
-          />
+        <View
+          style={[styles.composer, { paddingBottom: composerPadBottom }]}
+          onLayout={onComposerLayout}
+        >
           <Pressable
-            onPress={() => { Keyboard.dismiss(); setEmojiComposerOpen(true); }}
-            hitSlop={8}
-            style={{ marginRight: 4 }}
+            onPress={() => { Keyboard.dismiss(); setAttachOpen(true); }}
+            hitSlop={6}
+            accessibilityRole="button"
+            accessibilityLabel="Attach"
+            style={styles.composerSideBtn}
           >
-            <Ionicons name="happy-outline" size={26} color={colors.textMuted} />
+            <Ionicons name="add" size={28} color={colors.textMuted} />
           </Pressable>
+          <View style={styles.inputPill}>
+            <Pressable
+              onPress={() => {
+                if (composerTray === 'emoji') {
+                  closeComposerTray();
+                } else if (composerTray === 'stickers') {
+                  setComposerTray('emoji');
+                } else {
+                  openComposerEmoji();
+                }
+              }}
+              hitSlop={6}
+              style={styles.composerEmojiBtn}
+              accessibilityRole="button"
+              accessibilityLabel={composerTray === 'emoji' ? 'Show keyboard' : 'Emoji'}
+            >
+              <Ionicons
+                name={composerTray === 'emoji' ? 'keypad-outline' : 'happy-outline'}
+                size={24}
+                color={composerTray !== 'none' ? colors.primary : colors.textMuted}
+              />
+            </Pressable>
+            <TextInput
+              ref={inputRef}
+              style={styles.input}
+              placeholder="Message"
+              placeholderTextColor={colors.textFaint}
+              accessibilityLabel="Message"
+              value={text}
+              onChangeText={onChangeText}
+              onKeyPress={onInputKeyPress}
+              onSubmitEditing={enterToSend ? handleSend : undefined}
+              onFocus={hideComposerTrayOnly}
+              blurOnSubmit={false}
+              returnKeyType={enterToSend ? 'send' : 'default'}
+              multiline
+              textAlignVertical="center"
+            />
+            {!text.trim() && (
+              <Pressable
+                onPress={() => { Keyboard.dismiss(); void pickImage(true); }}
+                hitSlop={6}
+                style={styles.composerEmojiBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Camera"
+              >
+                <Ionicons name="camera-outline" size={24} color={colors.textMuted} />
+              </Pressable>
+            )}
+          </View>
           {text.trim().length > 0 ? (
-            <Pressable onPress={handleSend} style={({ pressed }) => [styles.sendBtn, pressed && styles.sendBtnPressed]} disabled={sending}>
+            <Pressable
+              onPress={handleSend}
+              accessibilityRole="button"
+              accessibilityLabel={editing ? 'Save edit' : 'Send message'}
+              style={({ pressed }) => [styles.sendBtn, pressed && styles.sendBtnPressed]}
+              disabled={sending}
+            >
               <Ionicons name={editing ? 'checkmark' : 'send'} size={20} color="#fff" />
             </Pressable>
           ) : (
-            <Pressable onPress={startRecording} style={({ pressed }) => [styles.sendBtn, pressed && styles.sendBtnPressed]}>
+            <Pressable
+              onPressIn={onMicPressIn}
+              onPressOut={onMicPressOut}
+              onTouchMove={onMicTouchMove}
+              delayLongPress={400}
+              accessibilityRole="button"
+              accessibilityLabel="Record voice message"
+              style={({ pressed }) => [styles.sendBtn, pressed && styles.sendBtnPressed]}
+            >
               <Ionicons name="mic" size={20} color="#fff" />
             </Pressable>
           )}
         </View>
       )}
 
-      {/* Attachment sheet */}
-      <Modal visible={attachOpen} transparent animationType="slide" onRequestClose={() => setAttachOpen(false)}>
-        <Pressable style={styles.backdrop} onPress={() => setAttachOpen(false)}>
-          <View style={[styles.sheet, { paddingBottom: insets.bottom + 12 }]}>
-            <AttachOption icon="image" label="Photo / Video" color="#5B6EF5" onPress={() => pickImage(false)} />
-            <AttachOption icon="camera" label="Camera" color="#E8638A" onPress={() => pickImage(true)} />
-            <AttachOption icon="document" label="Document" color="#F7A948" onPress={pickDocument} />
-            <AttachOption
-              icon="bar-chart"
-              label="Poll"
-              color="#00A884"
-              onPress={() => {
-                setAttachOpen(false);
-                setPollBuilder(true);
-              }}
-            />
-            <AttachOption
-              icon="happy"
-              label={isPremium ? 'Stickers' : 'Stickers · FUTUREHAT+'}
-              color="#F45D9C"
-              onPress={() => {
-                setAttachOpen(false);
-                if (isPremium) setStickersOpen(true);
-                else
-                  Alert.alert('Stickers', 'Premium stickers are a FUTUREHAT+ feature.', [
-                    { text: 'Not now', style: 'cancel' },
-                    { text: 'See FUTUREHAT+', onPress: () => navigation.navigate('Premium') },
-                  ]);
-              }}
-            />
-            <AttachOption
-              icon="time"
-              label={isPremium ? 'Schedule message' : 'Schedule · FUTUREHAT+'}
-              color="#7A6FF0"
-              onPress={() => {
-                setAttachOpen(false);
-                if (!isPremium) {
-                  Alert.alert('Schedule message', 'Scheduled messages are a FUTUREHAT+ feature.', [
-                    { text: 'Not now', style: 'cancel' },
-                    { text: 'See FUTUREHAT+', onPress: () => navigation.navigate('Premium') },
-                  ]);
-                  return;
-                }
-                if (!text.trim()) {
-                  Alert.alert('Nothing to schedule', 'Type a message first, then schedule it.');
-                  return;
-                }
-                setScheduleOpen(true);
-              }}
-            />
-          </View>
-        </Pressable>
-      </Modal>
-
-      {/* Sticker picker (premium) */}
-      <Modal visible={stickersOpen} transparent animationType="slide" onRequestClose={() => setStickersOpen(false)}>
-        <Pressable style={styles.backdrop} onPress={() => setStickersOpen(false)}>
-          <Pressable style={[styles.sheet, { paddingBottom: insets.bottom + 16 }]} onPress={(e) => e.stopPropagation()}>
-            <Text style={styles.sheetTitle}>Stickers</Text>
-            <View style={styles.stickerGrid}>
-              {STICKERS.map((s) => (
-                <Pressable key={s.id} onPress={() => sendSticker(s.url)} style={styles.stickerCell}>
-                  <Image source={{ uri: s.url }} style={styles.stickerImg} contentFit="contain" />
-                </Pressable>
-              ))}
+      {/* Telegram-style delete: optional “Also delete for everyone” checkbox */}
+      <Modal
+        visible={!!deletePrompt}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setDeletePrompt(null)}
+      >
+        <Pressable style={styles.deleteBackdrop} onPress={() => setDeletePrompt(null)}>
+          <Pressable style={styles.deleteCard} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.deleteTitle}>Delete message?</Text>
+            <Text style={styles.deleteBody}>
+              Are you sure you want to delete the selected message
+              {(deletePrompt?.ids.length ?? 0) > 1 ? 's' : ''}?
+            </Text>
+            {deletePrompt?.allowForEveryone && (
+              <Pressable
+                style={styles.deleteCheckRow}
+                onPress={() => setDeleteAlsoEveryone((v) => !v)}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: deleteAlsoEveryone }}
+              >
+                <Ionicons
+                  name={deleteAlsoEveryone ? 'checkbox' : 'square-outline'}
+                  size={24}
+                  color={deleteAlsoEveryone ? colors.primary : colors.textMuted}
+                />
+                <Text style={styles.deleteCheckLabel}>{deletePrompt.everyoneLabel}</Text>
+              </Pressable>
+            )}
+            <View style={styles.deleteActions}>
+              <Pressable onPress={() => setDeletePrompt(null)} hitSlop={8} style={styles.deleteBtn}>
+                <Text style={styles.deleteBtnCancel}>Cancel</Text>
+              </Pressable>
+              <Pressable onPress={() => void confirmDeletePrompt()} hitSlop={8} style={styles.deleteBtn}>
+                <Text style={styles.deleteBtnGo}>Delete</Text>
+              </Pressable>
             </View>
           </Pressable>
         </Pressable>
       </Modal>
+
+      {/* Attachment sheet — primary grid + demoted premium actions */}
+      <Modal visible={attachOpen} transparent animationType="slide" onRequestClose={() => setAttachOpen(false)}>
+        <Pressable style={styles.backdrop} onPress={() => setAttachOpen(false)}>
+          <Pressable style={[styles.sheet, { paddingBottom: sheetBottomPad(insets, 16) }]} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.sheetTitle}>Share</Text>
+            <View style={styles.attachGrid}>
+              <AttachTile icon="image" label="Gallery" color="#5B6EF5" onPress={openMediaPicker} />
+              <AttachTile icon="camera" label="Camera" color="#E8638A" onPress={() => pickImage(true)} />
+              <AttachTile icon="document" label="Document" color="#F7A948" onPress={pickDocument} />
+              <AttachTile
+                icon="bar-chart"
+                label="Poll"
+                color="#00A884"
+                onPress={() => {
+                  setAttachOpen(false);
+                  setPollBuilder(true);
+                }}
+              />
+              {isGroup && (
+                <AttachTile
+                  icon="calendar"
+                  label="Event"
+                  color="#9B59B6"
+                  onPress={() => {
+                    setAttachOpen(false);
+                    setEventBuilder(true);
+                  }}
+                />
+              )}
+            </View>
+            <View style={styles.attachMore}>
+              <AttachOption
+                icon="happy"
+                label="Stickers"
+                color="#F45D9C"
+                onPress={() => {
+                  setAttachOpen(false);
+                  // Open sticker tray instantly (offline packs, no premium gate for defaults).
+                  openComposerStickers();
+                }}
+              />
+              <AttachOption
+                icon="time"
+                label={isPremium ? 'Schedule' : 'Schedule'}
+                color="#7A6FF0"
+                locked={!isPremium}
+                onPress={() => {
+                  setAttachOpen(false);
+                  if (!isPremium) {
+                    Alert.alert('Schedule message', 'Scheduled messages are a Lumixo+ feature.', [
+                      { text: 'Not now', style: 'cancel' },
+                      { text: 'See Lumixo+', onPress: () => navigation.navigate('Premium') },
+                    ]);
+                    return;
+                  }
+                  if (!text.trim()) {
+                    Alert.alert('Nothing to schedule', 'Type a message first, then schedule it.');
+                    return;
+                  }
+                  setScheduleOpen(true);
+                }}
+              />
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Sticker picker modal (attach path fallback) */}
+      <StickerPicker
+        visible={stickersOpen}
+        presentation="modal"
+        onClose={() => setStickersOpen(false)}
+        onSelect={(s) => { void sendSticker(s); }}
+      />
 
       {/* Schedule message (premium) */}
       <ScheduleMessageModal
@@ -1500,10 +3776,38 @@ function ChatScreenInner() {
         onConfirm={doSchedule}
       />
 
+      {/* Group event (date/time + RSVP via communities events table) */}
+      <EventComposerModal
+        visible={eventBuilder}
+        onCancel={() => setEventBuilder(false)}
+        onSubmit={async (draft: EventDraft) => {
+          setEventBuilder(false);
+          const { event, error } = await createEvent(supabase, {
+            conversationId,
+            title: draft.title,
+            location: draft.location || undefined,
+            startsAt: draft.startsAt,
+          });
+          if (error || !event) {
+            Alert.alert('Could not create event', error?.message || 'Try again');
+            return;
+          }
+          // Surface in chat as a system-style text so members see it without a new message type.
+          const when = new Date(draft.startsAt).toLocaleString();
+          const body = `📅 Event: ${draft.title}${draft.location ? ` · ${draft.location}` : ''} · ${when}`;
+          try {
+            await sendMessage(supabase, conversationId, body);
+          } catch {
+            /* event row still exists */
+          }
+          Alert.alert('Event created', 'Members can see it in this group chat.');
+        }}
+      />
+
       {/* Poll builder */}
       <Modal visible={pollBuilder} transparent animationType="slide" onRequestClose={() => setPollBuilder(false)}>
         <Pressable style={styles.backdrop} onPress={() => setPollBuilder(false)}>
-          <Pressable style={[styles.sheet, styles.pollSheet, { paddingBottom: insets.bottom + 16 }]} onPress={(e) => e.stopPropagation()}>
+          <Pressable style={[styles.sheet, styles.pollSheet, { paddingBottom: sheetBottomPad(insets, 16) }]} onPress={(e) => e.stopPropagation()}>
             <Text style={styles.sheetTitle}>New poll</Text>
             <TextInput
               style={styles.pollInput}
@@ -1528,6 +3832,10 @@ function ChatScreenInner() {
                 <Text style={styles.pollAddOptText}>Add option</Text>
               </Pressable>
             )}
+            <Pressable style={styles.pollToggle} onPress={() => setPollAnonymous((v) => !v)}>
+              <Ionicons name={pollAnonymous ? 'checkbox' : 'square-outline'} size={20} color={colors.primary} />
+              <Text style={styles.pollToggleText}>Anonymous votes</Text>
+            </Pressable>
             <Pressable style={styles.pollToggle} onPress={() => setPollMultiple((v) => !v)}>
               <Ionicons name={pollMultiple ? 'checkbox' : 'square-outline'} size={20} color={colors.primary} />
               <Text style={styles.pollToggleText}>Allow multiple answers</Text>
@@ -1542,7 +3850,7 @@ function ChatScreenInner() {
       {/* Message action sheet */}
       <Modal visible={!!selected} transparent animationType="slide" onRequestClose={() => setSelected(null)}>
         <Pressable style={styles.msgBackdrop} onPress={() => setSelected(null)}>
-          <Pressable style={[styles.msgSheet, { paddingBottom: insets.bottom + 10 }]} onPress={() => {}}>
+          <Pressable style={[styles.msgSheet, { paddingBottom: sheetBottomPad(insets, 10) }]} onPress={() => {}}>
             <View style={styles.grabber} />
 
             {/* Reaction bar — compact rounded pill; reactions work exactly as before. */}
@@ -1557,8 +3865,13 @@ function ChatScreenInner() {
                   <Text style={styles.reactionEmoji}>{e}</Text>
                 </Pressable>
               ))}
-              {/* Open the full emoji palette — reaction parity with web. */}
-              <Pressable onPress={() => setEmojiPickerOpen(true)} hitSlop={6} style={styles.reactionAdd}>
+              {/* Full emoji palette — capture target, dismiss sheet, open instantly. */}
+              <Pressable
+                onPress={openReactionPicker}
+                hitSlop={6}
+                style={styles.reactionAdd}
+                accessibilityLabel="More reactions"
+              >
                 <Ionicons name="add" size={22} color={colors.textMuted} />
               </Pressable>
             </View>
@@ -1572,10 +3885,15 @@ function ChatScreenInner() {
                   label={selected && starredIds.has(selected.id) ? 'Unstar' : 'Star'}
                   onPress={toggleStar}
                 />
-                <ActionRow icon="checkmark-circle-outline" label="Select" onPress={() => { if (selected) enterSelection(selected); setSelected(null); }} />
+                <ActionRow
+                  icon="checkbox-outline"
+                  label="Select messages"
+                  subtitle="Choose multiple to forward or delete"
+                  onPress={() => { if (selected) enterSelection(selected); setSelected(null); }}
+                />
                 {selected?.type === 'text' && (
                   <ActionRow
-                    icon="copy"
+                    icon="copy-outline"
                     label="Copy"
                     onPress={async () => {
                       if (selected?.content) await Clipboard.setStringAsync(selected.content);
@@ -1583,11 +3901,18 @@ function ChatScreenInner() {
                     }}
                   />
                 )}
-                <ActionRow icon="arrow-redo" label="Forward" onPress={openForward} />
+                <ActionRow icon="arrow-redo-outline" label="Forward" onPress={openForward} />
+                {isGroup && canPinMessages(myGroupRole, groupPerms) && (
+                  <ActionRow
+                    icon="pin-outline"
+                    label={selected && pinnedIds.has(selected.id) ? 'Unpin' : 'Pin'}
+                    onPress={togglePin}
+                  />
+                )}
                 <ActionRow icon="information-circle-outline" label="Info" onPress={showInfo} />
                 {selected?.sender_id === uid && selected?.type === 'text' && (
                   <ActionRow
-                    icon="create"
+                    icon="create-outline"
                     label="Edit"
                     onPress={() => { setEditing(selected); setText(selected?.content ?? ''); setSelected(null); }}
                   />
@@ -1595,7 +3920,7 @@ function ChatScreenInner() {
                 {!!uid && selected?.sender_id !== uid && (
                   <ActionRow icon="flag-outline" label="Report" danger onPress={startReport} />
                 )}
-                <ActionRow icon="trash" label="Delete" danger onPress={doDelete} />
+                <ActionRow icon="trash-outline" label="Delete" danger onPress={doDelete} />
               </View>
             </ScrollView>
           </Pressable>
@@ -1605,7 +3930,7 @@ function ChatScreenInner() {
       {/* Report-message reason picker (step 2 of the report flow). */}
       <Modal visible={!!reportTarget} transparent animationType="slide" onRequestClose={() => setReportTarget(null)}>
         <Pressable style={styles.backdrop} onPress={() => !reportBusy && setReportTarget(null)}>
-          <Pressable style={[styles.sheet, { paddingBottom: insets.bottom + 12 }]} onPress={() => {}}>
+          <Pressable style={[styles.sheet, { paddingBottom: sheetBottomPad(insets, 12) }]} onPress={() => {}}>
             <Text style={styles.reportTitle}>Report message</Text>
             <Text style={styles.reportSubtitle}>Why are you reporting this message?</Text>
             {REPORT_REASONS.map((r) => (
@@ -1632,93 +3957,171 @@ function ChatScreenInner() {
         </Pressable>
       </Modal>
 
-      {/* Full emoji reaction picker */}
-      <Modal visible={emojiPickerOpen} transparent animationType="fade" onRequestClose={() => setEmojiPickerOpen(false)}>
-        <Pressable style={styles.backdrop} onPress={() => setEmojiPickerOpen(false)}>
-          <Pressable style={[styles.sheet, styles.emojiPickerSheet, { paddingBottom: insets.bottom + 16 }]} onPress={(e) => e.stopPropagation()}>
-            <Text style={styles.sheetTitle}>React{!isPremium ? '  ·  extras are FUTUREHAT+' : ''}</Text>
-            <View style={styles.emojiGrid}>
-              {MORE_EMOJI.map((e) => {
-                // Free tier reacts with the 6 quick emojis; the rest are premium
-                // (mirrors web QUICK_EMOJIS vs PREMIUM_EMOJIS gating).
-                const locked = !isPremium && !QUICK_EMOJI.includes(e);
-                return (
-                  <Pressable
-                    key={e}
-                    hitSlop={4}
-                    style={styles.emojiGridCell}
-                    onPress={() => {
-                      if (locked) {
-                        setEmojiPickerOpen(false);
-                        Alert.alert(
-                          'Premium reaction',
-                          'Upgrade to FUTUREHAT+ to react with the full emoji set.',
-                          [{ text: 'Not now', style: 'cancel' }, { text: 'Upgrade', onPress: () => navigation.navigate('Premium') }],
-                        );
-                        return;
-                      }
-                      setEmojiPickerOpen(false);
-                      react(e);
-                    }}
-                  >
-                    <Text style={[styles.emojiGridText, locked && { opacity: 0.35 }]}>{e}</Text>
-                    {locked && <Text style={styles.emojiLock}>🔒</Text>}
-                  </Pressable>
-                );
-              })}
-            </View>
-          </Pressable>
-        </Pressable>
-      </Modal>
+      {/* Full emoji reaction picker — WhatsApp-class categories + search + recent */}
+      <EmojiPicker
+        visible={emojiPickerOpen}
+        mode="reaction"
+        presentation="modal"
+        title="React"
+        onClose={() => {
+          setEmojiPickerOpen(false);
+          pendingReactMsg.current = null;
+        }}
+        onSelect={(e) => {
+          const target = pendingReactMsg.current;
+          pendingReactMsg.current = null;
+          setEmojiPickerOpen(false);
+          void react(e, target ?? undefined);
+        }}
+      />
 
-      {/* Composer emoji picker — inserts into the message draft */}
-      <Modal visible={emojiComposerOpen} transparent animationType="fade" onRequestClose={() => setEmojiComposerOpen(false)}>
-        <Pressable style={styles.backdrop} onPress={() => setEmojiComposerOpen(false)}>
-          <Pressable style={[styles.sheet, styles.emojiPickerSheet, { paddingBottom: insets.bottom + 16 }]} onPress={(e) => e.stopPropagation()}>
-            <Text style={styles.sheetTitle}>Emoji</Text>
-            <View style={styles.emojiGrid}>
-              {MORE_EMOJI.map((e) => (
-                <Pressable
-                  key={e}
-                  hitSlop={4}
-                  style={styles.emojiGridCell}
-                  onPress={() => onChangeText(text + e)}
-                >
-                  <Text style={styles.emojiGridText}>{e}</Text>
-                </Pressable>
-              ))}
-            </View>
-          </Pressable>
-        </Pressable>
-      </Modal>
-
-      {/* Forward picker */}
-      <Modal visible={forwardOpen} transparent animationType="slide" onRequestClose={() => setForwardOpen(false)}>
-        <Pressable style={styles.backdrop} onPress={() => setForwardOpen(false)}>
-          <View style={[styles.sheet, styles.forwardSheet, { paddingBottom: insets.bottom + 12 }]}>
-            <Text style={styles.sheetTitle}>Forward to</Text>
-            <FlatList
-              data={forwardList}
-              keyExtractor={(c) => c.conversation.id}
-              renderItem={({ item }) => (
-                <Pressable style={styles.forwardRow} onPress={() => doForward(item.conversation.id)}>
-                  <Text style={styles.forwardName}>{item.title}</Text>
-                </Pressable>
-              )}
-            />
+      {/* Composer emoji / sticker tray — WhatsApp: one shell, height = last IME.
+          Tabs switch content without remounting the outer band (no jump). */}
+      {composerTray !== 'none' && (
+        <View
+          style={[styles.composerTray, { height: trayH }]}
+          onLayout={() => pinToLatest(false)}
+        >
+          <View style={styles.traySwitch}>
+            <Pressable
+              style={[styles.traySwitchBtn, composerTray === 'emoji' && styles.traySwitchOn]}
+              onPress={() => setComposerTray('emoji')}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: composerTray === 'emoji' }}
+            >
+              <Text
+                style={
+                  composerTray === 'emoji' ? styles.traySwitchText : styles.traySwitchTextMuted
+                }
+              >
+                Emoji
+              </Text>
+            </Pressable>
+            <Pressable
+              style={[styles.traySwitchBtn, composerTray === 'stickers' && styles.traySwitchOn]}
+              onPress={() => setComposerTray('stickers')}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: composerTray === 'stickers' }}
+            >
+              <Text
+                style={
+                  composerTray === 'stickers' ? styles.traySwitchText : styles.traySwitchTextMuted
+                }
+              >
+                Stickers
+              </Text>
+            </Pressable>
+            <View style={{ flex: 1 }} />
+            <Pressable
+              onPress={closeComposerTray}
+              hitSlop={10}
+              style={styles.trayKeypadBtn}
+              accessibilityLabel="Show keyboard"
+            >
+              <Ionicons name="keypad-outline" size={22} color={colors.textMuted} />
+            </Pressable>
           </View>
-        </Pressable>
-      </Modal>
+          <View style={styles.trayBody}>
+            {/* Keep both mounted while tray is open so scroll/category state survives tab swap. */}
+            <View
+              style={[
+                styles.trayPane,
+                composerTray !== 'emoji' && styles.trayPaneHidden,
+              ]}
+              pointerEvents={composerTray === 'emoji' ? 'auto' : 'none'}
+            >
+              <EmojiPicker
+                visible
+                mode="composer"
+                presentation="tray"
+                compact
+                onClose={closeComposerTray}
+                onSelect={(e) => onChangeText(textRef.current + e)}
+              />
+            </View>
+            <View
+              style={[
+                styles.trayPane,
+                composerTray !== 'stickers' && styles.trayPaneHidden,
+              ]}
+              pointerEvents={composerTray === 'stickers' ? 'auto' : 'none'}
+            >
+              <StickerPicker
+                visible
+                presentation="tray"
+                compact
+                onClose={closeComposerTray}
+                onSelect={(s) => {
+                  void sendSticker(s);
+                }}
+              />
+            </View>
+          </View>
+        </View>
+      )}
+
+      {/* IME / nav / tray spacer — WhatsApp flush: composer sits directly above
+          the keyboard (or system nav bar when keyboard closed). Height is live
+          WindowInsets IME from keyboard-controller, never hard-coded. */}
+      <Animated.View
+        style={imeSpacerStyle}
+        pointerEvents="none"
+        collapsable={false}
+      />
+
+      {/* Forward picker — multi-recipient with search, recents, groups & preview */}
+      <ForwardSheet
+        visible={forwardOpen}
+        onClose={() => { setForwardOpen(false); setForwardSources([]); setForwardPreview(null); }}
+        conversations={forwardList}
+        onConfirm={doForward}
+        preview={forwardPreview}
+        count={forwardSources.length}
+      />
 
       {/* Full-screen media viewer (swipe / zoom / video) */}
       {viewerIndex >= 0 && (
-        <MediaViewer items={viewerItems} index={viewerIndex} onClose={() => setViewerUrl(null)} />
+        <MediaViewer
+          items={viewerItems}
+          index={viewerIndex}
+          onClose={() => setViewerUrl(null)}
+          onForward={forwardFromViewer}
+          onDelete={deleteFromViewer}
+        />
       )}
-    </Animated.View>
+    </View>
   );
 }
 
 function AttachOption({
+  icon,
+  label,
+  color,
+  onPress,
+  locked,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  color: string;
+  onPress: () => void;
+  locked?: boolean;
+}) {
+  const colors = useColors();
+  return (
+    <Pressable style={attachStyles.opt} onPress={onPress}>
+      <View style={[attachStyles.circle, { backgroundColor: color, opacity: locked ? 0.75 : 1 }]}>
+        <Ionicons name={icon} size={22} color="#fff" />
+      </View>
+      <Text style={[attachStyles.label, { color: colors.text }]}>{label}</Text>
+      {locked ? (
+        <Ionicons name="lock-closed" size={14} color={colors.textFaint} style={{ marginLeft: 'auto' }} />
+      ) : null}
+    </Pressable>
+  );
+}
+
+/** WhatsApp-style 2×2 tile for primary attach actions. */
+function AttachTile({
   icon,
   label,
   color,
@@ -1731,11 +4134,11 @@ function AttachOption({
 }) {
   const colors = useColors();
   return (
-    <Pressable style={attachStyles.opt} onPress={onPress}>
-      <View style={[attachStyles.circle, { backgroundColor: color }]}>
-        <Ionicons name={icon} size={24} color="#fff" />
+    <Pressable style={attachStyles.tile} onPress={onPress}>
+      <View style={[attachStyles.tileCircle, { backgroundColor: color }]}>
+        <Ionicons name={icon} size={22} color="#fff" />
       </View>
-      <Text style={[attachStyles.label, { color: colors.text }]}>{label}</Text>
+      <Text style={[attachStyles.tileLabel, { color: colors.textMuted }]}>{label}</Text>
     </Pressable>
   );
 }
@@ -1743,11 +4146,13 @@ function AttachOption({
 function ActionRow({
   icon,
   label,
+  subtitle,
   onPress,
   danger,
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
+  subtitle?: string;
   onPress: () => void;
   danger?: boolean;
 }) {
@@ -1757,124 +4162,349 @@ function ActionRow({
     <Pressable
       style={({ pressed }) => [msgMenuStyles.row, pressed && { backgroundColor: colors.surfaceAlt }]}
       onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
     >
-      <Ionicons name={icon} size={21} color={tint} />
-      <Text style={[msgMenuStyles.label, { color: tint }]}>{label}</Text>
+      <View style={[msgMenuStyles.iconWrap, danger && { backgroundColor: colors.danger + '14' }]}>
+        <Ionicons name={icon} size={20} color={tint} />
+      </View>
+      <View style={msgMenuStyles.textCol}>
+        <Text style={[msgMenuStyles.label, { color: tint }]} numberOfLines={1}>{label}</Text>
+        {!!subtitle && (
+          <Text style={[msgMenuStyles.sub, { color: colors.textMuted }]} numberOfLines={1}>{subtitle}</Text>
+        )}
+      </View>
     </Pressable>
   );
 }
 
-// Compact, Material-style rows for the message context menu.
+// WhatsApp-class density: 48pt rows, aligned icons, tight type.
 const msgMenuStyles = StyleSheet.create({
-  row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 11, paddingHorizontal: 10, borderRadius: 12 },
-  label: { fontSize: 15.5, marginLeft: 16, fontWeight: '500' },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: 48,
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+    borderRadius: 12,
+    gap: 12,
+  },
+  iconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(128,128,128,0.08)',
+  },
+  textCol: { flex: 1, minWidth: 0 },
+  label: { fontSize: 15.5, fontWeight: '600', letterSpacing: -0.15 },
+  sub: { fontSize: 12, marginTop: 1, lineHeight: 15 },
 });
 
 const attachStyles = StyleSheet.create({
-  opt: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12 },
-  circle: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
-  label: { fontSize: 16, marginLeft: 16 },
-  actionRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 13 },
-  actionLabel: { fontSize: 16, marginLeft: 16 },
+  opt: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10 },
+  circle: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  label: { fontSize: 15, marginLeft: 12, fontWeight: '500' },
+  actionRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 11 },
+  actionLabel: { fontSize: 15, marginLeft: 14 },
+  tile: { width: '25%', alignItems: 'center', paddingVertical: 8 },
+  tileCircle: {
+    width: 48, height: 48, borderRadius: 24,
+    alignItems: 'center', justifyContent: 'center', marginBottom: 6,
+  },
+  tileLabel: { fontSize: 11.5, fontWeight: '600' },
 });
 
 const makeStyles = (colors: Palette) =>
   StyleSheet.create({
     flex: { flex: 1, backgroundColor: colors.bg },
     center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg },
-    listContent: { paddingVertical: 8 },
+    // Must fill space above the composer so inverted content can hug the bottom.
+    list: { flex: 1 },
+    // Padding values come from invertedListContentPadding() at render time.
+    listContent: { flexGrow: 0 },
+    pinnedBanner: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingHorizontal: spacing(3),
+      paddingVertical: spacing(2),
+      backgroundColor: colors.surface,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.border,
+    },
+    pinnedBannerBody: { flex: 1, minWidth: 0 },
+    pinnedBannerTitle: {
+      color: colors.primary,
+      fontSize: font.tiny,
+      fontWeight: '700',
+    },
+    pinnedBannerText: {
+      color: colors.textMuted,
+      fontSize: font.small,
+      marginTop: 1,
+    },
+    mentionSheet: {
+      backgroundColor: colors.surface,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: colors.border,
+      maxHeight: 220,
+      paddingVertical: 4,
+    },
+    mentionRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: spacing(3),
+      paddingVertical: spacing(2),
+    },
+    mentionName: { color: colors.text, fontSize: font.body, fontWeight: '600' },
+    mentionUser: { color: colors.textMuted, fontSize: font.tiny },
     encNote: {
       flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-      gap: 5, paddingHorizontal: 16, paddingTop: 10, paddingBottom: 4, opacity: 0.75,
+      gap: 5, paddingHorizontal: 16, paddingTop: 10, paddingBottom: 6,
     },
-    encNoteText: { color: colors.textMuted, fontSize: font.tiny },
-    daySep: { alignItems: 'center', marginVertical: 10 },
+    encNoteText: { color: colors.textMuted, fontSize: font.tiny, fontWeight: '500' },
+    daySep: { alignItems: 'center', marginVertical: 10, paddingVertical: 2 },
     daySepText: {
-      color: colors.textMuted, fontSize: font.tiny, fontWeight: '600',
-      backgroundColor: colors.surface, paddingHorizontal: 12, paddingVertical: 5,
-      borderRadius: radius.sm, overflow: 'hidden',
+      color: colors.isLight ? '#54656F' : colors.textMuted,
+      fontSize: 12,
+      fontWeight: '600',
+      letterSpacing: 0.2,
+      backgroundColor: colors.isLight ? 'rgba(255,255,255,0.92)' : 'rgba(17,27,33,0.92)',
+      paddingHorizontal: 12,
+      paddingVertical: 5,
+      borderRadius: 8,
+      overflow: 'hidden',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.isLight ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.08)',
+      // Soft elevation so the pill reads as floating while scrolling.
+      shadowColor: '#000',
+      shadowOpacity: colors.isLight ? 0.06 : 0.25,
+      shadowRadius: 3,
+      shadowOffset: { width: 0, height: 1 },
+      elevation: 1,
     },
-    headerTitle: { color: colors.text, fontSize: font.heading, fontWeight: '600', flexShrink: 1 },
-    headerTitleRow: { flexDirection: 'row', alignItems: 'center' },
-    headerSub: { color: colors.textMuted, fontSize: font.tiny },
-    systemNotice: { alignItems: 'center', marginVertical: 8, paddingHorizontal: 24 },
+    headerPerson: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      flex: 1,
+      minWidth: 0,
+      maxWidth: '100%',
+    },
+    headerTextCol: { marginLeft: 9, flex: 1, flexShrink: 1, minWidth: 0 },
+    // White on green header (WhatsApp) — never palette text (was washed-out).
+    headerTitle: {
+      color: '#FFFFFF',
+      fontSize: font.heading,
+      fontWeight: '600',
+      flexShrink: 1,
+      letterSpacing: -0.15,
+      minWidth: 0,
+    },
+    headerTitleRow: { flexDirection: 'row', alignItems: 'center', minWidth: 0 },
+    headerStreak: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginLeft: 6,
+      flexShrink: 0,
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      borderRadius: 10,
+      backgroundColor: 'rgba(0,0,0,0.18)',
+      gap: 2,
+    },
+    headerStreakEmoji: { fontSize: 12, lineHeight: 14 },
+    headerStreakScore: {
+      color: '#FFFFFF',
+      fontSize: 11,
+      fontWeight: '700',
+      letterSpacing: -0.2,
+    },
+    headerSub: {
+      color: 'rgba(255,255,255,0.88)',
+      fontSize: font.tiny,
+      marginTop: 0,
+      flexShrink: 1,
+      minWidth: 0,
+    },
+    headerSubTyping: { color: '#B8F5E0', fontWeight: '600' },
+    headerIconBtn: {
+      width: 40,
+      height: 40,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginLeft: 0,
+    },
+    systemNotice: { alignItems: 'center', marginVertical: 6, paddingHorizontal: 24 },
     systemPill: {
       flexDirection: 'row', alignItems: 'center', maxWidth: '90%',
-      backgroundColor: colors.surface, paddingHorizontal: 12, paddingVertical: 6,
+      backgroundColor: colors.isLight ? 'rgba(255,255,255,0.96)' : colors.surface,
+      paddingHorizontal: 11, paddingVertical: 5,
       borderRadius: radius.md, overflow: 'hidden',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.isLight ? 'rgba(0,0,0,0.08)' : colors.border,
     },
-    systemNoticeText: { color: colors.textMuted, fontSize: font.tiny, textAlign: 'center', flexShrink: 1 },
+    callHistoryPill: {
+      minHeight: 32,
+      paddingVertical: 7,
+      paddingHorizontal: 12,
+    },
+    callHistoryPillSelected: {
+      borderWidth: 1.5,
+      borderColor: colors.primary,
+      backgroundColor: colors.primary + '18',
+    },
+    systemNoticeText: {
+      color: colors.text,
+      fontSize: font.tiny,
+      textAlign: 'center',
+      flexShrink: 1,
+      fontWeight: '500',
+    },
     lockGateText: { color: colors.text, fontSize: font.heading, fontWeight: '600', marginTop: 14 },
     lockGateBtn: {
-      flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 18,
-      backgroundColor: colors.primary, paddingHorizontal: 22, paddingVertical: 11, borderRadius: radius.pill,
+      flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 16,
+      backgroundColor: colors.primary, paddingHorizontal: 20, paddingVertical: 11, borderRadius: radius.pill,
     },
     lockGateBtnText: { color: '#fff', fontSize: font.body, fontWeight: '700' },
-    headerActions: { flexDirection: 'row', alignItems: 'center' },
+    headerActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      flexShrink: 0,
+      gap: 2,
+      paddingRight: 2,
+    },
+    /** Selection mode: left cluster (back + count) — never under right icons. */
+    selLeft: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      flexShrink: 1,
+      minWidth: 0,
+      paddingRight: 4,
+    },
+    selCount: {
+      color: '#FFFFFF',
+      fontSize: 17,
+      fontWeight: '600',
+      letterSpacing: -0.2,
+      marginLeft: 4,
+      flexShrink: 1,
+      minWidth: 0,
+    },
+    /** Selection mode: right actions — fixed, no flex grow into title. */
+    selRight: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      flexShrink: 0,
+      flexGrow: 0,
+      gap: 0,
+      paddingRight: 2,
+    },
     searchBar: {
-      backgroundColor: colors.surface, paddingHorizontal: 12, paddingTop: 8, paddingBottom: 8,
-      borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, gap: 8,
+      backgroundColor: colors.surface, paddingHorizontal: 12, paddingTop: 7, paddingBottom: 7,
+      borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, gap: 6,
     },
     searchRow: {
       flexDirection: 'row', alignItems: 'center', gap: 8,
-      backgroundColor: colors.surfaceAlt, borderRadius: radius.md, paddingHorizontal: 12, paddingVertical: 6,
+      backgroundColor: colors.surfaceAlt, borderRadius: radius.md, paddingHorizontal: 11, paddingVertical: 5,
+      minHeight: 36,
     },
     searchInput: { flex: 1, color: colors.text, fontSize: font.body, paddingVertical: 2 },
     searchCount: { color: colors.textMuted, fontSize: font.small, minWidth: 36, textAlign: 'right' },
     searchChips: { flexDirection: 'row', gap: 6 },
-    searchChip: { paddingHorizontal: 12, paddingVertical: 4, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.border },
+    searchChip: { paddingHorizontal: 11, paddingVertical: 3, borderRadius: radius.pill, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border },
     searchChipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
-    searchChipText: { color: colors.textMuted, fontSize: font.small, fontWeight: '600' },
+    searchChipText: { color: colors.textMuted, fontSize: 12.5, fontWeight: '600' },
     searchChipTextActive: { color: '#fff' },
     previewBar: {
       flexDirection: 'row',
       alignItems: 'center',
       backgroundColor: colors.surface,
       paddingHorizontal: 12,
-      paddingVertical: 8,
+      paddingVertical: 7,
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: colors.border,
     },
-    previewLine: { width: 3, height: 32, borderRadius: 2, backgroundColor: colors.primary, marginRight: 8 },
+    previewLine: { width: 3, height: 36, borderRadius: 2, backgroundColor: colors.primary, marginRight: 8 },
+    previewThumb: {
+      width: 40,
+      height: 40,
+      borderRadius: 6,
+      marginRight: 8,
+      backgroundColor: colors.surfaceAlt,
+    },
     previewTitle: { color: colors.primary, fontSize: font.small, fontWeight: '700' },
     previewText: { color: colors.textMuted, fontSize: font.small },
     composer: {
       flexDirection: 'row',
       alignItems: 'flex-end',
-      paddingHorizontal: 10,
+      paddingHorizontal: 6,
       paddingTop: 6,
-      backgroundColor: colors.surface,
+      gap: 4,
+      // Fully opaque bar — never let chat paper show through icons/input.
+      backgroundColor: colors.isLight ? '#F0F2F5' : colors.surface,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: colors.isLight ? 'rgba(0,0,0,0.08)' : colors.border,
     },
-    searchNoResults: { color: colors.textMuted, fontSize: font.small, paddingTop: 8, paddingBottom: 2 },
+    composerSideBtn: {
+      width: 40,
+      height: 44,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    composerEmojiBtn: {
+      width: 36,
+      height: 40,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    inputPill: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'flex-end',
+      minHeight: 44,
+      maxHeight: 120,
+      borderRadius: 24,
+      backgroundColor: colors.isLight ? '#FFFFFF' : colors.surfaceAlt,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.isLight ? 'rgba(0,0,0,0.08)' : colors.border,
+      paddingLeft: 2,
+      paddingRight: 4,
+      paddingVertical: 2,
+      minWidth: 0,
+    },
+    searchNoResults: { color: colors.textMuted, fontSize: font.small, paddingTop: 6, paddingBottom: 2 },
     jumpLatest: {
       position: 'absolute',
-      right: 14,
-      bottom: 78,
-      width: 42,
-      height: 42,
-      borderRadius: 21,
+      right: 12,
+      bottom: 74,
+      width: 38,
+      height: 38,
+      borderRadius: 19,
       backgroundColor: colors.surface,
       alignItems: 'center',
       justifyContent: 'center',
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: colors.border,
       shadowColor: '#000',
-      shadowOpacity: 0.2,
+      shadowOpacity: 0.16,
       shadowRadius: 4,
       shadowOffset: { width: 0, height: 2 },
-      elevation: 4,
+      elevation: 3,
     },
     input: {
       flex: 1,
       color: colors.text,
-      backgroundColor: colors.surfaceAlt,
-      borderRadius: radius.lg,
-      paddingHorizontal: 14,
-      paddingTop: Platform.OS === 'ios' ? 10 : 6,
-      paddingBottom: Platform.OS === 'ios' ? 10 : 6,
-      marginHorizontal: 8,
-      maxHeight: 120,
+      backgroundColor: 'transparent',
+      paddingHorizontal: 4,
+      paddingTop: Platform.OS === 'ios' ? 10 : 8,
+      paddingBottom: Platform.OS === 'ios' ? 10 : 8,
+      maxHeight: 110,
+      minHeight: 40,
       fontSize: font.body,
+      lineHeight: 20,
+      minWidth: 0,
     },
     sendBtn: {
       width: 44,
@@ -1883,98 +4513,221 @@ const makeStyles = (colors: Palette) =>
       backgroundColor: colors.primary,
       alignItems: 'center',
       justifyContent: 'center',
+      marginLeft: 2,
     },
-    sendBtnPressed: { transform: [{ scale: 0.9 }], opacity: 0.9 },
-    recordingPill: { flex: 1, flexDirection: 'row', alignItems: 'center', marginHorizontal: 12 },
-    recDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.danger, marginRight: 8 },
-    recText: { color: colors.textMuted, fontSize: font.small },
-    backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-    // ── WhatsApp-style message context menu (premium bottom sheet) ──────────────
-    msgBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
+    sendBtnPressed: { transform: [{ scale: 0.94 }], opacity: 0.9 },
+    recordingComposer: { alignItems: 'center', paddingHorizontal: 14, minHeight: 48 },
+    deleteBackdrop: {
+      flex: 1,
+      backgroundColor: 'rgba(0,0,0,0.5)',
+      justifyContent: 'center',
+      paddingHorizontal: 28,
+    },
+    deleteCard: {
+      backgroundColor: colors.surface,
+      borderRadius: 16,
+      paddingTop: 20,
+      paddingBottom: 8,
+      paddingHorizontal: 8,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+    },
+    deleteTitle: {
+      color: colors.text,
+      fontSize: 18,
+      fontWeight: '700',
+      paddingHorizontal: 16,
+      marginBottom: 8,
+      letterSpacing: -0.2,
+    },
+    deleteBody: {
+      color: colors.textMuted,
+      fontSize: font.body,
+      paddingHorizontal: 16,
+      marginBottom: 12,
+      lineHeight: 21,
+    },
+    deleteCheckRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      gap: 12,
+      minHeight: 48,
+    },
+    deleteCheckLabel: {
+      flex: 1,
+      color: colors.text,
+      fontSize: font.body,
+      fontWeight: '500',
+      minWidth: 0,
+    },
+    deleteRadioRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      gap: 12,
+      minHeight: 52,
+    },
+    deleteRadioText: { flex: 1, minWidth: 0 },
+    deleteRadioLabel: { color: colors.text, fontSize: font.body, fontWeight: '600' },
+    deleteRadioHint: { color: colors.textMuted, fontSize: font.small, marginTop: 2, lineHeight: 17 },
+    deleteActions: {
+      flexDirection: 'row',
+      justifyContent: 'flex-end',
+      paddingTop: 8,
+      paddingBottom: 4,
+      paddingHorizontal: 8,
+      gap: 4,
+    },
+    deleteBtn: { paddingHorizontal: 16, paddingVertical: 12, minHeight: 44, justifyContent: 'center' },
+    deleteBtnCancel: { color: colors.textMuted, fontSize: 15, fontWeight: '600' },
+    deleteBtnGo: { color: colors.danger, fontSize: 15, fontWeight: '700' },
+    recordingPill: { flex: 1, flexDirection: 'row', alignItems: 'center', marginHorizontal: 10 },
+    recDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: colors.danger, marginRight: 8 },
+    recText: { color: colors.textMuted, fontSize: font.small, fontWeight: '600' },
+    attachGrid: { flexDirection: 'row', flexWrap: 'wrap', paddingVertical: 2, marginBottom: 2 },
+    attachMore: {
+      borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border,
+      paddingTop: 4, marginTop: 2,
+    },
+    backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
+    // ── Message context menu (compact WhatsApp-class sheet) ─────────────────
+    msgBackdrop: { flex: 1, backgroundColor: colors.isLight ? 'rgba(12,18,22,0.4)' : 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
     msgSheet: {
       backgroundColor: colors.surface,
-      borderTopLeftRadius: 26,
-      borderTopRightRadius: 26,
-      paddingHorizontal: 12,
-      paddingTop: 8,
-      // Premium elevation.
-      shadowColor: '#000', shadowOffset: { width: 0, height: -3 }, shadowOpacity: 0.18, shadowRadius: 14, elevation: 16,
+      borderTopLeftRadius: 20,
+      borderTopRightRadius: 20,
+      paddingHorizontal: 10,
+      paddingTop: 6,
+      shadowColor: '#000', shadowOffset: { width: 0, height: -3 }, shadowOpacity: 0.14, shadowRadius: 12, elevation: 14,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.isLight ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.08)',
     },
-    grabber: { alignSelf: 'center', width: 38, height: 4, borderRadius: 2, backgroundColor: colors.border, marginBottom: 10 },
+    grabber: { alignSelf: 'center', width: 36, height: 4, borderRadius: 2, backgroundColor: colors.textFaint, opacity: 0.4, marginBottom: 10 },
     reactionBar: {
-      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+      flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
       alignSelf: 'center',
       backgroundColor: colors.surfaceAlt,
       borderRadius: radius.pill,
-      paddingHorizontal: 8, paddingVertical: 6,
-      marginBottom: 10,
+      paddingHorizontal: 8, paddingVertical: 5,
+      marginBottom: 8,
       gap: 2,
     },
-    reactionBtn: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: radius.pill },
-    reactionBtnPressed: { transform: [{ scale: 1.25 }], backgroundColor: colors.surface },
-    reactionEmoji: { fontSize: 27 },
+    reactionBtn: { paddingHorizontal: 6, paddingVertical: 4, borderRadius: radius.pill, minWidth: 40, minHeight: 40, alignItems: 'center', justifyContent: 'center' },
+    reactionBtnPressed: { transform: [{ scale: 1.15 }], backgroundColor: colors.surface },
+    reactionEmoji: { fontSize: 24 },
     reactionAdd: {
       width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center',
       backgroundColor: colors.surface, marginLeft: 2,
     },
-    // Cap the menu so the sheet never dominates the screen (≤45% target).
     menuScroll: { maxHeight: Math.round(Dimensions.get('window').height * 0.42) },
-    menuCard: { paddingBottom: 2 },
+    menuCard: { paddingBottom: 4, gap: 1 },
     sheet: {
       backgroundColor: colors.surface,
-      borderTopLeftRadius: radius.lg,
-      borderTopRightRadius: radius.lg,
-      paddingHorizontal: 20,
-      paddingTop: 16,
+      borderTopLeftRadius: 20,
+      borderTopRightRadius: 20,
+      paddingHorizontal: 16,
+      paddingTop: 12,
     },
-    sheetTitle: { color: colors.text, fontSize: font.heading, fontWeight: '700', marginBottom: 8 },
+    sheetTitle: { color: colors.text, fontSize: font.heading, fontWeight: '700', marginBottom: 6, letterSpacing: -0.15 },
     reportTitle: { color: colors.text, fontSize: font.heading, fontWeight: '700', marginTop: 2 },
     reportSubtitle: { color: colors.textMuted, fontSize: font.small, marginTop: 2, marginBottom: 6 },
     reportNote: {
       color: colors.text, fontSize: font.body, backgroundColor: colors.surfaceAlt,
-      borderRadius: radius.md, paddingHorizontal: 12, paddingVertical: 10, marginTop: 10,
+      borderRadius: radius.md, paddingHorizontal: 12, paddingVertical: 10, marginTop: 8,
       minHeight: 44, maxHeight: 100,
     },
-    stickerGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', paddingTop: 4 },
-    stickerCell: { width: '23%', aspectRatio: 1, marginBottom: 10, alignItems: 'center', justifyContent: 'center' },
-    stickerImg: { width: '100%', height: '100%', borderRadius: 12 },
+    composerTray: {
+      width: '100%',
+      backgroundColor: colors.isLight ? '#F0F2F5' : colors.surface,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: colors.isLight ? 'rgba(0,0,0,0.08)' : colors.border,
+      overflow: 'hidden',
+    },
+    traySwitch: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: colors.surface,
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      gap: 4,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.isLight ? 'rgba(0,0,0,0.06)' : colors.border,
+    },
+    traySwitchBtn: {
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: radius.pill,
+    },
+    traySwitchOn: {
+      backgroundColor: colors.surfaceAlt,
+    },
+    traySwitchText: {
+      color: colors.text,
+      fontSize: 13,
+      fontWeight: '700',
+    },
+    traySwitchTextMuted: {
+      color: colors.textMuted,
+      fontSize: 13,
+      fontWeight: '600',
+    },
+    trayKeypadBtn: {
+      width: 40,
+      height: 36,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    trayBody: {
+      flex: 1,
+      position: 'relative',
+    },
+    trayPane: {
+      ...StyleSheet.absoluteFillObject,
+    },
+    trayPaneHidden: {
+      opacity: 0,
+    },
     forwardSheet: { maxHeight: '60%' },
     pollSheet: { maxHeight: '80%' },
     pollInput: {
       backgroundColor: colors.surfaceAlt,
       color: colors.text,
       borderRadius: radius.md,
-      paddingHorizontal: 14,
-      paddingVertical: 12,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
       fontSize: font.body,
       marginBottom: 8,
+      minHeight: 42,
     },
     pollAddOpt: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8 },
     pollAddOptText: { color: colors.primary, fontSize: font.body, fontWeight: '600', marginLeft: 6 },
-    pollToggle: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12 },
+    pollToggle: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10 },
     pollToggleText: { color: colors.text, fontSize: font.body, marginLeft: 10 },
-    pollCreate: { backgroundColor: colors.primary, borderRadius: radius.md, paddingVertical: 14, alignItems: 'center', marginTop: 8 },
-    pollCreateText: { color: '#fff', fontSize: font.heading, fontWeight: '700' },
-    forwardRow: { paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
+    pollCreate: { backgroundColor: colors.primary, borderRadius: 12, paddingVertical: 12, alignItems: 'center', marginTop: 8 },
+    pollCreateText: { color: '#fff', fontSize: 15.5, fontWeight: '700' },
+    forwardRow: { paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
     forwardName: { color: colors.text, fontSize: font.body },
     emojiRow: {
       flexDirection: 'row',
       justifyContent: 'space-around',
-      paddingVertical: 10,
-      marginBottom: 6,
+      paddingVertical: 8,
+      marginBottom: 4,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: colors.border,
     },
-    emoji: { fontSize: 30 },
+    emoji: { fontSize: 26 },
     emojiMore: {
-      width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center',
+      width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center',
       backgroundColor: colors.surfaceAlt,
     },
-    emojiPickerSheet: { maxHeight: '55%' },
+    emojiPickerSheet: { maxHeight: '52%' },
     emojiGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
-    emojiGridCell: { width: '16.66%', alignItems: 'center', paddingVertical: 10 },
-    emojiGridText: { fontSize: 30 },
-    emojiLock: { position: 'absolute', bottom: 6, right: '28%', fontSize: 11 },
+    emojiGridCell: { width: '16.66%', alignItems: 'center', paddingVertical: 8 },
+    emojiGridText: { fontSize: 26 },
+    emojiLock: { position: 'absolute', bottom: 4, right: '28%', fontSize: 10 },
   });
 
 // Public screen: the chat UI guarded by an ErrorBoundary. Any exception thrown

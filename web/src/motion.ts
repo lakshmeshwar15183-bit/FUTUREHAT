@@ -1,4 +1,4 @@
-// FUTUREHAT — consistent motion design tokens.
+// Lumixo — consistent motion design tokens.
 // One place for easing + spring + variants so every screen moves the same way.
 // Tuned for usability: short, interruptible, GPU-friendly (transform/opacity only).
 

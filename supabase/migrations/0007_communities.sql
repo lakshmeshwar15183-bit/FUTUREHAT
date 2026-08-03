@@ -1,4 +1,4 @@
--- FUTUREHAT — Communities, channels, broadcasts, polls and events.
+-- Lumixo — Communities, channels, broadcasts, polls and events.
 -- Channels REUSE the existing conversations/messages/realtime stack: each channel
 -- is backed by a conversation row, so all chat features work inside a channel for
 -- free. Idempotent. Builds on public.is_member() from 0001_init.

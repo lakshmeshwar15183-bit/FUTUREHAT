@@ -1,4 +1,4 @@
-// FUTUREHAT — generic React error boundary. Without one, ANY exception thrown
+// Lumixo — generic React error boundary. Without one, ANY exception thrown
 // while rendering a screen unmounts the whole React tree and leaves a BLANK
 // screen (the reported "chat randomly goes blank" bug: an intermittent render
 // throw in the message list / a modal / a bubble had nothing to catch it). This
@@ -7,8 +7,9 @@
 
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
+import { recordCrash, logError } from '../lib/prodLog';
+import { LumixoCat } from './LumixoCat';
 
 interface Props {
   children: React.ReactNode;
@@ -27,9 +28,10 @@ export default class ErrorBoundary extends React.Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
-    // Surfaced in Metro / device logs and any crash reporter — this is where the
-    // ACTUAL cause of a blank screen becomes visible for follow-up fixes.
-    console.error(`[ErrorBoundary${this.props.label ? `:${this.props.label}` : ''}]`, error, info.componentStack);
+    // Persist for Diagnostics; release builds never dump full stacks to logcat.
+    const label = this.props.label ?? 'root';
+    logError(`[ErrorBoundary:${label}]`, error.message);
+    void recordCrash(label, error, info.componentStack);
   }
 
   reset = () => this.setState({ error: null });
@@ -48,7 +50,7 @@ function DefaultFallback({ onRetry }: { onRetry: () => void }) {
   const styles = makeStyles(colors);
   return (
     <View style={styles.wrap}>
-      <Ionicons name="alert-circle-outline" size={48} color={colors.textMuted} />
+      <LumixoCat mood="sad" size="md" decorative />
       <Text style={styles.title}>Something went wrong</Text>
       <Text style={styles.body}>This screen hit an unexpected error. Your messages are safe.</Text>
       <Pressable style={styles.btn} onPress={onRetry}>

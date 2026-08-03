@@ -1,5 +1,5 @@
-// FUTUREHAT web — horizontal Status strip (WhatsApp home-screen parity).
-// Mounted under the FUTUREHAT sidebar header: "My status" tile + a horizontal row
+// Lumixo web — horizontal Status strip (WhatsApp home-screen parity).
+// Mounted under the Lumixo sidebar header: "My status" tile + a horizontal row
 // of recent updates with seen/unseen rings. Opens the full-screen viewer or the
 // composer. Refreshes on mount and stays live via realtime status changes.
 import { useState, useEffect, useCallback, useRef } from 'react';
@@ -15,6 +15,8 @@ import type { StatusAudience } from '@shared/types';
 import { buildStatusGroups, pruneExpiredGroups, type StatusGroup } from './statusData';
 import { StatusViewer } from './StatusViewer';
 import { StatusComposer, type ComposerMode } from './StatusComposer';
+import { afterFirstPaint } from '../lib/startupCache';
+import { safeMediaSrc } from '../util/safeUrl';
 import './status.css';
 
 export function StatusStrip() {
@@ -40,18 +42,27 @@ export function StatusStrip() {
     setGroups(g);
   }, [myId]);
 
-  useEffect(() => { load(); }, [load]);
-
+  // Status is non-critical for first paint — defer network + realtime.
   useEffect(() => {
-    getStatusAudiencePref(supabase)
-      .then((pref) => { setAudience(pref.audience); setMembers(pref.memberIds); })
-      .catch(() => {});
-  }, []);
-
-  // Realtime: a new/removed status anywhere refreshes the strip.
-  useEffect(() => {
-    const ch = subscribeStatusChanges(supabase, () => { load(); });
-    return () => { ch.unsubscribe(); };
+    let cancelled = false;
+    let ch: { unsubscribe: () => void } | null = null;
+    afterFirstPaint(() => {
+      if (cancelled) return;
+      void load();
+      getStatusAudiencePref(supabase)
+        .then((pref) => {
+          if (!cancelled) {
+            setAudience(pref.audience);
+            setMembers(pref.memberIds);
+          }
+        })
+        .catch(() => {});
+      ch = subscribeStatusChanges(supabase, () => { void load(); });
+    });
+    return () => {
+      cancelled = true;
+      ch?.unsubscribe();
+    };
   }, [load]);
 
   // Client-side 36h expiry (CP5): prune expired statuses at `expires_at` and
@@ -107,19 +118,27 @@ export function StatusStrip() {
   return (
     <div className="status-strip">
       <div className="status-strip-row">
-        {/* My status tile */}
+        {/* My status tile — WhatsApp behavior: avatar opens viewer (or picker
+            if no status yet), the "+" badge is its own button that ALWAYS opens
+            the picker so users can add a second/third status without long-press. */}
         <div className="status-tile-wrap">
           <button className="status-tile" onClick={openMine}>
             <div className={`strip-ring ${mine ? 'ring-mine' : 'ring-empty'}`}>
-              {mine?.avatar || profile?.avatar_url ? (
-                <img src={mine?.avatar || profile?.avatar_url || ''} alt="" className="strip-avatar" />
+              {safeMediaSrc(mine?.avatar || profile?.avatar_url) ? (
+                <img src={safeMediaSrc(mine?.avatar || profile?.avatar_url)!} alt="" className="strip-avatar" />
               ) : (
                 <div className="strip-avatar fallback">{(profile?.display_name || 'M')[0]}</div>
               )}
             </div>
-            <span className="strip-add-badge">＋</span>
             <span className="strip-label">My status</span>
           </button>
+          <button
+            type="button"
+            className="strip-add-badge"
+            onClick={() => setMenuOpen(true)}
+            aria-label="Add status"
+            title="Add status"
+          >＋</button>
 
           {menuOpen && (
             <div className="strip-menu" ref={menuRef}>
@@ -134,8 +153,8 @@ export function StatusStrip() {
         {groups.map((g) => (
           <button key={g.userId} className="status-tile" onClick={() => setPlayer(g)}>
             <div className={`strip-ring ${g.allSeen ? 'ring-seen' : 'ring-unseen'}`}>
-              {g.avatar ? (
-                <img src={g.avatar} alt="" className="strip-avatar" />
+              {safeMediaSrc(g.avatar) ? (
+                <img src={safeMediaSrc(g.avatar)!} alt="" className="strip-avatar" />
               ) : (
                 <div className="strip-avatar fallback">{g.name[0]}</div>
               )}

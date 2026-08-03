@@ -1,4 +1,4 @@
-# Netlify deployment configuration for FUTUREHAT web app
+# Netlify deployment configuration for Lumixo web app
 
 [build]
   base = "web"
@@ -7,6 +7,20 @@
 
 [build.environment]
   NODE_VERSION = "20"
+
+# Serve the App Link / Universal Link association files as JSON. These are real
+# files in the publish dir so Netlify returns them directly (static files are
+# matched before the SPA catch-all below), but we force the content-type so
+# Android/iOS verification accepts them.
+[[headers]]
+  for = "/.well-known/assetlinks.json"
+  [headers.values]
+    Content-Type = "application/json"
+
+[[headers]]
+  for = "/.well-known/apple-app-site-association"
+  [headers.values]
+    Content-Type = "application/json"
 
 [[redirects]]
   from = "/*"

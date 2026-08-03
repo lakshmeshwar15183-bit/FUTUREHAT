@@ -1,8 +1,10 @@
-// FUTUREHAT — voice message playback bubble: play/pause, a lightweight progress
+// Lumixo — voice message playback bubble: play/pause, a lightweight progress
 // waveform, and elapsed/total time. Pure <audio>; no external deps. Used for
 // messages of type 'audio'.
 
 import { useEffect, useRef, useState } from 'react';
+import { useSignedUrl } from '../lib/useSignedUrl';
+import { safeMediaSrc } from '../util/safeUrl';
 import './VoiceMessage.css';
 
 // Deterministic pseudo-waveform bars from the URL so each clip looks distinct
@@ -16,6 +18,10 @@ function bars(seed: string, n = 32): number[] {
 }
 
 export function VoiceMessage({ url, mine }: { url: string; mine?: boolean }) {
+  // The `media` bucket is private, so `url` here is a stored public link that
+  // would 403. Resolve to a signed url before feeding it to <audio>; the raw
+  // url is still fine for the waveform seed since it's just used for hashing.
+  const { url: playableUrl } = useSignedUrl(url);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0); // 0..1
@@ -52,7 +58,7 @@ export function VoiceMessage({ url, mine }: { url: string; mine?: boolean }) {
 
   return (
     <div className={`voice-msg ${mine ? 'mine' : ''}`}>
-      <audio ref={audioRef} src={url} preload="metadata" />
+      <audio ref={audioRef} src={safeMediaSrc(playableUrl) ?? undefined} preload="metadata" />
       <button className="voice-play" onClick={toggle} aria-label={playing ? 'Pause voice message' : 'Play voice message'}>
         {playing ? '❚❚' : '▶'}
       </button>

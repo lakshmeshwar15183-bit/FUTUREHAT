@@ -1,0 +1,3 @@
+# Razorpay webhooks cannot send a user JWT. JWT is validated inside the function
+# for create_order / verify / status / config. Webhooks use x-razorpay-signature.
+verify_jwt = false

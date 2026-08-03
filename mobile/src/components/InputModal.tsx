@@ -1,7 +1,18 @@
-// FUTUREHAT mobile — cross-platform prompt modal (Android has no Alert.prompt).
+// Lumixo — multi-field prompt modal (matches DialogHost design tokens).
 import React, { useMemo, useState } from 'react';
-import { Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
-import { useColors, spacing, radius, font, type Palette } from '../theme';
+import {
+  Modal,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+  KeyboardAvoidingView,
+  Platform,
+  useWindowDimensions,
+} from 'react-native';
+import Animated, { Easing, FadeIn, ZoomIn } from 'react-native-reanimated';
+import { useColors, type Palette } from '../theme';
 
 export interface Field {
   key: string;
@@ -19,24 +30,47 @@ interface Props {
   onSubmit: (values: Record<string, string>) => void;
 }
 
-export default function InputModal({ visible, title, fields, submitLabel = 'Done', onCancel, onSubmit }: Props) {
+const RADIUS = 22;
+const CARD_MAX_W = 300;
+
+export default function InputModal({
+  visible,
+  title,
+  fields,
+  submitLabel = 'Done',
+  onCancel,
+  onSubmit,
+}: Props) {
   const colors = useColors();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const { width } = useWindowDimensions();
+  const styles = useMemo(() => makeStyles(colors, width), [colors, width]);
   const [values, setValues] = useState<Record<string, string>>({});
 
-  // Reset when opening.
   React.useEffect(() => {
     if (visible) {
       const init: Record<string, string> = {};
       fields.forEach((f) => (init[f.key] = f.initial ?? ''));
       setValues(init);
     }
-  }, [visible]);
+  }, [visible, fields]);
+
+  if (!visible) return null;
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
-      <Pressable style={styles.backdrop} onPress={onCancel}>
-        <Pressable style={styles.card} onPress={(e) => e.stopPropagation()}>
+    <Modal visible transparent animationType="none" onRequestClose={onCancel} statusBarTranslucent>
+      <KeyboardAvoidingView
+        style={styles.root}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <Animated.View entering={FadeIn.duration(160)} style={StyleSheet.absoluteFill}>
+          <Pressable style={styles.backdrop} onPress={onCancel} />
+        </Animated.View>
+        <Animated.View
+          entering={ZoomIn.duration(170)
+            .easing(Easing.out(Easing.cubic))
+            .withInitialValues({ transform: [{ scale: 0.96 }], opacity: 0 })}
+          style={styles.card}
+        >
           <Text style={styles.title}>{title}</Text>
           {fields.map((f) => (
             <TextInput
@@ -49,36 +83,112 @@ export default function InputModal({ visible, title, fields, submitLabel = 'Done
               multiline={f.multiline}
             />
           ))}
-          <View style={styles.actions}>
-            <Pressable onPress={onCancel} hitSlop={8}>
-              <Text style={styles.cancel}>Cancel</Text>
+          <View style={styles.btnRow}>
+            <Pressable
+              style={({ pressed }) => [styles.btn, styles.btnCancel, pressed && styles.pressed]}
+              onPress={onCancel}
+            >
+              <Text style={[styles.btnText, { color: colors.textMuted }]}>Cancel</Text>
             </Pressable>
-            <Pressable onPress={() => onSubmit(values)} hitSlop={8}>
-              <Text style={styles.submit}>{submitLabel}</Text>
+            <Pressable
+              style={({ pressed }) => [
+                styles.btn,
+                styles.btnPrimary,
+                { backgroundColor: colors.primary },
+                pressed && styles.pressed,
+              ]}
+              onPress={() => onSubmit(values)}
+            >
+              <Text style={[styles.btnText, styles.btnTextOnFill]}>{submitLabel}</Text>
             </Pressable>
           </View>
-        </Pressable>
-      </Pressable>
+        </Animated.View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
 
-const makeStyles = (colors: Palette) =>
+const makeStyles = (colors: Palette, width: number) =>
   StyleSheet.create({
-    backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center', padding: spacing(6) },
-    card: { width: '100%', backgroundColor: colors.surface, borderRadius: radius.lg, padding: spacing(5) },
-    title: { color: colors.text, fontSize: font.heading, fontWeight: '700', marginBottom: spacing(3) },
+    root: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      paddingHorizontal: 28,
+    },
+    backdrop: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: colors.isLight ? 'rgba(12,18,22,0.4)' : 'rgba(0,0,0,0.55)',
+    },
+    card: {
+      width: Math.min(width - 56, CARD_MAX_W),
+      backgroundColor: colors.surface,
+      borderRadius: RADIUS,
+      paddingTop: 18,
+      paddingBottom: 14,
+      paddingHorizontal: 16,
+      shadowColor: '#000',
+      shadowOpacity: colors.isLight ? 0.12 : 0.4,
+      shadowRadius: 16,
+      shadowOffset: { width: 0, height: 8 },
+      elevation: 12,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.isLight ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.08)',
+    },
+    title: {
+      color: colors.text,
+      fontSize: 16.5,
+      fontWeight: '700',
+      textAlign: 'center',
+      letterSpacing: -0.25,
+      lineHeight: 21,
+      marginBottom: 12,
+    },
     input: {
       backgroundColor: colors.surfaceAlt,
       color: colors.text,
-      borderRadius: radius.md,
-      paddingHorizontal: spacing(3),
-      paddingVertical: spacing(3),
-      fontSize: font.body,
-      marginBottom: spacing(2),
+      borderRadius: 12,
+      paddingHorizontal: 12,
+      paddingVertical: Platform.OS === 'ios' ? 11 : 9,
+      fontSize: 15,
+      marginBottom: 10,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      minHeight: 44,
     },
-    multiline: { minHeight: 70, textAlignVertical: 'top' },
-    actions: { flexDirection: 'row', justifyContent: 'flex-end', gap: spacing(6), marginTop: spacing(3) },
-    cancel: { color: colors.textMuted, fontSize: font.body },
-    submit: { color: colors.primary, fontSize: font.body, fontWeight: '700' },
+    multiline: {
+      minHeight: 76,
+      textAlignVertical: 'top',
+      paddingTop: 10,
+    },
+    btnRow: {
+      flexDirection: 'row',
+      gap: 8,
+      marginTop: 2,
+    },
+    btn: {
+      flex: 1,
+      height: 44,
+      minHeight: 44,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 12,
+    },
+    btnCancel: {
+      backgroundColor: colors.surfaceAlt,
+    },
+    btnPrimary: {},
+    btnText: {
+      fontSize: 15,
+      fontWeight: '600',
+      letterSpacing: -0.1,
+    },
+    btnTextOnFill: {
+      color: '#fff',
+    },
+    pressed: {
+      opacity: 0.88,
+      transform: [{ scale: 0.985 }],
+    },
   });

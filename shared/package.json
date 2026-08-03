@@ -9,7 +9,9 @@
     "./types": "./types.ts"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.45.0"
+    "@supabase/supabase-js": "^2.45.0",
+    "@types/qrcode": "^1.5.6",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "typescript": "^5.6.0"

@@ -1,4 +1,4 @@
--- FUTUREHAT — Status/Stories: video type + per-viewer seen tracking
+-- Lumixo — Status/Stories: video type + per-viewer seen tracking
 -- Idempotent (safe to re-run).
 
 -- ---------------------------------------------------------------------------

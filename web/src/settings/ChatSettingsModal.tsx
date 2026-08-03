@@ -1,4 +1,4 @@
-// FUTUREHAT — Chat settings: Enter-to-send, font size, media visibility, upload
+// Lumixo — Chat settings: Enter-to-send, font size, media visibility, upload
 // quality, auto-download, voice-message transcripts. Self-contained; persists
 // via privacyApi chat-settings (user_preferences.extra). Font size also applies
 // live to the document root so the change is visible immediately.

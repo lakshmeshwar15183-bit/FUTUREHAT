@@ -1,4 +1,4 @@
-// FUTUREHAT+ — premium data-access layer (subscriptions, preferences, pins,
+// Lumixo+ — premium data-access layer (subscriptions, preferences, pins,
 // scheduled messages). Framework-agnostic; web and mobile share it.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -10,8 +10,6 @@ import type {
   UUID,
   MessageType,
 } from './types.js';
-import { PLANS } from './premium/plans.js';
-import { computePeriodEnd } from './payments/provider.js';
 import type { PaymentResult } from './payments/provider.js';
 
 // ── Subscription ───────────────────────────────────────────────────────────────
@@ -50,52 +48,44 @@ export async function getServerAdmin(client: SupabaseClient): Promise<boolean> {
   return !error && data === true;
 }
 
-// Activate (or renew) a subscription after a successful payment. Idempotent upsert.
+/**
+ * @deprecated Client-side activation is permanently disabled.
+ *
+ * PRODUCTION (0042 + payments-razorpay): subscriptions are activated only by
+ * the verified payment Edge Function using service-role
+ * `admin_activate_subscription`. This helper always fails closed so no code
+ * path can self-grant Lumixo+.
+ */
 export async function activateSubscription(
-  client: SupabaseClient,
-  plan: PlanId,
-  result: PaymentResult,
+  _client: SupabaseClient,
+  _plan: PlanId,
+  _result: PaymentResult,
 ): Promise<{ subscription: Subscription | null; error: Error | null }> {
-  const { data: auth } = await client.auth.getUser();
-  if (!auth.user) return { subscription: null, error: new Error('not authenticated') };
-
-  const nowIso = new Date().toISOString();
-  const row = {
-    user_id: auth.user.id,
-    plan,
-    status: 'active' as const,
-    provider: result.provider,
-    provider_subscription_id: result.providerSubscriptionId ?? null,
-    provider_customer_id: result.providerCustomerId ?? null,
-    amount_inr: PLANS[plan].priceInr,
-    current_period_start: nowIso,
-    current_period_end: computePeriodEnd(plan, nowIso),
-    cancel_at_period_end: false,
-    updated_at: nowIso,
+  return {
+    subscription: null,
+    error: new Error(
+      'Client activation is disabled. Subscriptions are activated only after verified server-side payment.',
+    ),
   };
-
-  const { data, error } = await client
-    .from('subscriptions')
-    .upsert(row, { onConflict: 'user_id' })
-    .select()
-    .single();
-  return { subscription: data, error };
 }
 
-// Cancel = "don't renew." We flag cancel_at_period_end but KEEP status='active'
-// so the user retains FUTUREHAT+ until current_period_end (matching the UI promise
-// "Cancels at period end"). is_premium()/isSubscriptionActive() both expire on the
-// date, so access drops automatically when the period ends — no status flip needed.
+// Cancel = "don't renew." SECURITY DEFINER RPC only flips cancel_at_period_end
+// (migration 0042) — users cannot change plan/status/period from the client.
 export async function cancelSubscription(
   client: SupabaseClient,
 ): Promise<{ error: Error | null }> {
   const { data: auth } = await client.auth.getUser();
   if (!auth.user) return { error: new Error('not authenticated') };
-  const { error } = await client
-    .from('subscriptions')
-    .update({ cancel_at_period_end: true, updated_at: new Date().toISOString() })
-    .eq('user_id', auth.user.id);
-  return { error };
+  const { error } = await client.rpc('cancel_my_subscription');
+  if (error) {
+    // Fallback for environments that have not applied 0042 yet.
+    const { error: e2 } = await client
+      .from('subscriptions')
+      .update({ cancel_at_period_end: true, updated_at: new Date().toISOString() })
+      .eq('user_id', auth.user.id);
+    return { error: e2 ?? error };
+  }
+  return { error: null };
 }
 
 // user_ids of all currently-premium users (for badges).
@@ -111,7 +101,7 @@ export const DEFAULT_PREFERENCES: Omit<UserPreferences, 'user_id' | 'updated_at'
   font: 'system',
   bubble_style: 'rounded',
   wallpaper: 'default',
-  app_icon: 'classic',
+  app_icon: 'icon1',
   ghost_mode: false,
   app_lock: false,
   extra: {},
@@ -147,23 +137,31 @@ export async function updatePreferences(
 }
 
 // ── Pinned conversations ───────────────────────────────────────────────────────
+// Ordered by pinned_at ASC so the first pin stays on top (WhatsApp-style).
 
 export async function getPinnedIds(client: SupabaseClient): Promise<UUID[]> {
   const { data: auth } = await client.auth.getUser();
   if (!auth.user) return [];
   const { data } = await client
     .from('pinned_conversations')
-    .select('conversation_id')
-    .eq('user_id', auth.user.id);
-  return (data || []).map((r: any) => r.conversation_id);
+    .select('conversation_id, pinned_at')
+    .eq('user_id', auth.user.id)
+    .order('pinned_at', { ascending: true });
+  return (data || []).map((r: any) => r.conversation_id as UUID);
 }
 
 export async function pinConversation(client: SupabaseClient, conversationId: UUID) {
   const { data: auth } = await client.auth.getUser();
   if (!auth.user) return { error: new Error('not authenticated') };
+  // Re-pinning updates pinned_at so the chat moves to the end of the pin list
+  // only when newly inserted; upsert with ignoreDuplicates would skip that.
+  // We upsert with a fresh pinned_at so re-pin after unpin gets a new timestamp.
   const { error } = await client
     .from('pinned_conversations')
-    .upsert({ user_id: auth.user.id, conversation_id: conversationId });
+    .upsert(
+      { user_id: auth.user.id, conversation_id: conversationId, pinned_at: new Date().toISOString() },
+      { onConflict: 'user_id,conversation_id' },
+    );
   return { error };
 }
 
@@ -172,6 +170,42 @@ export async function unpinConversation(client: SupabaseClient, conversationId: 
   if (!auth.user) return { error: new Error('not authenticated') };
   const { error } = await client
     .from('pinned_conversations')
+    .delete()
+    .eq('user_id', auth.user.id)
+    .eq('conversation_id', conversationId);
+  return { error };
+}
+
+// ── Favourite conversations (distinct from starred messages) ───────────────────
+
+export async function getFavoriteIds(client: SupabaseClient): Promise<UUID[]> {
+  const { data: auth } = await client.auth.getUser();
+  if (!auth.user) return [];
+  const { data } = await client
+    .from('favorite_conversations')
+    .select('conversation_id, favorited_at')
+    .eq('user_id', auth.user.id)
+    .order('favorited_at', { ascending: false });
+  return (data || []).map((r: any) => r.conversation_id as UUID);
+}
+
+export async function favoriteConversation(client: SupabaseClient, conversationId: UUID) {
+  const { data: auth } = await client.auth.getUser();
+  if (!auth.user) return { error: new Error('not authenticated') };
+  const { error } = await client
+    .from('favorite_conversations')
+    .upsert(
+      { user_id: auth.user.id, conversation_id: conversationId, favorited_at: new Date().toISOString() },
+      { onConflict: 'user_id,conversation_id' },
+    );
+  return { error };
+}
+
+export async function unfavoriteConversation(client: SupabaseClient, conversationId: UUID) {
+  const { data: auth } = await client.auth.getUser();
+  if (!auth.user) return { error: new Error('not authenticated') };
+  const { error } = await client
+    .from('favorite_conversations')
     .delete()
     .eq('user_id', auth.user.id)
     .eq('conversation_id', conversationId);

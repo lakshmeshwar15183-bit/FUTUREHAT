@@ -1,4 +1,4 @@
-// FUTUREHAT — privacy visibility + chat/general settings. These are stored in
+// Lumixo — privacy visibility + chat/general settings. These are stored in
 // the existing `user_preferences.extra` jsonb bag (namespaced), so no new table
 // is required. Visibility values are persisted for every client; server-side
 // enforcement of cross-user visibility (e.g. hiding last-seen from others) is a
@@ -20,6 +20,8 @@ export interface PrivacySettings {
   groups: Visibility;
   calls: Visibility;
   avatar: Visibility;
+  /** Who can add you to communities (prefs; future server enforce). */
+  communities?: Visibility;
   readReceipts: boolean;
 }
 
@@ -30,17 +32,23 @@ export interface ChatSettings {
   mediaUploadQuality: MediaQuality;
   autoDownload: boolean;
   voiceTranscripts: boolean;
+  /** Double-tap reaction emoji (prefs.extra only — no DB migration). */
+  defaultReaction?: string;
 }
 
 export const DEFAULT_PRIVACY: PrivacySettings = {
   lastSeen: 'everyone', profilePhoto: 'everyone', about: 'everyone', links: 'everyone',
   status: 'contacts', groups: 'everyone', calls: 'everyone', avatar: 'everyone',
+  communities: 'everyone',
   readReceipts: true,
 };
 
 export const DEFAULT_CHAT: ChatSettings = {
   enterToSend: true, fontSize: 'medium', mediaVisibility: true,
-  mediaUploadQuality: 'auto', autoDownload: true, voiceTranscripts: false,
+  // Default OFF — WhatsApp/Telegram-class: no mass auto-download after reinstall.
+  // Granular Wi‑Fi / cellular rules live in Storage & Data (mediaPolicy).
+  mediaUploadQuality: 'auto', autoDownload: false, voiceTranscripts: false,
+  defaultReaction: '❤️',
 };
 
 function extraOf(prefs: any): Record<string, any> {

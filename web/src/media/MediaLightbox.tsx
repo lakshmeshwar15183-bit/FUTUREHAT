@@ -1,13 +1,15 @@
-// FUTUREHAT — full-screen media viewer (WhatsApp-grade). Swipe/arrow between
+// Lumixo — full-screen media viewer (WhatsApp-grade). Swipe/arrow between
 // images & videos, wheel/double-click/pinch zoom with pan, download, share,
 // a media counter, and a hero scale-in entrance. Self-contained and reusable:
 // pass a list of media items and the active index.
 //
-// Branding note: chrome is FUTUREHAT's own; behaviour mirrors WhatsApp.
+// Branding note: chrome is Lumixo's own; behaviour mirrors WhatsApp.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { DownloadIcon, ForwardIcon } from '../Icons';
+import { useSignedUrl } from '../lib/useSignedUrl';
+import { safeCssUrl, safeMediaSrc } from '../util/safeUrl';
 
 export interface MediaItem {
   id: string;
@@ -38,6 +40,11 @@ export function MediaLightbox({ items, index, onClose, onIndexChange }: Props) {
   const draggingPan = useRef(false);
 
   const item = items[i];
+  // Resolve the current item's stored (public, private-bucket) url into a
+  // signed url that will actually load. Null while resolving or on failure —
+  // we render an empty slot rather than the raw url so we don't briefly show
+  // a broken 403 image on swipe.
+  const { url: currentUrl, loading: currentLoading } = useSignedUrl(item?.url);
 
   const go = useCallback((delta: number) => {
     setI((cur) => {
@@ -106,25 +113,30 @@ export function MediaLightbox({ items, index, onClose, onIndexChange }: Props) {
   }
 
   async function download() {
+    // Wait for the signed url — the raw item.url returns 403 for private-bucket
+    // media, so fetch()ing it would fall through to the popup fallback with a
+    // broken URL. If signing failed there's nothing usable to hand the browser.
+    if (!currentUrl) { flash(currentLoading ? 'Loading…' : 'Could not load media'); return; }
     try {
-      const res = await fetch(item.url);
+      const res = await fetch(currentUrl);
       const blob = await res.blob();
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = item.caption || item.url.split('/').pop()?.split('?')[0] || `futurehat-media-${item.id}`;
+      a.download = item.caption || currentUrl.split('/').pop()?.split('?')[0] || `lumixo-media-${item.id}`;
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(a.href), 4000);
       flash('Saved');
     } catch {
-      window.open(item.url, '_blank', 'noopener');
+      window.open(currentUrl, '_blank', 'noopener');
     }
   }
 
   async function share() {
-    const data = { title: 'FUTUREHAT media', text: item.caption || 'Shared on FUTUREHAT', url: item.url };
+    if (!currentUrl) { flash(currentLoading ? 'Loading…' : 'Could not load media'); return; }
+    const data = { title: 'Lumixo media', text: item.caption || 'Shared on Lumixo', url: currentUrl };
     try {
       if (navigator.share) await navigator.share(data);
-      else { await navigator.clipboard.writeText(item.url); flash('Link copied'); }
+      else { await navigator.clipboard.writeText(currentUrl); flash('Link copied'); }
     } catch { /* user cancelled */ }
   }
 
@@ -180,7 +192,7 @@ export function MediaLightbox({ items, index, onClose, onIndexChange }: Props) {
           >
             {item.kind === 'image' ? (
               <motion.img
-                src={item.url}
+                src={safeMediaSrc(currentUrl) ?? ''}
                 alt={item.caption || 'Media'}
                 className="mlb-media"
                 draggable={false}
@@ -190,7 +202,7 @@ export function MediaLightbox({ items, index, onClose, onIndexChange }: Props) {
                 style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, cursor: zoom > 1 ? 'grab' : 'zoom-in' }}
               />
             ) : (
-              <video src={item.url} className="mlb-media" controls autoPlay playsInline onPointerDown={(e) => e.stopPropagation()} />
+              <video src={safeMediaSrc(currentUrl) ?? undefined} className="mlb-media" controls autoPlay playsInline onPointerDown={(e) => e.stopPropagation()} />
             )}
           </motion.div>
         </AnimatePresence>
@@ -202,19 +214,34 @@ export function MediaLightbox({ items, index, onClose, onIndexChange }: Props) {
       {items.length > 1 && (
         <div className="mlb-strip" onPointerDown={(e) => e.stopPropagation()}>
           {items.map((m, idx) => (
-            <button
+            <Thumb
               key={m.id}
-              className={`mlb-thumb ${idx === i ? 'active' : ''}`}
+              item={m}
+              active={idx === i}
               onClick={() => { setDir(idx > i ? 1 : -1); setI(idx); resetZoom(); onIndexChange?.(idx); }}
-              style={m.kind === 'image' ? { backgroundImage: `url(${m.url})` } : undefined}
-            >
-              {m.kind === 'video' && <span className="mlb-thumb-play">▶</span>}
-            </button>
+            />
           ))}
         </div>
       )}
 
       {toast && <div className="mlb-toast">{toast}</div>}
     </motion.div>
+  );
+}
+
+// Per-thumbnail signed-URL wrapper. Extracted so we can call the hook per row
+// (a hook inside items.map would violate the Rules of Hooks). The 60m cache in
+// signedMediaUrl makes repeated sign requests for the same strip cheap.
+function Thumb({ item, active, onClick }: { item: MediaItem; active: boolean; onClick: () => void }) {
+  const { url: signed } = useSignedUrl(item.url);
+  return (
+    <button
+      className={`mlb-thumb ${active ? 'active' : ''}`}
+      onClick={onClick}
+      style={item.kind === 'image' && safeCssUrl(signed) ? { backgroundImage: safeCssUrl(signed) } : undefined}
+      aria-label={item.kind === 'video' ? 'Play video' : 'View image'}
+    >
+      {item.kind === 'video' && <span className="mlb-thumb-play">▶</span>}
+    </button>
   );
 }

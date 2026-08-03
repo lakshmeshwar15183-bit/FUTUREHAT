@@ -1,8 +1,9 @@
-// FUTUREHAT mobile — Account & Security: email/password/phone, two-step
+// Lumixo mobile — Account & Security: email/password/phone, two-step
 // verification (Supabase TOTP), login history, and account deletion with a
 // 30-day recovery window. Standalone; persists via accountApi + Supabase auth.
 import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import SafeScrollView from '../ui/SafeScrollView';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { useNavigation } from '@react-navigation/native';
@@ -12,19 +13,29 @@ import { supabase } from '../lib/supabase';
 import type { RootStackParamList } from '../navigation/types';
 import {
   changeEmail, changePassword, requestAccountDeletion, cancelAccountDeletion,
-  getDeletionRequest, getSecurityEvents, type DeletionRequest, type SecurityEvent,
+  getDeletionRequest, getSecurityEvents, getMyAccount, updateMyPhone, logoutAllDevices,
+  maskPhoneE164, friendlyAuthError, getSessionId,
+  listMySessions, revokeSession, sortSessionsForDisplay, relativeLastSeen,
+  type DeletionRequest, type SecurityEvent, type UserSession,
 } from '../lib/shared';
+import { sessionIssuedAtMs } from '../../../shared/forceLogout';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
+import { Alert } from '../ui/dialog';
 
 export default function AccountSecurityScreen() {
   const colors = useColors();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const [email, setEmail] = useState('');
+  const [currentEmail, setCurrentEmail] = useState('');
   const [password, setPassword] = useState('');
   const [phone, setPhone] = useState('');
+  const [savedPhoneMasked, setSavedPhoneMasked] = useState('');
   const [events, setEvents] = useState<SecurityEvent[]>([]);
   const [deletion, setDeletion] = useState<DeletionRequest | null>(null);
+  const [sessions, setSessions] = useState<UserSession[]>([]);
+  const [mySessionId, setMySessionId] = useState<string | null>(null);
+  const [sessionsLoaded, setSessionsLoaded] = useState(false);
   const [twofaOn, setTwofaOn] = useState(false);
   // Two-step verification (Supabase TOTP MFA) — full enroll/verify/disable, same
   // as the web AccountSettingsModal (was previously "set it up on the web app").
@@ -34,8 +45,21 @@ export default function AccountSecurityScreen() {
   const [mfaBusy, setMfaBusy] = useState(false);
 
   useEffect(() => {
-    getSecurityEvents(supabase).then(setEvents).catch(() => {});
+    (async () => {
+      const { data: sess } = await supabase.auth.getSession();
+      const since = sess?.session ? sessionIssuedAtMs(sess.session) : null;
+      const sinceIso = since ? new Date(since).toISOString() : null;
+      getSecurityEvents(supabase, 50, sinceIso).then(setEvents).catch(() => {});
+    })();
     getDeletionRequest(supabase).then(setDeletion).catch(() => {});
+    getMyAccount(supabase).then(({ account }) => {
+      if (!account) return;
+      setCurrentEmail(account.email ?? '');
+      if (account.phone_e164) {
+        setPhone(account.phone_e164);
+        setSavedPhoneMasked(maskPhoneE164(account.phone_e164));
+      }
+    }).catch(() => {});
     (async () => {
       try {
         const { data } = await (supabase.auth as any).mfa.listFactors();
@@ -44,7 +68,39 @@ export default function AccountSecurityScreen() {
         setFactorId(verified?.id ?? null);
       } catch { /* MFA may be off */ }
     })();
+    void refreshSessions();
   }, []);
+
+  async function refreshSessions() {
+    try {
+      const [list, sid] = await Promise.all([
+        listMySessions(supabase),
+        getSessionId(supabase),
+      ]);
+      setSessions(sortSessionsForDisplay(list, sid));
+      setMySessionId(sid);
+    } catch { /* table may predate the migration */ }
+    setSessionsLoaded(true);
+  }
+
+  function confirmRevokeSession(s: UserSession) {
+    Alert.alert(
+      'Sign out device',
+      `Sign out "${s.device_label || s.platform}"? It will be disconnected from your account.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Sign out',
+          style: 'destructive',
+          onPress: async () => {
+            const { error } = await revokeSession(supabase, s.session_id);
+            if (error) Alert.alert('Error', friendlyAuthError(error, 'Could not sign out that device.'));
+            void refreshSessions();
+          },
+        },
+      ],
+    );
+  }
 
   async function startEnroll() {
     setMfaBusy(true);
@@ -105,20 +161,49 @@ export default function AccountSecurityScreen() {
   async function saveEmail() {
     if (!email.trim()) return;
     const { error } = await changeEmail(supabase, email.trim());
-    Alert.alert(error ? 'Error' : 'Check your inbox', error ? error.message : 'Confirmation sent to your new email.');
+    Alert.alert(
+      error ? 'Error' : 'Check your inbox',
+      error ? friendlyAuthError(error) : 'Confirmation sent to your new email.',
+    );
     if (!error) setEmail('');
   }
   async function savePassword() {
     if (password.length < 8) return Alert.alert('Weak password', 'Use at least 8 characters.');
     const { error } = await changePassword(supabase, password);
-    Alert.alert(error ? 'Error' : 'Done', error ? error.message : 'Password updated.');
+    Alert.alert(
+      error ? 'Error' : 'Done',
+      error ? friendlyAuthError(error) : 'Password updated. Other devices will be signed out.',
+    );
     if (!error) setPassword('');
   }
   async function savePhone() {
-    const { data: u } = await supabase.auth.getUser();
-    if (!u?.user) return;
-    const { error } = await supabase.from('profiles').update({ phone: phone.trim() || null }).eq('id', u.user.id);
-    Alert.alert(error ? 'Error' : 'Done', error ? 'Could not update phone.' : 'Phone updated.');
+    const { phoneE164, error } = await updateMyPhone(supabase, phone.trim() || null);
+    if (error) return Alert.alert('Phone', friendlyAuthError(error, 'Could not update phone.'));
+    setSavedPhoneMasked(phoneE164 ? maskPhoneE164(phoneE164) : '');
+    if (phoneE164) setPhone(phoneE164);
+    Alert.alert(
+      'Done',
+      phoneE164
+        ? 'Phone saved for contact discovery. It is never shown publicly.'
+        : 'Phone number removed from your account.',
+    );
+  }
+  function confirmLogoutAll() {
+    Alert.alert(
+      'Sign out everywhere',
+      'This signs you out on all devices. You will need your email and password again.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Sign out everywhere',
+          style: 'destructive',
+          onPress: async () => {
+            const { error } = await logoutAllDevices(supabase);
+            if (error) Alert.alert('Error', friendlyAuthError(error));
+          },
+        },
+      ],
+    );
   }
 
   function confirmDelete() {
@@ -139,8 +224,13 @@ export default function AccountSecurityScreen() {
   }
 
   return (
-    <ScrollView style={styles.container}>
+    <SafeScrollView style={styles.container}>
       <Text style={styles.sectionLabel}>EMAIL</Text>
+      {!!currentEmail && (
+        <View style={styles.group}>
+          <Text style={styles.note}>Signed in as {currentEmail}</Text>
+        </View>
+      )}
       <View style={styles.group}>
         <TextInput style={styles.input} placeholder="New email" placeholderTextColor={colors.textFaint} autoCapitalize="none" keyboardType="email-address" value={email} onChangeText={setEmail} />
       </View>
@@ -152,11 +242,61 @@ export default function AccountSecurityScreen() {
       </View>
       <Pressable style={styles.btnPrimary} onPress={savePassword}><Text style={styles.btnPrimaryText}>Change password</Text></Pressable>
 
-      <Text style={styles.sectionLabel}>PHONE</Text>
+      <Text style={styles.sectionLabel}>PHONE (OPTIONAL)</Text>
       <View style={styles.group}>
-        <TextInput style={styles.input} placeholder="+countrycode number" placeholderTextColor={colors.textFaint} keyboardType="phone-pad" value={phone} onChangeText={setPhone} />
+        <Text style={styles.note}>
+          Used only to find friends on Lumixo. Stored as E.164 and never shown on your public profile.
+          {savedPhoneMasked ? ` Current: ${savedPhoneMasked}` : ''}
+        </Text>
+        <TextInput style={styles.input} placeholder="+919876543210" placeholderTextColor={colors.textFaint} keyboardType="phone-pad" value={phone} onChangeText={setPhone} />
       </View>
       <Pressable style={styles.btn} onPress={savePhone}><Text style={styles.btnText}>Save phone</Text></Pressable>
+
+      <Text style={styles.sectionLabel}>DEVICES</Text>
+      <View style={styles.group}>
+        {!sessionsLoaded ? (
+          <Text style={styles.empty}>Loading devices…</Text>
+        ) : sessions.length === 0 ? (
+          <Text style={styles.empty}>Device list is unavailable right now.</Text>
+        ) : sessions.map((s) => {
+          const isThis = s.session_id === mySessionId;
+          return (
+            <View key={s.session_id} style={styles.deviceRow}>
+              <Ionicons
+                name={s.platform === 'web' ? 'desktop-outline' : 'phone-portrait-outline'}
+                size={20}
+                color={colors.textMuted}
+                style={{ marginRight: spacing(3) }}
+              />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.rowLabel} numberOfLines={1}>
+                  {s.device_label || s.platform}
+                  {isThis ? <Text style={styles.thisDevice}>  ·  This device</Text> : null}
+                </Text>
+                <Text style={styles.linkSub}>
+                  {s.platform === 'web' ? 'Web' : s.platform === 'ios' ? 'iPhone' : 'Android'}
+                  {isThis ? '' : ` · active ${relativeLastSeen(s.last_seen, Date.now())}`}
+                </Text>
+              </View>
+              {!isThis && (
+                <Pressable hitSlop={8} onPress={() => confirmRevokeSession(s)}>
+                  <Text style={styles.deviceSignOut}>Sign out</Text>
+                </Pressable>
+              )}
+            </View>
+          );
+        })}
+      </View>
+      <View style={styles.group}>
+        <Text style={styles.note}>
+          Your account can be signed in on 2 phones at a time. Signing in on a third phone
+          automatically signs out the oldest one. Web sessions are unlimited.
+        </Text>
+        <View style={{ height: spacing(2) }} />
+      </View>
+      <Pressable style={styles.btnDanger} onPress={confirmLogoutAll}>
+        <Text style={styles.btnDangerText}>Sign out of all devices</Text>
+      </Pressable>
 
       <Text style={styles.sectionLabel}>TWO-STEP VERIFICATION</Text>
       {twofaOn ? (
@@ -238,7 +378,7 @@ export default function AccountSecurityScreen() {
         <Pressable style={styles.btnDanger} onPress={confirmDelete}><Text style={styles.btnDangerText}>Delete my account</Text></Pressable>
       )}
       <View style={{ height: spacing(10) }} />
-    </ScrollView>
+    </SafeScrollView>
   );
 }
 
@@ -264,4 +404,7 @@ const makeStyles = (colors: Palette) =>
     linkRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing(4), paddingVertical: spacing(3) },
     rowLabel: { color: colors.text, fontSize: font.body, fontWeight: '500' },
     linkSub: { color: colors.textMuted, fontSize: font.small, marginTop: 2 },
+    deviceRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing(4), paddingVertical: spacing(3), borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
+    thisDevice: { color: colors.primary, fontSize: font.small, fontWeight: '700' },
+    deviceSignOut: { color: colors.danger, fontSize: font.small, fontWeight: '700', paddingLeft: spacing(3) },
   });

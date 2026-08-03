@@ -16,6 +16,11 @@ const redirect = {
     b.onResolve({ filter: /netinfo/ }, () => ({ path: m('netinfo.js'), external: true }));
     b.onResolve({ filter: /(^|\/)supabase$/ }, () => ({ path: m('supabase.js'), external: true }));
     b.onResolve({ filter: /(^|\/)shared$/ }, () => ({ path: m('shared.js'), external: true }));
+    // sync → media/mediaCache → expo-file-system → react-native (Flow). Mock the chain.
+    b.onResolve({ filter: /expo-file-system/ }, () => ({ path: m('expo-file-system.js'), external: true }));
+    b.onResolve({ filter: /^react-native$/ }, () => ({ path: m('react-native.js'), external: true }));
+    b.onResolve({ filter: /\/mediaCache(\.ts)?$/ }, () => ({ path: m('mediaCache.js'), external: true }));
+    b.onResolve({ filter: /\/media(\.ts)?$/ }, () => ({ path: m('media.js'), external: true }));
   },
 };
 

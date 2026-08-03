@@ -2,8 +2,81 @@
 
 .app {
   display: flex;
-  height: 100vh;
+  /* Prefer --app-height (visual viewport px) so minimize/restore/resize never
+     leave a 0-height or wrong-vh shell. Fallbacks cover older browsers. */
+  height: var(--app-height, 100dvh);
+  height: var(--app-height, 100vh);
+  min-height: 0;
+  max-height: var(--app-height, 100dvh);
+  max-height: var(--app-height, 100vh);
+  width: 100%;
   overflow: hidden;
+  background: var(--fh-bg, #111b21);
+  /* Isolate paint so child reflow does not blank the whole tree. */
+  contain: layout style;
+}
+
+/* Instant navigation — CSS only, GPU-friendly. Avoid opacity < 1 start (reads as blank). */
+.chat-pane-enter {
+  height: 100%;
+  min-height: 0;
+  animation: fh-pane-in 0.14s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes fh-pane-in {
+  from { opacity: 0.92; transform: translateX(6px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-pane-enter { animation: none; }
+}
+
+/* Conversation list skeleton (matches boot shell) */
+.conv-list-skeleton { flex: 1; overflow: hidden; }
+.conv-skel-row {
+  display: flex; gap: 12px; align-items: center;
+  padding: 12px 16px; border-bottom: 1px solid rgba(42, 57, 66, 0.45);
+}
+.conv-skel-row .boot-av {
+  width: 48px; height: 48px; border-radius: 50%; flex-shrink: 0;
+  background: var(--fh-panel, #202c33);
+}
+.conv-skel-row .boot-lines { flex: 1; display: flex; flex-direction: column; gap: 8px; }
+.conv-skel-row .skel,
+.chat-skeleton .skel {
+  height: 14px; border-radius: 8px;
+  background: linear-gradient(90deg, var(--fh-panel, #1f2c33) 25%, var(--fh-elevated, #2a3942) 50%, var(--fh-panel, #1f2c33) 75%);
+  background-size: 200% 100%;
+  animation: fh-shimmer 1.2s ease-in-out infinite;
+}
+@keyframes fh-shimmer {
+  0% { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+
+/* Chat open skeleton */
+.chat-skeleton { display: flex; flex-direction: column; height: 100%; background: var(--fh-chat-bg, #0b141a); }
+.chat-skeleton-head {
+  height: 60px; background: var(--fh-panel, #202c33);
+  border-bottom: 1px solid var(--fh-border, #2a3942);
+}
+.chat-skeleton-body { flex: 1; padding: 20px 16px; display: flex; flex-direction: column; gap: 12px; }
+.chat-skeleton-bubble {
+  height: 44px; border-radius: 12px; max-width: 55%;
+  background: var(--fh-panel, #202c33);
+  animation: fh-shimmer 1.2s ease-in-out infinite;
+  background-size: 200% 100%;
+  background-image: linear-gradient(90deg, #1f2c33 25%, #2a3942 50%, #1f2c33 75%);
+}
+.chat-skeleton-bubble.mine { align-self: flex-end; background-image: linear-gradient(90deg, #005c4b 25%, #067562 50%, #005c4b 75%); }
+.chat-skeleton-bubble.short { max-width: 35%; height: 36px; }
+
+/* Conversation rows — layout contain only.
+   NEVER use content-visibility: auto here: Chrome has blank-paint bugs when
+   restoring a minimized window / resizing while offscreen rows were skipped. */
+.conversation-item {
+  contain: layout style;
+  /* Fixed-ish row height helps scroll without content-visibility. */
+  min-height: 72px;
 }
 
 .sidebar {
@@ -108,6 +181,11 @@
   color: var(--fh-muted);
 }
 
+.no-results-mascot {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 6px;
+}
 .no-results {
   text-align: center;
   padding: 24px;
@@ -236,6 +314,10 @@
 .conv-menu button.danger { color: #ef4444; }
 .conv-menu button.danger:hover { background: rgba(239, 68, 68, 0.12); }
 .mute-mark { font-size: 11px; opacity: 0.7; }
+/* Streak tier emoji on the chat row — sits just before the unread badge. When
+   there is no unread badge, margin-left:auto pushes it to the right edge. */
+.streak-mark { font-size: 14px; flex-shrink: 0; margin-left: auto; }
+.streak-mark + .unread-badge { margin-left: 6px; }
 
 .upgrade-pill {
   color: #1a1206 !important;
@@ -258,22 +340,8 @@
 
 .sidebar-header h2 { display: flex; align-items: center; gap: 8px; }
 
-.app-credit {
-  position: fixed;
-  bottom: 6px;
-  right: 14px;
-  font-size: 10.5px;
-  color: var(--fh-muted);
-  opacity: 0.5;
-  pointer-events: none;
-  z-index: 5;
-}
-
-/* When a chat is open the message input + send button sit bottom-right, so the
-   fixed credit would overlap them. Show it on the welcome screen instead. */
-.app.chat-open .app-credit {
-  display: none;
-}
+/* Credit watermark removed from the main shell (P0 friendliness) — lives in Settings. */
+.app-credit { display: none; }
 
 .conversation-item:hover {
   background: rgba(255, 255, 255, 0.03);
@@ -287,7 +355,8 @@
   width: 48px;
   height: 48px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  /* Brand teal (matches mobile initials palette) — not a purple placeholder. */
+  background: linear-gradient(135deg, #00a884 0%, #008069 100%);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -330,12 +399,102 @@
   color: var(--fh-muted);
   font-size: 14px;
 }
+.empty-state-mascot {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 8px;
+}
+.empty-state-title {
+  color: var(--fh-text);
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.empty-state-sub {
+  color: var(--fh-muted);
+  font-size: 13.5px;
+  margin-bottom: 18px;
+}
+.empty-state-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.empty-cta-primary {
+  background: var(--fh-accent);
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  padding: 11px 22px;
+  font-weight: 700;
+  font-size: 14px;
+  cursor: pointer;
+}
+.empty-cta-primary:hover { background: var(--fh-accent-2); }
+.empty-cta-secondary {
+  background: transparent;
+  border: none;
+  color: var(--fh-accent);
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 6px 12px;
+}
+.empty-cta-secondary:hover { text-decoration: underline; }
+.preview-ticks {
+  color: var(--fh-muted);
+  margin-right: 4px;
+  font-size: 13px;
+  letter-spacing: -1px;
+}
+.preview-ticks.read {
+  color: #53bdeb;
+}
+
+/* WhatsApp-class list filter chips under search */
+.filter-chips {
+  display: flex;
+  gap: 8px;
+  padding: 0 12px 10px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.filter-chips::-webkit-scrollbar { display: none; }
+.filter-chips-more { padding-top: 0; }
+.filter-chip {
+  flex: none;
+  border: 1px solid var(--fh-border);
+  background: var(--fh-elevated);
+  color: var(--fh-muted);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.filter-chip:hover { color: var(--fh-text); }
+.filter-chip.active {
+  background: var(--fh-accent);
+  border-color: var(--fh-accent);
+  color: #fff;
+}
 
 .main-content {
   flex: 1;
+  min-height: 0;
+  min-width: 0;
   background: var(--fh-chat-bg);
   display: flex;
   flex-direction: column;
+}
+.main-content-pane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
 }
 
 .empty-chat {
@@ -352,6 +511,12 @@
   margin-bottom: 16px;
   opacity: 0.5;
 }
+.empty-chat-mascot {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 12px;
+  filter: drop-shadow(0 8px 20px rgba(0, 0, 0, 0.18));
+}
 
 .empty-chat h3 {
   font-size: 24px;
@@ -361,6 +526,10 @@
 
 .empty-chat p {
   font-size: 15px;
+  margin-bottom: 18px;
+}
+.empty-chat .empty-cta-primary {
+  margin-top: 4px;
 }
 
 /* ── Responsive: single-pane on mobile browsers ───────────────────────────── */

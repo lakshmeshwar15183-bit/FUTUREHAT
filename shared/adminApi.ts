@@ -1,4 +1,4 @@
-// FUTUREHAT — Owner/Admin data-access layer. Framework-agnostic; web + mobile
+// Lumixo — Owner/Admin data-access layer. Framework-agnostic; web + mobile
 // share it. Every function here calls a SECURITY DEFINER RPC (or an RLS-guarded
 // table) from 0013_owner_admin.sql that RE-CHECKS the caller's privilege server-
 // side, so these wrappers are a convenience, NOT the security boundary. Client
@@ -99,7 +99,7 @@ export async function adminDeleteAccount(client: SupabaseClient, target: UUID, r
 }
 
 // Assign / remove Moderator, or demote to User. The 'admin' (and 'owner') roles are
-// PERMANENT and can never be assigned or transferred through the app — FUTUREHAT has a
+// PERMANENT and can never be assigned or transferred through the app — Lumixo has a
 // single hardcoded owner/admin (the developer allowlist). The server-side admin_set_role
 // (migration 0025) rejects any role other than 'user'/'moderator'; this type mirrors that.
 export async function adminSetRole(client: SupabaseClient, target: UUID, role: 'user' | 'moderator'): Promise<void> {
@@ -127,9 +127,43 @@ export async function adminRevokePremium(client: SupabaseClient, target: UUID): 
 
 // ── Content moderation ──────────────────────────────────────────────────────────
 
-export async function adminDeleteMessage(client: SupabaseClient, msg: UUID): Promise<void> {
-  const { error } = await client.rpc('admin_delete_message', { msg });
+/**
+ * Soft-delete a message for everyone. Prefer calling with `reportId` so the
+ * audit log ties the delete to a report (normal moderation path — no UUID typing).
+ */
+export async function adminDeleteMessage(
+  client: SupabaseClient,
+  msg: UUID,
+  opts?: { reason?: string; reportId?: UUID },
+): Promise<void> {
+  const { error } = await client.rpc('admin_delete_message', {
+    msg,
+    p_reason: opts?.reason ?? null,
+    p_report: opts?.reportId ?? null,
+  });
   if (error) throw error;
+}
+
+/** Best-effort restore from the last delete_message audit snapshot. */
+export async function adminRestoreMessage(
+  client: SupabaseClient,
+  msg: UUID,
+): Promise<{ ok: boolean; content_restored?: boolean }> {
+  const { data, error } = await client.rpc('admin_restore_message', { msg });
+  if (error) throw error;
+  return (data as { ok: boolean; content_restored?: boolean }) ?? { ok: true };
+}
+
+/** Recent admin-deleted messages (from audit_log). */
+export async function adminListDeletedMessages(
+  client: SupabaseClient,
+  limit = 100,
+): Promise<import('./types.js').AdminDeletedMessage[]> {
+  const { data, error } = await client.rpc('admin_list_deleted_messages', {
+    p_limit: limit,
+  });
+  if (error) throw error;
+  return (data as import('./types.js').AdminDeletedMessage[]) ?? [];
 }
 export async function adminDeleteStatus(client: SupabaseClient, statusId: UUID): Promise<void> {
   const { error } = await client.rpc('admin_delete_status', { status_id: statusId });

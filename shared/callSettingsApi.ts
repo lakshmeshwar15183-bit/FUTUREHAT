@@ -1,4 +1,4 @@
-// FUTUREHAT — Call settings. Stored in the existing `user_preferences.extra`
+// Lumixo — Call settings. Stored in the existing `user_preferences.extra`
 // jsonb bag under the `calls` namespace (mirrors shared/privacyApi.ts), so no new
 // table is required. These are client-side call preferences surfaced by the Calls
 // module's "Call Settings" screen.
@@ -10,6 +10,8 @@ export const DEFAULT_CALL_SETTINGS: CallSettings = {
   silence_unknown: false,
   ringtone: true,
   vibrate: true,
+  noise_suppression: true,
+  echo_cancellation: true,
 };
 
 function extraOf(prefs: any): Record<string, any> {

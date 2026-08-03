@@ -1,4 +1,4 @@
-// FUTUREHAT — Notification settings (WhatsApp layout, web parity with mobile).
+// Lumixo — Notification settings (WhatsApp layout, web parity with mobile).
 // Grouped MESSAGE / CALLS / STATUS / GROUPS sections stored in
 // user_preferences.extra.notifications (synced to the profile → restore on any
 // device). Includes a browser-notification permission button. Sounds use the
@@ -65,7 +65,7 @@ export function NotificationSettingsModal({ onClose }: { onClose: () => void }) 
             <div className="sp-row">
               <div className="sp-row-main">
                 <div className="sp-row-name">Browser notifications</div>
-                <div className="sp-row-desc">{perm === 'granted' ? 'Enabled' : perm === 'denied' ? 'Blocked in browser settings' : 'Allow FUTUREHAT to notify you'}</div>
+                <div className="sp-row-desc">{perm === 'granted' ? 'Enabled' : perm === 'denied' ? 'Blocked in browser settings' : 'Allow Lumixo to notify you'}</div>
               </div>
               {perm !== 'granted' && <button className="sp-select" onClick={requestPerm} disabled={perm === 'denied'}>Enable</button>}
             </div>
@@ -95,6 +95,17 @@ export function NotificationSettingsModal({ onClose }: { onClose: () => void }) 
             <section className="sp-section">
               <h3>Status</h3>
               <Toggle k="statusMute" name="Mute status notifications" />
+            </section>
+
+            <section className="sp-section">
+              <h3>Communities</h3>
+              <Toggle k="communitiesMute" name="Mute communities" desc="Silence community channel notifications" />
+            </section>
+
+            <section className="sp-section">
+              <h3>Mentions</h3>
+              <ToneRow name="Mention tone" value={n.mentionTone || 'default'} />
+              <Toggle k="mentionVibrate" name="Vibrate on mentions" />
             </section>
 
             <section className="sp-section">

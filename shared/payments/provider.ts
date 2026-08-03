@@ -1,4 +1,4 @@
-// FUTUREHAT+ — payment provider abstraction.
+// Lumixo+ — payment provider abstraction.
 //
 // The app talks to payments through this interface only, so swapping or adding a
 // gateway (Razorpay, Stripe, …) never touches the upgrade UI. The browser-specific
@@ -37,13 +37,19 @@ export function computePeriodEnd(plan: PlanId, fromIso: string): string {
 }
 
 /**
- * Manual provider — no gateway. Resolves successfully so the subscription is
- * activated in the database immediately. Used when no payment keys are configured
- * (local/dev, or self-serve activation). Fully functional end-to-end.
+ * Manual provider — no gateway. Always fails closed in production builds so
+ * users cannot self-activate Lumixo+ without a verified payment provider
+ * (Razorpay) and service-role subscription write (migrations 0042 / 0054).
+ *
+ * Never return ok:true from this class in shipped builds.
  */
 export class ManualProvider implements PaymentProvider {
   readonly id: PaymentProviderId = 'manual';
   async checkout(_ctx: CheckoutContext): Promise<PaymentResult> {
-    return { ok: true, provider: 'manual', providerSubscriptionId: `manual_${Date.now()}` };
+    return {
+      ok: false,
+      provider: 'manual',
+      error: 'Secure payments are not configured yet. Lumixo+ cannot be activated without a payment provider.',
+    };
   }
 }

@@ -1,4 +1,4 @@
-// FUTUREHAT mobile — colour palettes for each theme mode. Keys are identical
+// Lumixo mobile — colour palettes for each theme mode. Keys are identical
 // across palettes so screens can switch themes without touching layout code.
 
 export type ThemeMode = 'dark' | 'light' | 'amoled';
@@ -33,10 +33,13 @@ export interface Palette {
 
 export const palettes: Record<ThemeMode, Palette> = {
   dark: {
-    bg: '#0B141A',
-    surface: '#111B21',
-    surfaceAlt: '#1F2C33',
-    header: '#1F2C33',
+    // Slightly cooler/deeper base with clearer elevation steps (bg → surface →
+    // surfaceAlt) and a more defined border, so cards and rows read as layered
+    // instead of flat. Text/brand/bubble colors are unchanged (already WCAG-tuned).
+    bg: '#0A1116',
+    surface: '#151E24',
+    surfaceAlt: '#24313A',
+    header: '#1A252C',
     primary: '#00A884',
     primaryDark: '#008069',
     bubbleOut: '#005C4B',
@@ -46,14 +49,16 @@ export const palettes: Record<ThemeMode, Palette> = {
     text: '#E9EDEF',
     textMuted: '#8696A0',
     textFaint: '#8E9CA8',
-    border: '#222E35',
+    border: '#2A363E',
     danger: '#F15C6D',
     accentPlus: '#F7C948',
     accentPlusText: '#F7C948',
     isLight: false,
   },
   light: {
-    bg: '#F0F2F5',
+    // WhatsApp-inspired light: clean white surfaces, soft grey app chrome,
+    // black primary text, grey secondary, light separators, green brand.
+    bg: '#FFFFFF',
     surface: '#FFFFFF',
     surfaceAlt: '#F0F2F5',
     header: '#008069',
@@ -65,33 +70,32 @@ export const palettes: Record<ThemeMode, Palette> = {
     bubbleOutText: '#0B1B12',
     bubbleOutMuted: '#4A6B5F',
     text: '#111B21',
-    // Darkened for WCAG AA: the old #667781/#8696A0 failed 4.5:1 on the #F0F2F5
-    // app background and #8696A0 failed even on white. These pass on both.
-    textMuted: '#55616B',
-    textFaint: '#5C6A73',
-    border: '#D1D9DF',
-    danger: '#D11A2A',
-    // Bright gold on purpose: it is used as a BADGE BACKGROUND with dark text,
-    // so it must stay light enough for that dark text to pass contrast.
+    textMuted: '#667781',
+    textFaint: '#8696A0',
+    border: '#E9EDEF',
+    danger: '#EA0038',
+    // Bright gold badge fill; darker gold for text-on-white.
     accentPlus: '#E5A400',
     accentPlusText: '#8A6A0C',
     isLight: true,
   },
   amoled: {
+    // True black background for OLED; surfaces get a touch more lift and the
+    // border is more visible so cards don't disappear into the black.
     bg: '#000000',
-    surface: '#0A0A0A',
-    surfaceAlt: '#161616',
-    header: '#0A0A0A',
+    surface: '#0C0C0C',
+    surfaceAlt: '#191919',
+    header: '#0C0C0C',
     primary: '#00A884',
     primaryDark: '#008069',
     bubbleOut: '#04503F',
-    bubbleIn: '#161616',
+    bubbleIn: '#171717',
     bubbleOutText: '#F5F5F5',
     bubbleOutMuted: '#AAC0B7',
     text: '#F5F5F5',
     textMuted: '#9AA0A6',
     textFaint: '#8A9096',
-    border: '#1A1A1A',
+    border: '#262626',
     danger: '#F15C6D',
     accentPlus: '#F7C948',
     accentPlusText: '#F7C948',
@@ -100,19 +104,96 @@ export const palettes: Record<ThemeMode, Palette> = {
 };
 
 // Static design tokens — identical across all themes.
+// Tuned for production messenger density (WhatsApp / Telegram / iMessage class):
+// compact rows, soft corners, readable type without game-like oversizing.
 export const spacing = (n: number) => n * 4;
 
 export const radius = {
   sm: 8,
   md: 12,
-  lg: 18,
+  lg: 16,
+  xl: 20,
   pill: 999,
 };
 
 export const font = {
-  title: 22,
-  heading: 17,
+  title: 20,
+  heading: 16.5,
   body: 15,
   small: 13,
-  tiny: 11,
+  tiny: 11.5,
 };
+
+/** Shared elevation for FABs / floating controls (subtle, not bulky). */
+export const elevation = {
+  fab: {
+    shadowColor: '#000' as const,
+    shadowOpacity: 0.22,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 5,
+  },
+  card: {
+    shadowColor: '#000' as const,
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  /** Soft Material-style card shadow for light mode chat rows / search. */
+  cardLight: {
+    shadowColor: '#111B21' as const,
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 1,
+  },
+  sheet: {
+    shadowColor: '#000' as const,
+    shadowOpacity: 0.16,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: -4 },
+    elevation: 16,
+  },
+};
+
+/**
+ * Icon size scale — use these everywhere so tabs/rows/headers never mismatch.
+ * Aligns with Material + messenger density (22pt primary chrome).
+ */
+export const iconSize = {
+  xs: 14,
+  sm: 16,
+  md: 20,
+  /** Primary chrome (tab, header actions, list trailing) */
+  lg: 22,
+  xl: 26,
+  /** Empty states */
+  empty: 56,
+} as const;
+
+/** Minimum touch targets (accessibility + messenger UX). */
+export const touch = {
+  min: 44,
+  hitSlop: { top: 8, bottom: 8, left: 8, right: 8 } as const,
+  hitSlopSm: { top: 6, bottom: 6, left: 6, right: 6 } as const,
+};
+
+/** Row / list density */
+export const density = {
+  chatRowMin: 68,
+  settingsRowMin: 48,
+  tabIcon: 22,
+  avatarChat: 48,
+  avatarHeader: 36,
+  fab: 54,
+} as const;
+
+/** Typography line heights paired with `font` sizes for consistent hierarchy. */
+export const lineHeight = {
+  title: 26,
+  heading: 21,
+  body: 20,
+  small: 17,
+  tiny: 15,
+} as const;

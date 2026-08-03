@@ -1,4 +1,4 @@
-// FUTUREHAT web — Status audience picker (WhatsApp "Status privacy").
+// Lumixo web — Status audience picker (WhatsApp "Status privacy").
 // Choose who can see a status: Everyone / My contacts / Except… / Only share with…
 // Except/Only reveal a searchable multi-select of contacts (people you share a
 // direct conversation with). Per-post enforcement is snapshotted server-side
@@ -8,6 +8,7 @@ import { supabase } from '../supabase';
 import { getMyConversations } from '@shared/api';
 import type { StatusAudience, Profile } from '@shared/types';
 import { useEscapeToClose } from '../useEscapeToClose';
+import { safeMediaSrc } from '../util/safeUrl';
 import './status.css';
 
 interface Props {
@@ -19,7 +20,7 @@ interface Props {
 }
 
 const OPTIONS: { key: StatusAudience; label: string; sub: string }[] = [
-  { key: 'everyone', label: 'Everyone', sub: 'Anyone on FUTUREHAT can see' },
+  { key: 'everyone', label: 'Everyone', sub: 'Anyone on Lumixo can see' },
   { key: 'contacts', label: 'My contacts', sub: 'People you chat with' },
   { key: 'except', label: 'My contacts except…', sub: 'Hide from some contacts' },
   { key: 'only', label: 'Only share with…', sub: 'Show to selected contacts' },
@@ -127,12 +128,12 @@ export function AudiencePicker({ audience, memberIds, myId, onClose, onSave }: P
                 const on = members.has(c.id);
                 return (
                   <button key={c.id} className="audience-contact" onClick={() => toggle(c.id)}>
-                    {c.avatar_url ? (
-                      <img src={c.avatar_url} alt="" className="audience-contact-avatar" />
+                    {safeMediaSrc(c.avatar_url) ? (
+                      <img src={safeMediaSrc(c.avatar_url)!} alt="" className="audience-contact-avatar" />
                     ) : (
                       <div className="audience-contact-avatar fallback">{(c.display_name || '?')[0]}</div>
                     )}
-                    <span className="audience-contact-name">{c.display_name || 'FUTUREHAT user'}</span>
+                    <span className="audience-contact-name">{c.display_name || 'Lumixo user'}</span>
                     <span className={`audience-check ${on ? 'on' : ''}`}>{on ? '✓' : ''}</span>
                   </button>
                 );

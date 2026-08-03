@@ -1,4 +1,4 @@
-/* FUTUREHAT — voice message bubble + recording bar styling. */
+/* Lumixo — voice message bubble + recording bar styling. */
 
 .voice-msg { display: flex; align-items: center; gap: 10px; min-width: 200px; padding: 2px 0; }
 .voice-play {

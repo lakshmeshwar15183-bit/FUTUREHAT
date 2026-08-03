@@ -1,11 +1,11 @@
-// FUTUREHAT — Legal center: Terms of Service, Privacy Policy and Community
-// Guidelines. Original content for FUTUREHAT (not copied from any other app).
+// Lumixo — Legal center: Terms of Service, Privacy Policy and Community
+// Guidelines. Original content for Lumixo (not copied from any other app).
 // Self-contained; open from Settings / Help. `tab` selects the initial section.
 
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { modalBackdrop, modalPanel } from '../motion';
-import { APP_VERSION, OWNER } from '../branding';
+import { APP_VERSION, CREDIT, SUPPORT_EMAIL, GRIEVANCE_TEAM } from '../branding';
 import './LegalModal.css';
 
 type Tab = 'terms' | 'privacy' | 'guidelines';
@@ -34,15 +34,15 @@ export function LegalModal({ onClose, initial = 'terms' }: { onClose: () => void
           {tab === 'terms' && (
             <>
               <h3>Terms of Service</h3>
-              <p>Welcome to FUTUREHAT. By creating an account you agree to use the service lawfully and respectfully. You are responsible for the content you send and for keeping your account secure.</p>
+              <p>Welcome to Lumixo. By creating an account you agree to use the service lawfully and respectfully. You are responsible for the content you send and for keeping your account secure.</p>
               <h4>Your account</h4>
               <p>You must provide accurate information and are responsible for activity under your account. Do not share credentials or impersonate others.</p>
               <h4>Acceptable use</h4>
-              <p>Do not use FUTUREHAT to harass, defraud, distribute malware, infringe rights, or share illegal content. We may suspend accounts that violate these terms.</p>
-              <h4>Premium (FUTUREHAT+)</h4>
+              <p>Do not use Lumixo to harass, defraud, distribute malware, infringe rights, or share illegal content. We may suspend accounts that violate these terms.</p>
+              <h4>Premium (Lumixo+)</h4>
               <p>Paid features are billed per the plan you choose. Cancelling stops future renewals; access continues until the end of the current period.</p>
               <h4>Liability</h4>
-              <p>FUTUREHAT is provided “as is”. To the extent permitted by law, we are not liable for indirect or consequential damages.</p>
+              <p>Lumixo is provided “as is”. To the extent permitted by law, we are not liable for indirect or consequential damages.</p>
             </>
           )}
           {tab === 'privacy' && (
@@ -57,12 +57,17 @@ export function LegalModal({ onClose, initial = 'terms' }: { onClose: () => void
               <p>You can edit your profile, manage privacy visibility, block users, mute chats, export your data, and request account deletion at any time.</p>
               <h4>Sharing</h4>
               <p>We do not sell your data. Limited processors (hosting, payments) handle data solely to provide the service.</p>
+              <h4>Contact</h4>
+              <p>
+                Support: <a href={`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent('Lumixo Support Request')}`}>{SUPPORT_EMAIL}</a>.
+                {' '}Grievance Team: {GRIEVANCE_TEAM}.
+              </p>
             </>
           )}
           {tab === 'guidelines' && (
             <>
               <h3>Community Guidelines</h3>
-              <p>FUTUREHAT is for everyone. Keep it safe and welcoming.</p>
+              <p>Lumixo is for everyone. Keep it safe and welcoming.</p>
               <ul>
                 <li>Be respectful — no harassment, hate speech, or threats.</li>
                 <li>No spam, scams, or deceptive behaviour.</li>
@@ -75,7 +80,7 @@ export function LegalModal({ onClose, initial = 'terms' }: { onClose: () => void
           )}
         </div>
 
-        <div className="legal-foot">FUTUREHAT v{APP_VERSION} · Developed by {OWNER}</div>
+        <div className="legal-foot">Lumixo v{APP_VERSION} · {CREDIT}</div>
       </motion.div>
     </motion.div>
   );

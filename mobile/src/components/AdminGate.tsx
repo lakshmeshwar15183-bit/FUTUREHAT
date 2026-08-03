@@ -1,23 +1,28 @@
-// FUTUREHAT mobile — client enforcement of the owner/admin controls, mirroring
+// Lumixo mobile — client enforcement of the owner/admin controls, mirroring
 // web/src/admin/AdminGate.tsx. Mounted high in the tree; it:
 //   • registers this device (so the Owner can see/revoke it),
+//   • registers this session in user_sessions (2-phone limit + device list),
 //   • signs out banned / disabled / locked accounts,
 //   • honours a force-logout pulse (force_logout_at),
+//   • honours per-session revocation (remote sign-out / phone limit),
 //   • shows a maintenance screen when the `app_enabled` flag is off (non-admins),
 //   • shows the latest active announcement as a dismissible banner.
 // Fail-safe: any error path renders null and never blocks the app. Authoritative
 // enforcement lives in the RLS + RPCs; this is advisory UX.
 import React, { useEffect, useState } from 'react';
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, AppState, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import Constants from 'expo-constants';
 
 import { supabase } from '../lib/supabase';
 import {
   getCurrentUser, signOut, getServerAdmin,
   registerDevice, isFeatureEnabled, getActiveAnnouncements,
+  registerSession, subscribeToSessionRevoked, revokedSignOutMessage, getSessionId,
 } from '../lib/shared';
-import type { Announcement } from '../lib/shared';
+import type { Announcement, RevokedReason, SessionPlatform } from '../lib/shared';
+import { decideForceLogout, sessionIssuedAtMs } from '../../../shared/forceLogout';
 import { useColors } from '../theme';
 
 const BLOCKED = new Set(['banned', 'disabled', 'locked']);
@@ -31,6 +36,18 @@ function makeId(): string {
     const v = c === 'x' ? r : (r & 0x3) | 0x8;
     return v.toString(16);
   });
+}
+
+const SESSION_PLATFORM: SessionPlatform = Platform.OS === 'ios' ? 'ios' : 'android';
+const DEVICE_LABEL = (Constants.deviceName ?? `${Platform.OS} device`).slice(0, 120);
+
+// Sign out because THIS session was revoked (phone limit / remote sign-out).
+let revokeHandled = false;
+function handleSessionRevoked(reason: RevokedReason | null) {
+  if (revokeHandled) return;
+  revokeHandled = true;
+  Alert.alert('Signed out', revokedSignOutMessage(reason));
+  void signOut(supabase).finally(() => { revokeHandled = false; });
 }
 
 export default function AdminGate() {
@@ -54,6 +71,13 @@ export default function AdminGate() {
         void registerDevice(supabase, devId, `${Platform.OS} device`, Platform.OS);
       } catch { /* ignore */ }
 
+      // 1b) Register this session (2-phone limit + device list). If the server
+      // says THIS session was revoked, sign out with an explanation.
+      try {
+        const res = await registerSession(supabase, SESSION_PLATFORM, DEVICE_LABEL);
+        if (res.revoked) { if (active) handleSessionRevoked(res.reason ?? null); return; }
+      } catch { /* RPC may predate the migration — ignore */ }
+
       // 2) Enforce account status + force-logout from the caller's own row.
       try {
         const { data } = await supabase
@@ -69,11 +93,22 @@ export default function AdminGate() {
           return;
         }
         if (row?.force_logout_at) {
+          // Only revoke sessions that predate the force-logout stamp.
+          // Fresh logins (after "sign out everywhere" / password change) must stay.
           const ack = await AsyncStorage.getItem(FORCE_ACK_KEY);
-          if (ack !== row.force_logout_at) {
+          const { data: sessWrap } = await supabase.auth.getSession();
+          const decision = decideForceLogout(
+            row.force_logout_at,
+            sessionIssuedAtMs(sessWrap.session),
+            ack,
+          );
+          if (decision === 'revoke') {
             await AsyncStorage.setItem(FORCE_ACK_KEY, row.force_logout_at);
             void signOut(supabase);
             return;
+          }
+          if (decision === 'ack_keep' && ack !== row.force_logout_at) {
+            await AsyncStorage.setItem(FORCE_ACK_KEY, row.force_logout_at);
           }
         }
       } catch { /* columns may predate the migration — ignore */ }
@@ -112,11 +147,41 @@ export default function AdminGate() {
     return () => { supabase.removeChannel(ch); };
   }, []);
 
+  // Per-session revocation: realtime pulse on our own user_sessions row (~1s
+  // when foregrounded) + re-register on every foreground as fallback/heartbeat.
+  // AdminGate unmounts on sign-out, so cleanup handles teardown. Fail-safe:
+  // if the table/RPC doesn't exist yet, everything no-ops.
+  useEffect(() => {
+    let channel: ReturnType<typeof subscribeToSessionRevoked> | null = null;
+    let active = true;
+
+    (async () => {
+      const sid = await getSessionId(supabase).catch(() => null);
+      if (!sid || !active) return;
+      channel = subscribeToSessionRevoked(supabase, sid, (reason) => {
+        if (active) handleSessionRevoked(reason);
+      });
+    })();
+
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') return;
+      registerSession(supabase, SESSION_PLATFORM, DEVICE_LABEL)
+        .then((res) => { if (active && res.revoked) handleSessionRevoked(res.reason ?? null); })
+        .catch(() => { /* ignore */ });
+    });
+
+    return () => {
+      active = false;
+      sub.remove();
+      if (channel) supabase.removeChannel(channel);
+    };
+  }, []);
+
   if (blocked) {
     return <Overlay title="Account unavailable" body={`Your account has been ${blocked}. Contact support if you believe this is a mistake.`} colors={colors} />;
   }
   if (maintenance) {
-    return <Overlay title="Under maintenance" body="FUTUREHAT is temporarily unavailable. Please check back soon." colors={colors} />;
+    return <Overlay title="Under maintenance" body="Lumixo is temporarily unavailable. Please check back soon." colors={colors} />;
   }
   if (announcement && !dismissed) {
     return (

@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#0B141A" />
+  <title>Lumixo — Offline</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: #0B141A;
+      color: #e9edef;
+      text-align: center;
+      padding: 24px;
+    }
+    img {
+      width: 160px;
+      height: 160px;
+      filter: drop-shadow(0 12px 28px rgba(0, 168, 132, 0.25));
+    }
+    h1 {
+      margin: 8px 0 0;
+      font-size: 22px;
+      font-weight: 800;
+      letter-spacing: 0.4px;
+    }
+    p {
+      margin: 0;
+      max-width: 320px;
+      color: #8696a0;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    button {
+      margin-top: 12px;
+      border: none;
+      border-radius: 999px;
+      padding: 12px 22px;
+      font-weight: 700;
+      font-size: 14px;
+      color: #fff;
+      background: linear-gradient(135deg, #00a884, #06cf9c);
+      cursor: pointer;
+    }
+    button:active { transform: scale(0.98); }
+  </style>
+</head>
+<body>
+  <img src="/lumi.svg" alt="Lumi, the Lumixo mascot" width="160" height="160" />
+  <h1>You're offline</h1>
+  <p>Lumi is taking a nap. Check your connection, then try again — your chats will be waiting.</p>
+  <button type="button" onclick="location.reload()">Try again</button>
+</body>
+</html>
