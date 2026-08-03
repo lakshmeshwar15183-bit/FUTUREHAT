@@ -97,7 +97,7 @@ describe('default preference source contract', () => {
     const src = fs.readFileSync(
       path.join(
         __dirname,
-        '../../../android/app/src/main/java/dev/lakshmeshwar/futurehat/MainActivity.kt',
+        '../../../android/app/src/main/java/com/lumixo/app/MainActivity.kt',
       ),
       'utf8',
     );

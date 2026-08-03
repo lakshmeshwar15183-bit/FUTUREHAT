@@ -11,6 +11,12 @@ import {
   getDeletionRequest, getSecurityEvents, getMyAccount, updateMyPhone, logoutAllDevices,
   type DeletionRequest, type SecurityEvent,
 } from '@shared/accountApi';
+import { sessionIssuedAtMs } from '@shared/forceLogout';
+import { getSessionId } from '@shared/api';
+import {
+  listMySessions, revokeSession, sortSessionsForDisplay, relativeLastSeen,
+  type UserSession,
+} from '@shared/sessionsApi';
 import { maskPhoneE164 } from '@shared/phone';
 import { friendlyAuthError } from '@shared/authErrors';
 import { modalBackdrop, modalPanel } from '../motion';
@@ -25,13 +31,29 @@ export function AccountSettingsModal({ onClose, onExport }: { onClose: () => voi
   const [twofa, setTwofa] = useState<{ secret?: string; uri?: string; factorId?: string; code: string; enabled: boolean }>({ code: '', enabled: false });
   const [events, setEvents] = useState<SecurityEvent[]>([]);
   const [deletion, setDeletion] = useState<DeletionRequest | null>(null);
+  const [sessions, setSessions] = useState<UserSession[]>([]);
+  const [mySessionId, setMySessionId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
   function flash(m: string) { setToast(m); setTimeout(() => setToast(null), 2600); }
 
+  async function refreshSessions() {
+    try {
+      const [list, sid] = await Promise.all([listMySessions(supabase), getSessionId(supabase)]);
+      setSessions(sortSessionsForDisplay(list, sid));
+      setMySessionId(sid);
+    } catch { /* table may predate the migration */ }
+  }
+
   useEffect(() => {
-    getSecurityEvents(supabase).then(setEvents).catch(() => {});
+    (async () => {
+      const { data: sess } = await supabase.auth.getSession();
+      const since = sess?.session ? sessionIssuedAtMs(sess.session) : null;
+      const sinceIso = since ? new Date(since).toISOString() : null;
+      getSecurityEvents(supabase, 50, sinceIso).then(setEvents).catch(() => {});
+    })();
     getDeletionRequest(supabase).then(setDeletion).catch(() => {});
+    void refreshSessions();
     getMyAccount(supabase).then(({ account }) => {
       if (!account) return;
       setCurrentEmail(account.email ?? '');
@@ -75,6 +97,13 @@ export function AccountSettingsModal({ onClose, onExport }: { onClose: () => voi
     if (!confirm('Sign out of all devices? You will need your email and password again.')) return;
     const { error } = await logoutAllDevices(supabase);
     if (error) flash(friendlyAuthError(error));
+  }
+  async function signOutDevice(s: UserSession) {
+    if (!confirm(`Sign out "${s.device_label || s.platform}"? It will be disconnected from your account.`)) return;
+    const { error } = await revokeSession(supabase, s.session_id);
+    if (error) flash(friendlyAuthError(error, 'Could not sign out that device.'));
+    else flash('Device signed out.');
+    void refreshSessions();
   }
 
   async function start2fa() {
@@ -155,7 +184,31 @@ export function AccountSettingsModal({ onClose, onExport }: { onClose: () => voi
         </section>
 
         <section className="sp-section">
-          <h3>Sessions</h3>
+          <h3>Devices</h3>
+          {sessions.length === 0 ? (
+            <div className="sp-note">Device list is unavailable right now.</div>
+          ) : sessions.map((s) => {
+            const isThis = s.session_id === mySessionId;
+            return (
+              <div className="sp-row" key={s.session_id}>
+                <div className="sp-row-main">
+                  <div className="sp-row-name">
+                    {s.device_label || s.platform}
+                    {isThis ? <span style={{ color: 'var(--fh-accent, #7c5cff)', fontWeight: 700 }}> · This device</span> : null}
+                  </div>
+                  <div className="sp-row-desc">
+                    {s.platform === 'web' ? 'Web' : s.platform === 'ios' ? 'iPhone' : 'Android'}
+                    {isThis ? '' : ` · active ${relativeLastSeen(s.last_seen, Date.now())}`}
+                  </div>
+                </div>
+                {!isThis && <button className="sp-btn danger" onClick={() => signOutDevice(s)}>Sign out</button>}
+              </div>
+            );
+          })}
+          <div className="sp-note">
+            Your account can be signed in on 2 phones at a time — a third phone signs out the
+            oldest. Web sessions are unlimited.
+          </div>
           <button className="sp-btn danger wide" onClick={signOutEverywhere}>Sign out of all devices</button>
         </section>
 

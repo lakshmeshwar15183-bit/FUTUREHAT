@@ -33,6 +33,13 @@ import { getCache, setCache } from '../lib/localCache';
 
 const PREMIUM_CACHE_KEY = 'me:premium';
 
+// Launch gift: everyone gets Lumixo+ free until this date.
+// Remove this block (and the isLaunchGiftActive() references) once payments go live.
+const LAUNCH_GIFT_EXPIRY = new Date('2026-11-03T23:59:59.000Z');
+function isLaunchGiftActive(): boolean {
+  return Date.now() < LAUNCH_GIFT_EXPIRY.getTime();
+}
+
 export type PremiumActivationPhase =
   | 'idle'
   | 'activating' // payment succeeded, server verify in flight
@@ -40,8 +47,12 @@ export type PremiumActivationPhase =
   | 'failed';
 
 interface PremiumContextValue {
-  /** Effective premium (subscription OR server flag OR optimistic). */
+  /** Effective premium (subscription OR server flag OR optimistic OR launch gift). */
   isPremium: boolean;
+  /** True when premium comes from the launch gift, not a paid subscription. */
+  isLaunchGift: boolean;
+  /** When the launch gift expires (null if gift period is over). */
+  launchGiftExpiry: Date | null;
   subscription: Subscription | null;
   /** True while verifying payment after Checkout success. */
   isActivating: boolean;
@@ -198,14 +209,19 @@ export function PremiumProvider({ children }: { children: ReactNode }) {
     if (activationPhase === 'failed') setActivationPhase('idle');
   }, [activationPhase]);
 
-  const isPremium =
+  const giftActive = isLaunchGiftActive();
+  const paidPremium =
     optimistic ||
     serverPremium ||
     isSubscriptionActive(subscription);
+  const isPremium = paidPremium || giftActive;
+  const isLaunchGift = giftActive && !paidPremium;
 
   const value = useMemo<PremiumContextValue>(
     () => ({
       isPremium,
+      isLaunchGift,
+      launchGiftExpiry: giftActive ? LAUNCH_GIFT_EXPIRY : null,
       subscription,
       isActivating: activationPhase === 'activating',
       activationPhase,
@@ -219,6 +235,8 @@ export function PremiumProvider({ children }: { children: ReactNode }) {
     }),
     [
       isPremium,
+      isLaunchGift,
+      giftActive,
       subscription,
       activationPhase,
       activationError,

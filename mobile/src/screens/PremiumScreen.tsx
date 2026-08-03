@@ -57,6 +57,8 @@ export default function PremiumScreen() {
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const {
     isPremium,
+    isLaunchGift,
+    launchGiftExpiry,
     subscription,
     isActivating,
     beginActivation,
@@ -285,9 +287,11 @@ export default function PremiumScreen() {
           <Ionicons name="diamond" size={48} color={colors.accentPlusText} />
           <Text style={styles.heroTitle}>{APP_NAME}+</Text>
           <Text style={styles.heroSub}>
-            {active
-              ? 'Your premium is active. Enjoy everything.'
-              : 'Unlock the full Lumixo experience.'}
+            {isLaunchGift
+              ? 'You\'ve been gifted Lumixo+ Premium!'
+              : active
+                ? 'Your premium is active. Enjoy everything.'
+                : 'Unlock the full Lumixo experience.'}
           </Text>
         </View>
 
@@ -305,7 +309,20 @@ export default function PremiumScreen() {
           </View>
         )}
 
-        {!active && (
+        {isLaunchGift && (
+          <View style={styles.giftCard}>
+            <Text style={styles.giftEmoji}>🎁</Text>
+            <Text style={styles.giftTitle}>Premium Gifted</Text>
+            <Text style={styles.giftBody}>
+              All Lumixo+ features are unlocked for free as an early adopter gift.
+              {launchGiftExpiry
+                ? ` Enjoy until ${launchGiftExpiry.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}.`
+                : ''}
+            </Text>
+          </View>
+        )}
+
+        {!active && !isLaunchGift && (
           <View style={styles.plans}>
             {PLAN_LIST.map((p) => {
               const on = plan === p.id;
@@ -394,13 +411,13 @@ export default function PremiumScreen() {
           </View>
         )}
 
-        {active ? (
+        {active && !isLaunchGift ? (
           !subscription?.cancel_at_period_end ? (
             <Pressable style={styles.cancelBtn} onPress={cancel} disabled={checkoutBusy}>
               <Text style={styles.cancelText}>Cancel subscription</Text>
             </Pressable>
           ) : null
-        ) : (
+        ) : !isLaunchGift ? (
           <Pressable
             style={[
               styles.cta,
@@ -432,7 +449,7 @@ export default function PremiumScreen() {
               </>
             )}
           </Pressable>
-        )}
+        ) : null}
 
         <View style={styles.features}>
           {Object.entries(FEATURE_CATEGORIES).map(([cat, meta]) => {
@@ -590,4 +607,23 @@ const makeStyles = (colors: Palette) =>
     featureIcon: { fontSize: 20, marginRight: spacing(3), width: 26, textAlign: 'center' },
     featureTitle: { color: colors.text, fontSize: font.body, fontWeight: '600' },
     featureDesc: { color: colors.textMuted, fontSize: font.small, marginTop: 1 },
+    giftCard: {
+      marginHorizontal: spacing(4),
+      marginBottom: spacing(4),
+      backgroundColor: colors.surface,
+      borderRadius: radius.lg,
+      padding: spacing(5),
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: colors.primary,
+    },
+    giftEmoji: { fontSize: 36, marginBottom: spacing(2) },
+    giftTitle: { color: colors.primary, fontSize: font.title, fontWeight: '800' },
+    giftBody: {
+      color: colors.textMuted,
+      fontSize: font.body,
+      textAlign: 'center',
+      marginTop: spacing(2),
+      lineHeight: 22,
+    },
   });

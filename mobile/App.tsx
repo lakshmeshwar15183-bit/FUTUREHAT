@@ -2,7 +2,19 @@
 // auth gate, bottom tabs, and the full navigation stack.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, Platform, StyleSheet, Text, View } from 'react-native';
+import * as Sentry from '@sentry/react-native';
 import * as Linking from 'expo-linking';
+
+// Sentry crash monitoring — init at module scope so even boot failures are
+// captured. No-op without a DSN (local dev before .env is filled in); the
+// lightweight Supabase crash reporter below still runs either way.
+const SENTRY_DSN = process.env.EXPO_PUBLIC_SENTRY_DSN?.trim();
+Sentry.init({
+  dsn: SENTRY_DSN,
+  enabled: Boolean(SENTRY_DSN) && !__DEV__,
+  // Keep perf sampling light — this is a chat app, crashes are what matter.
+  tracesSampleRate: 0.1,
+});
 import { SafeAreaProvider, useSafeAreaInsets, initialWindowMetrics } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
@@ -171,7 +183,7 @@ function MainTabs() {
 
 // Deep-link config for React Navigation. `expo-linking`'s createURL() derives
 // the correct scheme for every runtime (Expo Go: `exp://…`, dev-client:
-// `dev.lakshmeshwar.futurehat://…`, standalone: `futurehat://…`), and we
+// `com.lumixo.app://…`, standalone: `futurehat://…`), and we
 // include the app scheme as an explicit prefix so production builds route
 // `futurehat://reset-password` without any config drift.
 // The https origin is the primary reset-link prefix (Android App Link / iOS
@@ -477,7 +489,7 @@ function RootNavigator() {
   );
 }
 
-export default function App() {
+function App() {
   // P0: global crash capture first so boot failures are recorded.
   useEffect(() => {
     installCrashReporter();
@@ -530,6 +542,9 @@ export default function App() {
     </ErrorBoundary>
   );
 }
+
+// Sentry.wrap adds a touch-event breadcrumb + profiler layer around the root.
+export default Sentry.wrap(App);
 
 const styles = StyleSheet.create({
   splash: { flex: 1, alignItems: 'center', justifyContent: 'center' },

@@ -15,7 +15,7 @@ const {
   withDangerousMod,
 } = require('@expo/config-plugins');
 
-const PKG = 'dev.lakshmeshwar.futurehat';
+const PKG = 'com.lumixo.app';
 const ICON_IDS = [1, 2, 3, 4, 5, 6];
 const DENSITIES = ['mdpi', 'hdpi', 'xhdpi', 'xxhdpi', 'xxxhdpi'];
 
@@ -48,7 +48,7 @@ function ensureAdaptiveXml(resRoot) {
 function writeKotlinModules(projectRoot) {
   const javaDir = path.join(
     projectRoot,
-    'android/app/src/main/java/dev/lakshmeshwar/futurehat',
+    'android/app/src/main/java/com/lumixo/app',
   );
   fs.mkdirSync(javaDir, { recursive: true });
 

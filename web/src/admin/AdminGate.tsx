@@ -1,8 +1,10 @@
 // Lumixo — client enforcement of the owner/admin controls. Mounted high in the
 // tree; it makes the admin surface REAL on the client side:
 //   • registers this browser as a device (so the Owner can see/revoke it),
+//   • registers this session in user_sessions (device list; web is unlimited),
 //   • signs out banned / disabled / locked accounts,
 //   • honours a force-logout pulse (force_logout_at),
+//   • honours per-session revocation (remote sign-out from another device),
 //   • shows a maintenance screen when the `app_enabled` flag is off (non-admins),
 //   • shows the latest active announcement as a dismissible banner.
 // It is fail-safe: any error path renders null and never blocks the app. All of
@@ -12,12 +14,25 @@ import { useEffect, useState, type CSSProperties } from 'react';
 import { useAuth } from '../AuthContext';
 import { usePremium } from '../PremiumContext';
 import { supabase } from '../supabase';
-import { signOut } from '@shared/api';
+import { signOut, getSessionId } from '@shared/api';
 import { registerDevice, isFeatureEnabled, getActiveAnnouncements } from '@shared/adminApi';
+import {
+  registerSession, subscribeToSessionRevoked, revokedSignOutMessage, makeWebDeviceLabel,
+  type RevokedReason,
+} from '@shared/sessionsApi';
 import { decideForceLogout, sessionIssuedAtMs } from '@shared/forceLogout';
 import type { Announcement } from '@shared/types';
 
 const BLOCKED = new Set(['banned', 'disabled', 'locked']);
+
+// Sign out because THIS session was revoked from another device.
+let revokeHandled = false;
+function handleSessionRevoked(reason: RevokedReason | null) {
+  if (revokeHandled) return;
+  revokeHandled = true;
+  alert(revokedSignOutMessage(reason));
+  void signOut(supabase).finally(() => { revokeHandled = false; });
+}
 
 export function AdminGate() {
   const { user } = useAuth();
@@ -38,6 +53,13 @@ export function AdminGate() {
         if (!devId) { devId = crypto.randomUUID(); localStorage.setItem('fh:deviceId', devId); }
         void registerDevice(supabase, devId, navigator.platform || 'Web browser', 'web');
       } catch { /* ignore */ }
+
+      // 1b) Register this session in the device list. If the server says THIS
+      // session was revoked (signed out from another device), sign out.
+      try {
+        const res = await registerSession(supabase, 'web', makeWebDeviceLabel(navigator.userAgent));
+        if (res.revoked) { if (active) handleSessionRevoked(res.reason ?? null); return; }
+      } catch { /* RPC may predate the migration — ignore */ }
 
       // 2) Enforce account status + force-logout from the caller's own row.
       try {
@@ -104,6 +126,37 @@ export function AdminGate() {
       })
       .subscribe();
     return () => { supabase.removeChannel(ch); };
+  }, [user]);
+
+  // Per-session revocation: realtime pulse on our own user_sessions row (~1s
+  // while the tab is open) + re-register when the tab regains visibility as
+  // fallback/heartbeat. Fail-safe: no-ops if the table/RPC doesn't exist yet.
+  useEffect(() => {
+    if (!user) return;
+    let channel: ReturnType<typeof subscribeToSessionRevoked> | null = null;
+    let active = true;
+
+    (async () => {
+      const sid = await getSessionId(supabase).catch(() => null);
+      if (!sid || !active) return;
+      channel = subscribeToSessionRevoked(supabase, sid, (reason) => {
+        if (active) handleSessionRevoked(reason);
+      });
+    })();
+
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      registerSession(supabase, 'web', makeWebDeviceLabel(navigator.userAgent))
+        .then((res) => { if (active && res.revoked) handleSessionRevoked(res.reason ?? null); })
+        .catch(() => { /* ignore */ });
+    };
+    document.addEventListener('visibilitychange', onVisible);
+
+    return () => {
+      active = false;
+      document.removeEventListener('visibilitychange', onVisible);
+      if (channel) supabase.removeChannel(channel);
+    };
   }, [user]);
 
   if (blocked) return <Overlay title="Account unavailable" body={`Your account has been ${blocked}. Contact support if you believe this is a mistake.`} />;

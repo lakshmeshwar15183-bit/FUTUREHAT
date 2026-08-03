@@ -8,7 +8,7 @@ describe('AppIcon native module safety contract', () => {
   const kt = fs.readFileSync(
     path.join(
       __dirname,
-      '../../../android/app/src/main/java/dev/lakshmeshwar/futurehat/AppIconModule.kt',
+      '../../../android/app/src/main/java/com/lumixo/app/AppIconModule.kt',
     ),
     'utf8',
   );

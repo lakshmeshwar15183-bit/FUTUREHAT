@@ -33,6 +33,7 @@ import { useColors, spacing, radius, font, type Palette } from '../theme';
 import { APP_NAME, APP_VERSION, CREDIT } from '../branding';
 import { LumixoCat } from '../components/LumixoCat';
 import ProfileAvatar from '../components/ProfileAvatar';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   SettingsIconBadge,
   SettingsRow,
@@ -448,7 +449,8 @@ export default function SettingsScreen() {
   // Tab root: tab bar already owns the system nav inset via tabBarSafeStyle.
   // Only add content breathing room here — SafeScrollView with includeBottomInset
   // would double-count and leave a large empty band above the tab bar.
-  const footerPad = spacing(10);
+  const insets = useSafeAreaInsets();
+  const footerPad = Math.max(spacing(10), insets.bottom + spacing(6));
 
   return (
     <SafeScrollView

@@ -5,6 +5,7 @@ import type { UUID } from './types.js';
 import { getCurrentUser } from './api.js';
 import { friendlyAuthError, isValidEmail, validatePassword } from './authErrors.js';
 import { DISPOSABLE_EMAIL_MESSAGE, isDisposableEmail } from './disposableEmail.js';
+import { UNSUPPORTED_EMAIL_DOMAIN_MESSAGE, isAllowedEmailDomain } from './allowedEmailDomains.js';
 import { setMyPhone, logout, getMyAccount } from './authApi.js';
 import type { DefaultCountry } from './phone.js';
 
@@ -56,6 +57,10 @@ export async function changeEmail(client: SupabaseClient, newEmail: string) {
   }
   if (isDisposableEmail(mail)) {
     return { error: new Error(DISPOSABLE_EMAIL_MESSAGE) };
+  }
+  // Beta-only allowlist (mirrored server-side, migration 0068).
+  if (!isAllowedEmailDomain(mail)) {
+    return { error: new Error(UNSUPPORTED_EMAIL_DOMAIN_MESSAGE) };
   }
   const { error } = await client.auth.updateUser({ email: mail });
   if (error) return { error: new Error(friendlyAuthError(error, 'Could not update email.')) };
@@ -162,11 +167,21 @@ export async function logSecurityEvent(client: SupabaseClient, kind: SecurityEve
     .insert({ user_id: user.id, kind, user_agent: userAgent ?? null });
   return { error };
 }
-export async function getSecurityEvents(client: SupabaseClient, limit = 50): Promise<SecurityEvent[]> {
-  const { data } = await client
+
+/**
+ * Fetch security events, optionally filtered to only show events created
+ * at or after the provided ISO timestamp. Pass `since` = session `iat` so
+ * the history only shows events from the current session.
+ */
+export async function getSecurityEvents(client: SupabaseClient, limit = 50, since?: string | null): Promise<SecurityEvent[]> {
+  let query = client
     .from('security_events')
     .select('*')
     .order('created_at', { ascending: false })
     .limit(limit);
+  if (since) {
+    query = query.gte('created_at', since);
+  }
+  const { data } = await query;
   return (data ?? []) as SecurityEvent[];
 }

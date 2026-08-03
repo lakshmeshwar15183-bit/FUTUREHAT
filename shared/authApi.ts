@@ -10,6 +10,7 @@ import {
   validateDisplayName,
 } from './authErrors.js';
 import { DISPOSABLE_EMAIL_MESSAGE, isDisposableEmail } from './disposableEmail.js';
+import { UNSUPPORTED_EMAIL_DOMAIN_MESSAGE, isAllowedEmailDomain } from './allowedEmailDomains.js';
 import { isValidE164, normalizeToE164, type DefaultCountry } from './phone.js';
 
 export interface SignUpInput {
@@ -51,6 +52,10 @@ export async function registerWithEmail(
   // Free offline block: reject known temporary / disposable inboxes.
   if (isDisposableEmail(email)) {
     return { user: null, session: null, error: new Error(DISPOSABLE_EMAIL_MESSAGE) };
+  }
+  // Beta-only: restrict signups to trusted providers (mirrored server-side, 0068).
+  if (!isAllowedEmailDomain(email)) {
+    return { user: null, session: null, error: new Error(UNSUPPORTED_EMAIL_DOMAIN_MESSAGE) };
   }
   const nameCheck = validateDisplayName(input.displayName);
   if (!nameCheck.ok) {
@@ -175,6 +180,9 @@ export async function logout(
       if (error) return { error: asError(error, 'Could not sign out everywhere.') };
       return { error: null };
     }
+    // Drop own user_sessions row so this device leaves other devices' lists
+    // immediately (best-effort; RPC may predate the 0067 migration).
+    await client.rpc('unregister_session').then(() => {}, () => {});
     const { error } = await client.auth.signOut({ scope: 'local' });
     if (error) return { error: asError(error, 'Could not sign out.') };
     return { error: null };

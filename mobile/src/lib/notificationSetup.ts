@@ -150,7 +150,7 @@ export async function openAppNotificationSettings(): Promise<void> {
     if (Platform.OS === 'android') {
       try {
         await Linking.sendIntent('android.settings.APP_NOTIFICATION_SETTINGS', [
-          { key: 'android.provider.extra.APP_PACKAGE', value: 'dev.lakshmeshwar.futurehat' },
+          { key: 'android.provider.extra.APP_PACKAGE', value: 'com.lumixo.app' },
         ]);
         return;
       } catch { /* fall through */ }
@@ -167,7 +167,7 @@ export async function openAppBatterySettings(): Promise<void> {
   try {
     if (Platform.OS === 'android') {
       try {
-        await Linking.openURL('package:dev.lakshmeshwar.futurehat');
+        await Linking.openURL('package:com.lumixo.app');
         return;
       } catch { /* fall through */ }
     }

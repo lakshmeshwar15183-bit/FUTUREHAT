@@ -164,6 +164,36 @@ export async function getCurrentUser(client: SupabaseClient): Promise<User | nul
   return data.session?.user ?? null;
 }
 
+function base64UrlDecode(str: string): string {
+  const b64 = str.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = b64 + '==='.slice((b64.length + 3) % 4);
+  if (typeof atob === 'function') return atob(padded);
+  if (typeof Buffer !== 'undefined') return Buffer.from(padded, 'base64').toString('utf8');
+  return '';
+}
+
+export function decodeSessionId(accessToken: string): string | null {
+  try {
+    const parts = accessToken.split('.');
+    if (parts.length !== 3) return null;
+    const payload = JSON.parse(base64UrlDecode(parts[1]));
+    return payload.session_id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function getSessionId(client: SupabaseClient): Promise<string | null> {
+  try {
+    const { data } = await client.auth.getSession();
+    const token = data.session?.access_token;
+    if (!token) return null;
+    return decodeSessionId(token);
+  } catch {
+    return null;
+  }
+}
+
 // ── Profiles ────────────────────────────────────────────────────────────────
 
 /** Safe peer-facing columns — never phone, account_status, ban fields, role. */

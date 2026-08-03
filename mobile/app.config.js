@@ -5,9 +5,9 @@
 // native build wires up FCM automatically — no app.json edit required.
 //
 // To enable killed-state push (see WORK_LOG.md → "Manual setup"):
-//   1. Firebase console → add an Android app with package `dev.lakshmeshwar.futurehat`,
+//   1. Firebase console → add an Android app with package `com.lumixo.app`,
 //      download `google-services.json` into this `mobile/` folder.
-//   2. (iOS) add an iOS app with bundle id `dev.lakshmeshwar.futurehat`, upload your
+//   2. (iOS) add an iOS app with bundle id `com.lumixo.app`, upload your
 //      APNs key in Firebase, download `GoogleService-Info.plist` into `mobile/`.
 //   3. Rebuild the native app (EAS build / expo run) so the files are embedded.
 const fs = require('fs');

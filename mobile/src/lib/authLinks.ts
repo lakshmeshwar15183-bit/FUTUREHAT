@@ -16,7 +16,7 @@ import Constants from 'expo-constants';
 export const RESET_PASSWORD_PATH = 'reset-password';
 
 /** App schemes that installed builds accept (AndroidManifest + app.json). */
-const APP_SCHEMES = ['futurehat', 'lumixo', 'dev.lakshmeshwar.futurehat'] as const;
+const APP_SCHEMES = ['futurehat', 'lumixo', 'com.lumixo.app'] as const;
 
 function isUnsafeRedirect(url: string): boolean {
   return /localhost|127\.0\.0\.1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|exp:\/\/|exps:\/\//i.test(url);

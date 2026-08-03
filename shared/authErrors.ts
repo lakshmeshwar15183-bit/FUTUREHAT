@@ -63,6 +63,9 @@ export function friendlyAuthError(err: unknown, fallback = 'Something went wrong
   ) {
     return 'Temporary or disposable email addresses are not allowed. Please use a permanent email (Gmail, Outlook, iCloud, Proton, Yahoo, etc.).';
   }
+  if (code === 'email_domain_not_allowed' || /email_domain_not_allowed/.test(lower)) {
+    return '🚀 Lumixo is currently in beta. Please sign up using a supported email provider.';
+  }
   if (code === 'same_password' || /same password|different from the old/.test(lower)) {
     return 'Choose a password you have not used recently.';
   }

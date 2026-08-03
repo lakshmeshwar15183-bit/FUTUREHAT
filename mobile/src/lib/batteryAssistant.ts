@@ -20,7 +20,7 @@ const KEY_SUCCESS = 'fh:batteryAssist:success:v2';
 const KEY_SEEN = 'fh:batteryAssist:seen:v2';
 
 const REMIND_LATER_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
-const PACKAGE = 'dev.lakshmeshwar.futurehat';
+const PACKAGE = 'com.lumixo.app';
 
 type NativeBattery = {
   getStatus?: () => Promise<{

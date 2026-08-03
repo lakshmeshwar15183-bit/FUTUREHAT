@@ -14,9 +14,11 @@ import type { RootStackParamList } from '../navigation/types';
 import {
   changeEmail, changePassword, requestAccountDeletion, cancelAccountDeletion,
   getDeletionRequest, getSecurityEvents, getMyAccount, updateMyPhone, logoutAllDevices,
-  maskPhoneE164, friendlyAuthError,
-  type DeletionRequest, type SecurityEvent,
+  maskPhoneE164, friendlyAuthError, getSessionId,
+  listMySessions, revokeSession, sortSessionsForDisplay, relativeLastSeen,
+  type DeletionRequest, type SecurityEvent, type UserSession,
 } from '../lib/shared';
+import { sessionIssuedAtMs } from '../../../shared/forceLogout';
 import { useColors, spacing, radius, font, type Palette } from '../theme';
 import { Alert } from '../ui/dialog';
 
@@ -31,6 +33,9 @@ export default function AccountSecurityScreen() {
   const [savedPhoneMasked, setSavedPhoneMasked] = useState('');
   const [events, setEvents] = useState<SecurityEvent[]>([]);
   const [deletion, setDeletion] = useState<DeletionRequest | null>(null);
+  const [sessions, setSessions] = useState<UserSession[]>([]);
+  const [mySessionId, setMySessionId] = useState<string | null>(null);
+  const [sessionsLoaded, setSessionsLoaded] = useState(false);
   const [twofaOn, setTwofaOn] = useState(false);
   // Two-step verification (Supabase TOTP MFA) — full enroll/verify/disable, same
   // as the web AccountSettingsModal (was previously "set it up on the web app").
@@ -40,7 +45,12 @@ export default function AccountSecurityScreen() {
   const [mfaBusy, setMfaBusy] = useState(false);
 
   useEffect(() => {
-    getSecurityEvents(supabase).then(setEvents).catch(() => {});
+    (async () => {
+      const { data: sess } = await supabase.auth.getSession();
+      const since = sess?.session ? sessionIssuedAtMs(sess.session) : null;
+      const sinceIso = since ? new Date(since).toISOString() : null;
+      getSecurityEvents(supabase, 50, sinceIso).then(setEvents).catch(() => {});
+    })();
     getDeletionRequest(supabase).then(setDeletion).catch(() => {});
     getMyAccount(supabase).then(({ account }) => {
       if (!account) return;
@@ -58,7 +68,39 @@ export default function AccountSecurityScreen() {
         setFactorId(verified?.id ?? null);
       } catch { /* MFA may be off */ }
     })();
+    void refreshSessions();
   }, []);
+
+  async function refreshSessions() {
+    try {
+      const [list, sid] = await Promise.all([
+        listMySessions(supabase),
+        getSessionId(supabase),
+      ]);
+      setSessions(sortSessionsForDisplay(list, sid));
+      setMySessionId(sid);
+    } catch { /* table may predate the migration */ }
+    setSessionsLoaded(true);
+  }
+
+  function confirmRevokeSession(s: UserSession) {
+    Alert.alert(
+      'Sign out device',
+      `Sign out "${s.device_label || s.platform}"? It will be disconnected from your account.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Sign out',
+          style: 'destructive',
+          onPress: async () => {
+            const { error } = await revokeSession(supabase, s.session_id);
+            if (error) Alert.alert('Error', friendlyAuthError(error, 'Could not sign out that device.'));
+            void refreshSessions();
+          },
+        },
+      ],
+    );
+  }
 
   async function startEnroll() {
     setMfaBusy(true);
@@ -210,7 +252,48 @@ export default function AccountSecurityScreen() {
       </View>
       <Pressable style={styles.btn} onPress={savePhone}><Text style={styles.btnText}>Save phone</Text></Pressable>
 
-      <Text style={styles.sectionLabel}>SESSIONS</Text>
+      <Text style={styles.sectionLabel}>DEVICES</Text>
+      <View style={styles.group}>
+        {!sessionsLoaded ? (
+          <Text style={styles.empty}>Loading devices…</Text>
+        ) : sessions.length === 0 ? (
+          <Text style={styles.empty}>Device list is unavailable right now.</Text>
+        ) : sessions.map((s) => {
+          const isThis = s.session_id === mySessionId;
+          return (
+            <View key={s.session_id} style={styles.deviceRow}>
+              <Ionicons
+                name={s.platform === 'web' ? 'desktop-outline' : 'phone-portrait-outline'}
+                size={20}
+                color={colors.textMuted}
+                style={{ marginRight: spacing(3) }}
+              />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.rowLabel} numberOfLines={1}>
+                  {s.device_label || s.platform}
+                  {isThis ? <Text style={styles.thisDevice}>  ·  This device</Text> : null}
+                </Text>
+                <Text style={styles.linkSub}>
+                  {s.platform === 'web' ? 'Web' : s.platform === 'ios' ? 'iPhone' : 'Android'}
+                  {isThis ? '' : ` · active ${relativeLastSeen(s.last_seen, Date.now())}`}
+                </Text>
+              </View>
+              {!isThis && (
+                <Pressable hitSlop={8} onPress={() => confirmRevokeSession(s)}>
+                  <Text style={styles.deviceSignOut}>Sign out</Text>
+                </Pressable>
+              )}
+            </View>
+          );
+        })}
+      </View>
+      <View style={styles.group}>
+        <Text style={styles.note}>
+          Your account can be signed in on 2 phones at a time. Signing in on a third phone
+          automatically signs out the oldest one. Web sessions are unlimited.
+        </Text>
+        <View style={{ height: spacing(2) }} />
+      </View>
       <Pressable style={styles.btnDanger} onPress={confirmLogoutAll}>
         <Text style={styles.btnDangerText}>Sign out of all devices</Text>
       </Pressable>
@@ -321,4 +404,7 @@ const makeStyles = (colors: Palette) =>
     linkRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing(4), paddingVertical: spacing(3) },
     rowLabel: { color: colors.text, fontSize: font.body, fontWeight: '500' },
     linkSub: { color: colors.textMuted, fontSize: font.small, marginTop: 2 },
+    deviceRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing(4), paddingVertical: spacing(3), borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
+    thisDevice: { color: colors.primary, fontSize: font.small, fontWeight: '700' },
+    deviceSignOut: { color: colors.danger, fontSize: font.small, fontWeight: '700', paddingLeft: spacing(3) },
   });

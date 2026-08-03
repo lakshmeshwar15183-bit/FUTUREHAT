@@ -41,7 +41,7 @@ async function openChannelSettings(channelId: string) {
   }
   try {
     await Linking.sendIntent('android.settings.CHANNEL_NOTIFICATION_SETTINGS', [
-      { key: 'android.provider.extra.APP_PACKAGE', value: 'dev.lakshmeshwar.futurehat' },
+      { key: 'android.provider.extra.APP_PACKAGE', value: 'com.lumixo.app' },
       { key: 'android.provider.extra.CHANNEL_ID', value: channelId },
     ]);
   } catch {

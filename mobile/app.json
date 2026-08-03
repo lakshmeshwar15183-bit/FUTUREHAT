@@ -2,7 +2,7 @@
   "expo": {
     "name": "Lumixo",
     "slug": "futurehat",
-    "version": "4.6.3",
+    "version": "4.6.4",
     "orientation": "portrait",
     "scheme": "futurehat",
     "userInterfaceStyle": "automatic",
@@ -18,7 +18,7 @@
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "dev.lakshmeshwar.futurehat",
+      "bundleIdentifier": "com.lumixo.app",
       "buildNumber": "49",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
@@ -32,8 +32,8 @@
       }
     },
     "android": {
-      "package": "dev.lakshmeshwar.futurehat",
-      "versionCode": 70,
+      "package": "com.lumixo.app",
+      "versionCode": 72,
       "allowBackup": false,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
@@ -61,8 +61,6 @@
       "permissions": [
         "CAMERA",
         "RECORD_AUDIO",
-        "READ_EXTERNAL_STORAGE",
-        "WRITE_EXTERNAL_STORAGE",
         "READ_MEDIA_IMAGES",
         "READ_MEDIA_VIDEO",
         "USE_BIOMETRIC",
@@ -78,6 +76,9 @@
         "BLUETOOTH_CONNECT",
         "WAKE_LOCK",
         "READ_CONTACTS"
+      ],
+      "blockedPermissions": [
+        "android.permission.SYSTEM_ALERT_WINDOW"
       ]
     },
     "web": {
@@ -157,6 +158,13 @@
       "./plugins/withReleaseSigning",
       "expo-asset",
       "expo-font",
+      [
+        "@sentry/react-native/expo",
+        {
+          "organization": "lumixo",
+          "project": "lumixo-mobile"
+        }
+      ],
       "./plugins/withAppIcons",
       "./plugins/withIncomingCallNotifications"
     ]

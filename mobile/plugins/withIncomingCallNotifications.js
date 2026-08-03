@@ -16,7 +16,7 @@ const {
   withDangerousMod,
 } = require('@expo/config-plugins');
 
-const PKG = 'dev.lakshmeshwar.futurehat';
+const PKG = 'com.lumixo.app';
 
 const SERVICE_KT = `package ${PKG}
 
@@ -128,7 +128,7 @@ object IncomingCallNotifier {
     val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
     val openIntent = Intent(ctx, MainActivity::class.java).apply {
-      action = "dev.lakshmeshwar.futurehat.INCOMING_CALL"
+      action = "com.lumixo.app.INCOMING_CALL"
       flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
       putExtra("incoming_call_id", callId)
       putExtra("conversation_id", conversationId)
@@ -140,7 +140,7 @@ object IncomingCallNotifier {
     val contentPi = PendingIntent.getActivity(ctx, notifId(callId) + 1, openIntent, piFlags)
 
     val acceptIntent = Intent(ctx, MainActivity::class.java).apply {
-      action = "dev.lakshmeshwar.futurehat.CALL_ACCEPT"
+      action = "com.lumixo.app.CALL_ACCEPT"
       flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
       putExtra("incoming_call_id", callId)
       putExtra("conversation_id", conversationId)
@@ -148,7 +148,7 @@ object IncomingCallNotifier {
       putExtra("call_action", "accept")
     }
     val declineIntent = Intent(ctx, MainActivity::class.java).apply {
-      action = "dev.lakshmeshwar.futurehat.CALL_DECLINE"
+      action = "com.lumixo.app.CALL_DECLINE"
       flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
       putExtra("incoming_call_id", callId)
       putExtra("conversation_id", conversationId)
@@ -358,8 +358,8 @@ function withIncomingCallNotifications(config) {
       'intent-filter': [
         {
           action: [
-            { $: { 'android:name': 'dev.lakshmeshwar.futurehat.CALL_DECLINE' } },
-            { $: { 'android:name': 'dev.lakshmeshwar.futurehat.CALL_MUTE' } },
+            { $: { 'android:name': 'com.lumixo.app.CALL_DECLINE' } },
+            { $: { 'android:name': 'com.lumixo.app.CALL_MUTE' } },
           ],
         },
       ],
