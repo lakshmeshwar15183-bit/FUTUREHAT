@@ -20,7 +20,7 @@ import {
   AppState,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { RTCView, type MediaStream } from 'react-native-webrtc';
 import InCallManager from 'react-native-incall-manager';
 import * as Haptics from 'expo-haptics';
@@ -38,6 +38,7 @@ import {
   sendPush,
   recordStreakActivity,
   buildIceServers,
+  fetchTurnServers,
   hasTurn,
   type Call,
   type CallType,
@@ -301,8 +302,8 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       // Atomic claim before any await — second tap cannot race past the check.
       startingRef.current = true;
       try {
-        // Pre-flight: warn if TURN missing (cross-network will fail) — better than silent hang.
-        const ice = buildIceServers(
+        // Pre-flight: prefer Edge turn-config, fallback to env (see webrtc.ts getIceServers)
+        let ice = buildIceServers(
           process.env.EXPO_PUBLIC_TURN_URL
             ? {
                 urls: process.env.EXPO_PUBLIC_TURN_URL,
@@ -311,6 +312,10 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
               }
             : null,
         );
+        try {
+          const dyn = await fetchTurnServers(supabase);
+          if (dyn && dyn.length) ice = buildIceServers(dyn[0]);
+        } catch { /* keep env fallback */ }
         if (!hasTurn(ice)) {
           // Production: hard-block — cross-NAT reliability is not WhatsApp-class without TURN.
           // Dev builds may continue with a confirm so local same-Wi‑Fi testing still works.
@@ -318,7 +323,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
           if (isProd) {
             Alert.alert(
               'Calls unavailable',
-              'Voice/video needs a TURN relay (EXPO_PUBLIC_TURN_*). Configure TURN for production calling.',
+              'Voice/video needs a TURN relay (Edge turn-config / EXPO_PUBLIC_TURN_*). Provision TURN via supabase secrets set TURN_*.',
             );
             return;
           }

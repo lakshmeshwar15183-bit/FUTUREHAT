@@ -20,6 +20,7 @@ import { recordIcePath } from '../lib/deviceProofLog';
 import {
   createSignalingChannel,
   buildIceServers,
+  fetchTurnServers,
   hasTurn,
   type SignalingChannel,
   type SignalMessage,
@@ -38,7 +39,7 @@ const DISCONNECT_TEARDOWN_MS = 20_000;
 /** Aggressive ICE recovery on mobile handoffs (Wi‑Fi ↔ LTE). */
 const MAX_ICE_RESTARTS = 5;
 
-const ICE_SERVERS = buildIceServers(
+const ENV_ICE_SERVERS = buildIceServers(
   process.env.EXPO_PUBLIC_TURN_URL
     ? {
         urls: process.env.EXPO_PUBLIC_TURN_URL,
@@ -47,7 +48,20 @@ const ICE_SERVERS = buildIceServers(
       }
     : null,
 );
-const HAS_TURN = hasTurn(ICE_SERVERS);
+let resolvedIce: typeof ENV_ICE_SERVERS | null = null;
+async function getIceServers(): Promise<typeof ENV_ICE_SERVERS> {
+  if (resolvedIce) return resolvedIce;
+  try {
+    const dyn = await fetchTurnServers(supabase);
+    if (dyn && dyn.length) {
+      resolvedIce = buildIceServers(dyn[0]);
+      return resolvedIce;
+    }
+  } catch { /* fallback */ }
+  resolvedIce = ENV_ICE_SERVERS;
+  return resolvedIce;
+}
+const HAS_TURN = hasTurn(ENV_ICE_SERVERS); // initial env check; dynamic may provide TURN later
 
 export type ConnectionPath = 'direct' | 'relay' | 'unknown';
 
@@ -196,16 +210,17 @@ export class CallSession {
       (InCallManager as any).startProximitySensor?.();
     } catch { /* optional */ }
 
-    if (!HAS_TURN) {
+    const iceServers = await getIceServers();
+    if (!hasTurn(iceServers)) {
       clog(
-        '⚠️ NO TURN relay (EXPO_PUBLIC_TURN_* unset) — STUN only.',
-        'Cross-network calls will often fail. Configure TURN for production.',
+        '⚠️ NO TURN relay (Edge turn-config + EXPO_PUBLIC_TURN_* unset) — STUN only.',
+        'Cross-network calls will often fail. Provision TURN via supabase secrets set TURN_*.',
       );
     }
 
     // 3) Peer connection — larger ICE pool for faster first candidate on mobile.
     this.pc = new RTCPeerConnection({
-      iceServers: ICE_SERVERS,
+      iceServers: iceServers,
       iceCandidatePoolSize: 16,
       bundlePolicy: 'max-bundle',
       rtcpMuxPolicy: 'require',

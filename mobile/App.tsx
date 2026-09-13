@@ -1,3 +1,5 @@
+import 'react-native-get-random-values';
+import 'expo-standard-web-crypto';
 // Lumixo mobile — root component. Providers (safe-area, theme, app-lock),
 // auth gate, bottom tabs, and the full navigation stack.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -19,14 +21,21 @@ import { SafeAreaProvider, useSafeAreaInsets, initialWindowMetrics } from 'react
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { NavigationContainer, DefaultTheme, useNavigationContainerRef } from '@react-navigation/native';
+import { enableFreeze } from 'react-native-screens';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+// Required for freezeOnBlur (set in stack screenOptions) to actually take
+// effect — blurred screens stop re-rendering while background data changes.
+enableFreeze(true);
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { tabBarSafeStyle } from './src/lib/safeLayout';
 
 import { supabase } from './src/lib/supabase';
 import { getCurrentUser, onAuthChange } from './src/lib/shared';
 import { isRecoveryLink, parseRecoveryLink, RESET_PASSWORD_PATH } from './src/lib/authLinks';
+import { e2eStorage } from './src/lib/e2eStorage';
+import { setE2EStorage } from '../shared/e2eConfig';
+import { getOrCreateIdentity } from '../shared/e2eIdentity';
 import { startSync } from './src/lib/sync';
 import { hydrateAppIcon } from './src/lib/appIcon';
 import { installCrashReporter } from './src/lib/crashReporter';
@@ -389,6 +398,9 @@ function RootNavigator() {
       animationDuration: 220,
       gestureEnabled: true,
       fullScreenGestureEnabled: true,
+      // Smoothness: freeze blurred screens so a backgrounded ConversationsScreen
+      // (or any stacked screen) stops re-rendering while the user is in a chat.
+      freezeOnBlur: true,
     }),
     [colors],
   );
@@ -493,6 +505,20 @@ function App() {
   // P0: global crash capture first so boot failures are recorded.
   useEffect(() => {
     installCrashReporter();
+  }, []);
+  // E2EE: wire SecureStore adapter once
+  useEffect(() => {
+    try { setE2EStorage(e2eStorage as any); } catch { /* ignore */ }
+    // Best-effort ensure identity for already-signed-in user
+    void supabase.auth.getSession().then(({ data }) => {
+      const uid = data.session?.user?.id;
+      if (uid) void getOrCreateIdentity(supabase as any, uid, e2eStorage as any).catch(() => {});
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, sess) => {
+      const uid = sess?.user?.id;
+      if (uid) void getOrCreateIdentity(supabase as any, uid, e2eStorage as any).catch(() => {});
+    });
+    return () => sub.subscription.unsubscribe();
   }, []);
   // Start background sync + offline outbox flushing for the whole app lifetime.
   useEffect(() => startSync(), []);

@@ -64,6 +64,39 @@ export function buildIceServers(custom?: IceServer | null): IceServer[] {
   return DEFAULT_ICE_SERVERS;
 }
 
+/**
+ * Fetch TURN from the authenticated Edge Function `turn-config` (secrets, not env).
+ * Falls back to null if not configured — caller uses STUN only + warns.
+ * This lets you rotate TURN without shipping a new build and keeps credentials
+ * out of `EXPO_PUBLIC_*` / `VITE_*` bundles.
+ */
+export async function fetchTurnServers(client: SupabaseClient): Promise<IceServer[] | null> {
+  try {
+    const { data, error } = await client.functions.invoke('turn-config', { method: 'GET' });
+    if (error) return null;
+    const servers = (data as { iceServers?: IceServer[] | null })?.iceServers;
+    if (Array.isArray(servers) && servers.length) {
+      const urls = normalizeUrls(servers[0]?.urls);
+      if (urls.length) return servers;
+    }
+  } catch { /* ignore */ }
+  return null;
+}
+
+/**
+ * Resolve ICE servers: prefer dynamic `turn-config` Edge Function, else fall back
+ * to build-time env (EXPO_PUBLIC_TURN_* / VITE_TURN_*) for legacy/local dev.
+ */
+export async function resolveIceServers(
+  client: SupabaseClient,
+  envFallback?: IceServer | null,
+): Promise<IceServer[]> {
+  const dynamic = await fetchTurnServers(client);
+  if (dynamic) return buildIceServers(dynamic[0]);
+  if (envFallback && normalizeUrls(envFallback.urls).length) return buildIceServers(envFallback);
+  return DEFAULT_ICE_SERVERS;
+}
+
 /** Split a single/array/comma-separated urls value into a clean string array. */
 function normalizeUrls(urls?: string | string[]): string[] {
   if (!urls) return [];

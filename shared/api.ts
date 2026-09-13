@@ -45,6 +45,9 @@ import {
   resolveDisplayName,
   mergeProfileIdentity,
 } from './identity.js';
+import { encryptMessage, decryptMessage, getConversationKeyFromCache } from './e2e.js';
+import { ensureConversationKey, getOrCreateIdentity, createAndDistributeConversationKey } from './e2eIdentity.js';
+import { resolveE2EStorage } from './e2eConfig.js';
 
 // Re-export tick helpers so web/mobile can import from the shared API barrel.
 export {
@@ -296,6 +299,27 @@ export async function updateMyProfile(
   return { error };
 }
 
+async function checkRateLimit(
+  client: SupabaseClient,
+  action: string,
+  maxPerMinute: number,
+): Promise<boolean> {
+  try {
+    const { data, error } = await client.rpc('check_rate_limit', {
+      p_action: action,
+      p_max_per_minute: maxPerMinute,
+    });
+    if (error) {
+      // If RPC missing (pre-0057 DB), allow (fail open for read paths)
+      if (/function|does not exist|schema cache/i.test(error.message ?? '')) return true;
+      return true;
+    }
+    return data !== false;
+  } catch {
+    return true;
+  }
+}
+
 /** Strip PostgREST filter metacharacters so user input cannot break `.or()` / `.ilike()`. */
 function sanitizeSearchTerm(raw: string, maxLen = 64): string {
   return raw
@@ -312,6 +336,8 @@ export async function searchProfiles(
 ): Promise<Profile[]> {
   const q = sanitizeSearchTerm(query);
   if (q.length < 1) return [];
+  // Rate limit: 30 profile searches / min per user (prevents enumeration abuse)
+  if (!(await checkRateLimit(client, 'search_profiles', 30))) return [];
   // Prefer public_profiles (no phone/moderation columns) when the view exists;
   // fall back to profiles for older DBs.
   const { data, error } = await client
@@ -337,6 +363,21 @@ export async function startDirectConversation(
   const { data, error } = await client.rpc('start_direct_conversation', {
     other_user: otherUserId,
   });
+  if (error || !data) return { conversationId: data, error };
+  // Opportunistically enable E2EE for new direct chats (best-effort, never block)
+  try {
+    const user = await getCurrentUser(client);
+    if (user) {
+      const storage = resolveE2EStorage();
+      await getOrCreateIdentity(client, user.id, storage);
+      // Check if conversation already has e2e flag; if not, set and distribute key
+      const { data: conv } = await client.from('conversations').select('e2e_enabled').eq('id', data as string).maybeSingle();
+      if (!(conv as { e2e_enabled?: boolean })?.e2e_enabled) {
+        await client.from('conversations').update({ e2e_enabled: true }).eq('id', data as string);
+        await createAndDistributeConversationKey(client, data as string, [user.id, otherUserId], storage).catch(() => {});
+      }
+    }
+  } catch { /* E2EE setup best-effort */ }
   return { conversationId: data, error };
 }
 
@@ -357,6 +398,17 @@ export async function createGroupConversation(
     p_description: description ?? null,
   });
   if (error) return { conversationId: null, error: new Error(error.message) };
+  // Enable E2EE and distribute conversation key to all members (best-effort)
+  try {
+    const user = await getCurrentUser(client);
+    if (user && data) {
+      const storage = resolveE2EStorage();
+      await getOrCreateIdentity(client, user.id, storage);
+      await client.from('conversations').update({ e2e_enabled: true }).eq('id', data as string);
+      const allIds = [...new Set([user.id, ...participantIds])];
+      await createAndDistributeConversationKey(client, data as string, allIds, storage).catch(() => {});
+    }
+  } catch { /* E2EE setup best-effort */ }
   // Callers (NewGroupScreen / GroupModal) fire sendPush for "added to group".
   return { conversationId: (data as UUID) ?? null, error: null };
 }
@@ -422,6 +474,10 @@ export async function getMyConversations(
         .limit(1)
         .maybeSingle();
 
+      // E2EE: last message preview — if encrypted, don't leak ciphertext in list
+      if (lastMsg && (lastMsg as { is_encrypted?: boolean })?.is_encrypted) {
+        (lastMsg as Message).content = '🔒 Encrypted message';
+      }
       const otherProfiles = profiles.filter((p) => p.id !== user.id);
       // Identity: never fall back to the string "Unknown" when a profile exists
       // but display_name is empty — use username / Contact via resolveConversationTitle.
@@ -532,19 +588,51 @@ export async function getMessages(
     // Delta: ascending from after → return chronological order.
     q = q.gt('created_at', opts.after).order('created_at', { ascending: true }).limit(limit);
     const { data } = await q;
-    return data || [];
+    return maybeDecryptMessages(client, conversationId, (data as Message[]) || []);
   }
 
   if (opts.before) {
     // Older page: descending before cursor, then reverse to chronological.
     q = q.lt('created_at', opts.before).order('created_at', { ascending: false }).limit(limit);
     const { data } = await q;
-    return (data || []).reverse();
+    return maybeDecryptMessages(client, conversationId, ((data as Message[]) || []).reverse());
   }
 
   q = q.order('created_at', { ascending: false }).limit(limit);
   const { data } = await q;
-  return (data || []).reverse();
+  return maybeDecryptMessages(client, conversationId, ((data as Message[]) || []).reverse());
+}
+
+async function maybeDecryptMessages(
+  client: SupabaseClient,
+  conversationId: string,
+  messages: Message[],
+): Promise<Message[]> {
+  if (!messages.length) return messages;
+  const needs = messages.some((m) => (m as Message & { is_encrypted?: boolean }).is_encrypted);
+  if (!needs) return messages;
+  try {
+    const user = await getCurrentUser(client);
+    if (!user) return messages.map((m) => ((m as any).is_encrypted ? { ...m, content: '🔒 Encrypted message' } : m));
+    const storage = resolveE2EStorage();
+    // Use cached key fast path, else fetch sealed key
+    let key = getConversationKeyFromCache(conversationId) as Uint8Array | null;
+    if (!key) {
+      key = await ensureConversationKey(client, conversationId, user.id, storage);
+    }
+    if (!key) {
+      return messages.map((m) => ((m as any).is_encrypted ? { ...m, content: '🔒 Encrypted message — key unavailable on this device' } : m));
+    }
+    return messages.map((m) => {
+      const em = m as Message & { is_encrypted?: boolean };
+      if (!em.is_encrypted || !em.content) return m;
+      const plain = decryptMessage(em.content, key!);
+      if (plain === null) return { ...m, content: '🔒 Could not decrypt message' };
+      return { ...m, content: plain };
+    });
+  } catch {
+    return messages;
+  }
 }
 
 // ── Disappearing messages (0022) ─────────────────────────────────────────────
@@ -653,6 +741,7 @@ export async function searchAllMessages(
 ): Promise<MessageSearchHit[]> {
   const q = sanitizeSearchTerm(query, 100);
   if (!q) return [];
+  if (!(await checkRateLimit(client, 'search_messages', 30))) return [];
   try {
     const { data } = await client
       .from('messages')
@@ -721,6 +810,38 @@ export async function sendMessage(
   if (content && content.length > MAX_MESSAGE_CHARS) {
     return { message: null, error: new Error('message too long') };
   }
+  // Rate limit: 60 messages / min per user (prevents spam)
+  if (!(await checkRateLimit(client, 'message_send', 60))) {
+    return { message: null, error: new Error('rate limit exceeded — please slow down') };
+  }
+
+  // ── E2EE: encrypt content if conversation is E2EE-enabled ──────────────
+  let isEncrypted = false;
+  let outContent: string | null = content ?? null;
+  // Only text captions are encrypted; media_url stays as signed URL (Phase 2 encrypts blobs)
+  const shouldEncrypt = content && content.trim() && (type as string) !== 'system';
+  if (shouldEncrypt) {
+    try {
+      const { data: convRow } = await client.from('conversations').select('e2e_enabled').eq('id', conversationId).maybeSingle();
+      if ((convRow as { e2e_enabled?: boolean })?.e2e_enabled) {
+        const storage = resolveE2EStorage();
+        let key = getConversationKeyFromCache(conversationId) as Uint8Array | null;
+        if (!key) {
+          key = await ensureConversationKey(client, conversationId, user.id, storage);
+        }
+        if (key) {
+          const cipher = encryptMessage(content, key);
+          if (cipher) {
+            outContent = cipher;
+            isEncrypted = true;
+          }
+        } else {
+          // No key (e.g., peer has no identity yet) — fallback to plaintext so message still delivers.
+          // Caller can retry after peer publishes key; Phase 2 will queue re-seal.
+        }
+      }
+    } catch { /* E2EE best-effort — fall back to plaintext */ }
+  }
 
   // An explicit client-generated `id` lets the app render the message
   // optimistically and, when the realtime INSERT echoes back, dedupe by the SAME
@@ -732,16 +853,22 @@ export async function sendMessage(
       conversation_id: conversationId,
       sender_id: user.id,
       type,
-      content: content ?? null,
+      content: outContent,
       media_url: mediaUrl,
       reply_to: replyTo,
+      // E2EE flag — column exists from 0069, older DBs ignore via PostgREST (extra field filtered)
+      ...(isEncrypted ? { is_encrypted: true } : {}),
       // Only send media_meta when provided & non-empty, so text messages and the
       // pre-0030 clients stay byte-identical (column defaults to '{}').
       ...(mediaMeta && Object.keys(mediaMeta).length ? { media_meta: mediaMeta } : {}),
-    })
+    } as any)
     .select()
     .single();
-  return { message: data, error };
+  // Decrypt back for immediate UI (so sender sees plaintext without refetch)
+  if (data && (data as any).is_encrypted && isEncrypted) {
+    (data as any).content = content;
+  }
+  return { message: data as Message | null, error };
 }
 
 // ── View Once (0030) ──────────────────────────────────────────────────────────
@@ -776,20 +903,39 @@ export async function editMessage(
 ): Promise<{ message: Message | null; error: Error | null }> {
   const { data: existing } = await client
     .from('messages')
-    .select('id, type, sender_id')
+    .select('id, type, sender_id, conversation_id, is_encrypted')
     .eq('id', messageId)
     .maybeSingle();
   if (!existing) return { message: null, error: new Error('message not found') };
   if ((existing as { type?: string }).type === 'system') {
     return { message: null, error: new Error('system messages cannot be edited') };
   }
+  // If original was encrypted, encrypt the edit with same conversation key
+  let outContent = content;
+  const isEnc = !!(existing as { is_encrypted?: boolean }).is_encrypted;
+  if (isEnc) {
+    try {
+      const user = await getCurrentUser(client);
+      if (user && (existing as { conversation_id?: string }).conversation_id) {
+        const storage = resolveE2EStorage();
+        let key = getConversationKeyFromCache((existing as { conversation_id: string }).conversation_id) as Uint8Array | null;
+        if (!key) key = await ensureConversationKey(client, (existing as { conversation_id: string }).conversation_id, user.id, storage);
+        if (key) {
+          const cipher = encryptMessage(content, key);
+          if (cipher) outContent = cipher;
+        }
+      }
+    } catch { /* fall back to plaintext edit */ }
+  }
   const { data, error } = await client
     .from('messages')
-    .update({ content, edited_at: new Date().toISOString() })
+    .update({ content: outContent, edited_at: new Date().toISOString() } as any)
     .eq('id', messageId)
     .neq('type', 'system')
     .select()
     .single();
+  // Return plaintext for UI if we encrypted
+  if (data && isEnc) (data as any).content = content;
   return { message: data, error };
 }
 
@@ -962,18 +1108,54 @@ export function subscribeToMessages(
   /** Hard-delete for everyone (Telegram) — row removed; no tombstone. */
   onDelete?: (messageId: UUID) => void,
 ): RealtimeChannel {
+  // Helper to decrypt if needed (uses cached key sync, else async fetch then callback)
+  const tryDecrypt = async (msg: Message, cb: (m: Message) => void) => {
+    const em = msg as Message & { is_encrypted?: boolean };
+    if (!em.is_encrypted || !em.content) { cb(msg); return; }
+    try {
+      let key = getConversationKeyFromCache(conversationId) as Uint8Array | null;
+      if (!key) {
+        const user = await getCurrentUser(client);
+        if (user) {
+          const storage = resolveE2EStorage();
+          key = await ensureConversationKey(client, conversationId, user.id, storage);
+        }
+      }
+      if (key) {
+        const plain = decryptMessage(em.content, key);
+        if (plain !== null) { cb({ ...msg, content: plain }); return; }
+        cb({ ...msg, content: '🔒 Could not decrypt message' }); return;
+      }
+    } catch { /* fallback */ }
+    cb({ ...msg, content: '🔒 Encrypted message' });
+  };
+
   const channel = client
     .channel(`messages:${conversationId}`)
     .on<Message>(
       'postgres_changes',
       { event: 'INSERT', schema: 'public', table: 'messages', filter: `conversation_id=eq.${conversationId}` },
-      (payload: any) => onInsert(payload.new),
+      (payload: any) => {
+        const raw = payload.new as Message;
+        if ((raw as any).is_encrypted) {
+          void tryDecrypt(raw, onInsert);
+        } else {
+          onInsert(raw);
+        }
+      },
     );
   if (onUpdate) {
     channel.on<Message>(
       'postgres_changes',
       { event: 'UPDATE', schema: 'public', table: 'messages', filter: `conversation_id=eq.${conversationId}` },
-      (payload: any) => onUpdate(payload.new),
+      (payload: any) => {
+        const raw = payload.new as Message;
+        if ((raw as any).is_encrypted) {
+          void tryDecrypt(raw, onUpdate);
+        } else {
+          onUpdate(raw);
+        }
+      },
     );
   }
   if (onDelete) {

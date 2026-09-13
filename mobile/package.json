@@ -42,6 +42,7 @@
     "expo-clipboard": "~7.0.1",
     "expo-constants": "~17.0.8",
     "expo-contacts": "~14.0.1",
+    "expo-device": "~7.0.3",
     "expo-document-picker": "~13.0.3",
     "expo-file-system": "~18.0.12",
     "expo-font": "~13.0.4",
@@ -56,20 +57,28 @@
     "expo-secure-store": "~14.0.1",
     "expo-sharing": "~13.0.1",
     "expo-splash-screen": "~0.29.24",
+    "expo-sqlite": "~15.1.4",
+    "expo-standard-web-crypto": "^57.0.2",
     "expo-status-bar": "~2.0.1",
+    "expo-video": "~2.0.6",
     "expo-video-thumbnails": "~9.0.3",
     "qrcode": "^1.5.4",
     "react": "18.3.1",
     "react-native": "0.76.9",
     "react-native-gesture-handler": "~2.20.2",
+    "react-native-get-random-values": "^1.11.0",
     "react-native-incall-manager": "^4.2.1",
     "react-native-keyboard-controller": "^1.22.0",
+    "react-native-mmkv": "^3.3.3",
     "react-native-reanimated": "~3.16.1",
     "react-native-safe-area-context": "4.12.0",
     "react-native-screens": "~4.4.0",
     "react-native-url-polyfill": "^2.0.0",
     "react-native-webrtc": "^124.0.7",
-    "react-native-webview": "^13.12.5"
+    "react-native-webview": "^13.12.5",
+    "tweetnacl": "^1.0.3",
+    "tweetnacl-sealedbox-js": "^1.2.0",
+    "tweetnacl-util": "^0.15.1"
   },
   "devDependencies": {
     "@babel/core": "^7.24.0",
@@ -91,5 +100,15 @@
         ]
       }
     }
+  },
+  "allowScripts": {
+    "@sentry/cli@2.42.4": true
+  },
+  "overrides": {
+    "tar": "^7.5.21",
+    "undici": "^6.28.0",
+    "uuid": "^11.1.1",
+    "postcss": "^8.5.23",
+    "nanoid": "^5.1.5"
   }
 }

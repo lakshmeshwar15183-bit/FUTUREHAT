@@ -32,6 +32,8 @@ export interface Conversation {
   avatar_url: string | null;
   created_by: UUID | null;
   created_at: string;
+  /** E2EE (0069): true when conversation uses per-conversation symmetric key */
+  e2e_enabled?: boolean | null;
   /** Disappearing-messages timer (0022): 0 = OFF (default), else 3600..28800
    *  (1–8h). Optional so the type is safe before the migration is applied. */
   disappear_seconds?: number;
@@ -91,6 +93,8 @@ export interface Message {
   media_url: string | null;
   reply_to: UUID | null;
   is_deleted: boolean;
+  /** E2EE (0069): true when content is base64(nonce+ciphertext) encrypted with conversation key */
+  is_encrypted?: boolean | null;
   /**
    * Soft-delete provenance (0061).
    * - `user` — sender unsend (“This message was removed by Lumixo.”)
@@ -135,6 +139,10 @@ export interface MediaMeta {
   trimEndMs?: number;
   /** Video audio muted (intent; applied by the transcoder). */
   muted?: boolean;
+  /** Tiny inline preview (data:image/jpeg;base64, ~0.5KB, ≈28px long edge).
+   *  Rendered blurred as an instant placeholder before the real media loads —
+   *  zero network, arrives inside the message row itself. */
+  thumb?: string;
   /** Built-in emoji sticker card (offline pack system). */
   sticker?: boolean;
   stickerId?: string;

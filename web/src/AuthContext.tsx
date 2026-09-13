@@ -6,6 +6,9 @@ import type { Profile } from '@shared/types';
 import { supabase } from './supabase';
 import { onAuthChange, getMyProfile } from '@shared/api';
 import { peekStoredUser, mark } from './lib/startupCache';
+import { e2eStorage } from './lib/e2eStorage';
+import { setE2EStorage } from '@shared/e2eConfig';
+import { getOrCreateIdentity } from '@shared/e2eIdentity';
 
 interface AuthContextValue {
   user: User | null;
@@ -61,9 +64,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    // Wire E2EE storage once at boot (web localStorage)
+    try { setE2EStorage(e2eStorage as any); } catch { /* ignore */ }
+
     let active = true;
     let currentUserId: string | null = peekStoredUser()?.id ?? null;
     mark('auth-getSession-start');
+
+    // Ensure E2EE identity exists for the current user (best-effort, non-blocking)
+    const ensureE2E = (uid: string) => {
+      void getOrCreateIdentity(supabase as any, uid, e2eStorage as any).catch(() => {});
+    };
+    if (currentUserId) ensureE2E(currentUserId);
 
     // Confirm / refresh session asynchronously — never gate first paint on this.
     supabase.auth
@@ -74,6 +86,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         currentUserId = session?.user?.id ?? null;
         setUser(session?.user ?? null);
         if (session?.user) {
+          ensureE2E(session.user.id);
           getMyProfile(supabase)
             .then((p) => {
               if (active) setProfile(p);
@@ -103,6 +116,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const identityChanged = nextId !== currentUserId;
       currentUserId = nextId;
       setUser(session.user);
+      if (nextId) {
+        // Ensure E2EE identity for this session
+        void getOrCreateIdentity(supabase as any, nextId, e2eStorage as any).catch(() => {});
+      }
       if (identityChanged || event === 'USER_UPDATED') {
         getMyProfile(supabase)
           .then((p) => {

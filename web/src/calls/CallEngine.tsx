@@ -12,17 +12,14 @@ import { useAuth } from '../AuthContext';
 import { supabase } from '../supabase';
 import {
   createCall, updateCallStatus, subscribeToIncomingCalls, subscribeToCallStatus,
-  createSignalingChannel, buildIceServers, hasTurn, type SignalingChannel,
+  createSignalingChannel, buildIceServers, fetchTurnServers, hasTurn, type SignalingChannel,
 } from '@shared/callsApi';
 import { getProfile } from '@shared/api';
 import type { Call, CallType } from '@shared/types';
 import { showCallNotification } from '../lib/webNotifications';
 
-// Production TURN from build env (VITE_TURN_*). VITE_TURN_URL may be a comma-
-// separated list of transport URLs under one credential. When unset there is NO
-// relay — only STUN — so cross-network calls will fail (no baked-in default relay
-// anymore; the old free one is dead).
-const ICE_SERVERS = buildIceServers(
+// TURN: primary = Edge Function `turn-config` (secrets TURN_*, not bundled), fallback = VITE_TURN_* env
+const ENV_ICE = buildIceServers(
   import.meta.env.VITE_TURN_URL
     ? {
         urls: import.meta.env.VITE_TURN_URL,
@@ -31,12 +28,25 @@ const ICE_SERVERS = buildIceServers(
       }
     : null,
 );
-if (!hasTurn(ICE_SERVERS)) {
-  // eslint-disable-next-line no-console
-  console.warn(
-    '[call] No TURN relay configured (VITE_TURN_* unset) — STUN only. Calls will ' +
-      'work same-network but fail across different networks/NATs. Set TURN for production.',
-  );
+let resolvedIce: typeof ENV_ICE | null = null;
+async function getIceServers(): Promise<typeof ENV_ICE> {
+  if (resolvedIce) return resolvedIce;
+  try {
+    const dyn = await fetchTurnServers(supabase);
+    if (dyn && dyn.length) {
+      resolvedIce = buildIceServers(dyn[0]);
+      return resolvedIce;
+    }
+  } catch { /* fallback */ }
+  resolvedIce = ENV_ICE;
+  if (!hasTurn(resolvedIce)) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      '[call] No TURN relay configured (Edge turn-config + VITE_TURN_* unset) — STUN only. ' +
+        'Provision TURN via supabase secrets set TURN_* for production.',
+    );
+  }
+  return resolvedIce;
 }
 import {
   MicIcon, MicOffIcon, VideoIcon, VideoOffIcon, SpeakerIcon, SpeakerOffIcon,
@@ -207,9 +217,9 @@ export function CallEngine({ onApiReady }: { onApiReady: (api: CallApi) => void 
     }
   }
 
-  function buildPc(stream: MediaStream) {
+  function buildPc(stream: MediaStream, iceServers?: RTCIceServer[]) {
     const conn = new RTCPeerConnection({
-      iceServers: ICE_SERVERS,
+      iceServers: iceServers ?? ENV_ICE,
       iceCandidatePoolSize: 10,
       bundlePolicy: 'max-bundle',
       rtcpMuxPolicy: 'require',
@@ -385,11 +395,12 @@ export function CallEngine({ onApiReady }: { onApiReady: (api: CallApi) => void 
   // ── outgoing ────────────────────────────────────────────────────────────────
   const startCall = useCallback(async (conversationId: string, type: CallType, name: string) => {
     if (!myId || phase !== 'idle') return;
+    const iceServers = await getIceServers();
     // Production hard-require TURN (parity with mobile CallContext).
-    if (import.meta.env.PROD && !hasTurn(ICE_SERVERS)) {
+    if (import.meta.env.PROD && !hasTurn(iceServers)) {
       console.error('[call] TURN required in production — refusing startCall');
       window.alert(
-        'Calls unavailable: no TURN relay configured (VITE_TURN_*). Configure TURN for production calling.',
+        'Calls unavailable: no TURN relay configured (Edge turn-config / VITE_TURN_*). Provision TURN for production.',
       );
       return;
     }
@@ -400,7 +411,7 @@ export function CallEngine({ onApiReady }: { onApiReady: (api: CallApi) => void 
       if (error || !created) throw error || new Error('Could not start call');
       call.current = created;
       const stream = await getMedia(type);
-      buildPc(stream);
+      buildPc(stream, iceServers as RTCIceServer[]);
       openSignaling(created.id, type);
       // The callee announces `ready` once it has accepted and its signaling
       // subscription is live; makeOffer() (driven by that `ready`) sends the SDP
@@ -456,8 +467,9 @@ export function CallEngine({ onApiReady }: { onApiReady: (api: CallApi) => void 
     accepting.current = true;
     setPhase('connecting');
     try {
+      const iceServers = await getIceServers();
       const stream = await getMedia(incoming.type);
-      buildPc(stream);
+      buildPc(stream, iceServers as RTCIceServer[]);
       openSignaling(incoming.id, incoming.type);
       // Replace the ring-watcher (installed on 'incoming') with the active-call
       // watcher — otherwise we'd hold two subscriptions to the same call row.

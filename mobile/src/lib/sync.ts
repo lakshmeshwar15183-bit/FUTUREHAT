@@ -56,6 +56,7 @@ import {
   type OutboxItem,
 } from './localCache';
 import { retryDelayMs } from '../../../shared/localFirst';
+import { noteMessageActivity, setOnline as setSchedulerOnline } from './networkScheduler';
 
 /** Per-item next-retry (ms epoch). In-memory; resets on process death (ok — attempts still persist). */
 const nextRetryAt = new Map<string, number>();
@@ -65,9 +66,6 @@ type OutboxListener = (item: OutboxItem, sentId: string) => void;
 type DeadLetterListener = (item: OutboxItem, reason: 'max_attempts') => void;
 
 let online = true;
-let flushing = false;
-/** If flushOutbox is requested while a flush is in progress, re-run after. */
-let outboxNeedsReflush = false;
 const onlineListeners = new Set<OnlineListener>();
 const sentListeners = new Set<OutboxListener>();
 const deadLetterListeners = new Set<DeadLetterListener>();
@@ -100,159 +98,200 @@ export function onOutboxDeadLetter(fn: DeadLetterListener): () => void {
 /** Drop permanently-failed sends so they cannot burn battery forever. */
 const MAX_OUTBOX_ATTEMPTS = 30;
 
-/** Try to send everything in the outbox, oldest first. Safe to call repeatedly;
- *  re-entrancy-guarded with re-flush if enqueue races mid-flush. Stops early if
- *  the network drops mid-flush. */
-export async function flushOutbox(): Promise<void> {
-  if (flushing) {
-    // Critical: without this, messages enqueued (or connectivity recovery) during
-    // an in-flight flush never get another pass until the next NetInfo event.
-    outboxNeedsReflush = true;
+/** Heavy = still needs a media upload before the REST insert. Everything else
+ *  (text, edits, media already uploaded) is a small REST call → light lane. */
+function isHeavyItem(item: OutboxItem): boolean {
+  return !!item.localUri && !item.mediaUrl;
+}
+
+/** Send one outbox item: dead-letter check, backoff, (heavy only) upload,
+ *  REST insert with duplicate-key dedupe, cache + listeners + push. */
+async function processOutboxItem(item: OutboxItem): Promise<void> {
+  // Dead-letter: stop retrying poison pills (deleted conversation, etc.).
+  if ((item.attempts ?? 0) >= MAX_OUTBOX_ATTEMPTS) {
+    // Persist failed state in message cache so kill/reopen does not show
+    // eternal "sending" or lose the row entirely.
+    try {
+      const failedMsg = {
+        id: item.tempId,
+        conversation_id: item.conversationId,
+        sender_id: item.senderId,
+        type: item.type,
+        content: item.content,
+        media_url: item.mediaUrl ?? null,
+        reply_to: item.replyTo ?? null,
+        created_at: item.createdAt ?? new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        is_deleted: false,
+        edited_at: null,
+        media_meta: item.mediaMeta ?? null,
+        pending: false,
+        failed: true,
+      } as any;
+      await upsertCachedMessage(item.conversationId, failedMsg);
+    } catch { /* cache best-effort */ }
+    nextRetryAt.delete(item.tempId);
+    await removeFromOutbox(item.tempId);
+    deadLetterListeners.forEach((l) => {
+      try { l(item, 'max_attempts'); } catch { /* listener must not break flush */ }
+    });
     return;
   }
-  flushing = true;
-  outboxNeedsReflush = false;
+  // Exponential backoff on poor networks (don't hammer the API).
+  const due = nextRetryAt.get(item.tempId) ?? 0;
+  if (due > Date.now()) return;
+  try {
+    // Offline media (0030): if this item still holds a LOCAL file:// URI, upload
+    // it now (on reconnect) and swap in the remote URL before inserting the row.
+    // On upload failure we bump attempts and keep it queued for the next flush.
+    let mediaUrl = item.mediaUrl;
+    if (item.localUri && !mediaUrl) {
+      const { url, error: upErr } = await uploadMediaFromUri(
+        item.conversationId, item.localUri, item.fileName ?? `media_${item.tempId}`,
+      );
+      if (upErr || !url) {
+        const attempts = (item.attempts ?? 0) + 1;
+        nextRetryAt.set(item.tempId, Date.now() + retryDelayMs(attempts));
+        await updateOutboxItem(item.tempId, { attempts });
+        return;
+      }
+      mediaUrl = url;
+      // Keep local file mapped to remote URL so open never re-downloads.
+      if (item.localUri) void registerLocalMedia(url, item.localUri);
+      await updateOutboxItem(item.tempId, { mediaUrl: url, localUri: undefined });
+    }
+    // Message traffic wins: clamp bulk media downloads while this send flies.
+    noteMessageActivity();
+    const { message, error } = await sendMessage(
+      supabase,
+      item.conversationId,
+      item.content,
+      item.type,
+      mediaUrl,
+      item.replyTo,
+      item.tempId, // reuse the optimistic id as the real row id
+      item.mediaMeta as import('./shared').MediaMeta | undefined,
+    );
+    // A duplicate-key error means a PRIOR attempt already inserted this row
+    // (its id === tempId) but we never got to dequeue it — treat as sent so we
+    // don't retry forever. Postgres unique-violation is SQLSTATE 23505.
+    const dupe = !!error && (
+      (error as any).code === '23505' ||
+      /duplicate key|already exists/i.test(error.message ?? '')
+    );
+    if ((message && !error) || dupe) {
+      if (message) await upsertCachedMessage(item.conversationId, message);
+      nextRetryAt.delete(item.tempId);
+      await removeFromOutbox(item.tempId);
+      sentListeners.forEach((l) => l(item, message?.id ?? item.tempId));
+      // Live streak signal (fire-and-forget): the SERVER re-derives whether this
+      // actually qualifies from the real message tables — this never sets a
+      // score, it only keeps the "waiting on peer / done today" UI fresh. The
+      // authoritative +1 is finalised by the daily job regardless of this call.
+      recordStreakActivity(supabase, item.conversationId).catch(() => {});
+      // Push notify after offline flush. messageId enables Edge Function dedupe
+      // against the DB outbox trigger (one FCM delivery, not two).
+      try {
+        const mid = message?.id ?? item.tempId;
+        let preview =
+          item.type === 'text'
+            ? (item.content || 'Message').slice(0, 180)
+            : item.type === 'image'
+              ? ((item.mediaMeta as { sticker?: boolean; emoji?: string } | undefined)?.sticker
+                ? `${(item.mediaMeta as { emoji?: string }).emoji || '🎀'} Sticker`
+                : (/\.gif(\?|#|$)/i.test(item.mediaUrl ?? item.localUri ?? '') ? '🎞️ GIF' : '📷 Photo'))
+              : item.type === 'video'
+                ? '🎥 Video'
+                : item.type === 'audio'
+                  ? '🎤 Voice message'
+                  : item.type === 'file'
+                    ? (item.content?.trim() ? `📄 ${item.content}` : '📄 Document')
+                    : 'New message';
+        // E2EE: never leak plaintext preview in push (WhatsApp parity)
+        try {
+          const { data: conv } = await supabase.from('conversations').select('e2e_enabled').eq('id', item.conversationId).maybeSingle();
+          if ((conv as { e2e_enabled?: boolean })?.e2e_enabled) preview = '🔒 New message';
+        } catch { /* keep preview */ }
+        // Title is reconstructed server-side from profiles; body + messageId
+        // matter for preview and dedupe. kind defaults to message — Edge
+        // Function upgrades channel from conversation type when needed.
+        void sendPush(supabase, {
+          conversationId: item.conversationId,
+          kind: 'message',
+          title: '', // empty → Edge uses sender display name (not "New message")
+          body: preview,
+          data: {
+            messageId: mid,
+            messageType: item.type,
+            type: 'message',
+            senderId: item.senderId,
+          },
+        });
+      } catch { /* ignore */ }
+    } else {
+      const attempts = (item.attempts ?? 0) + 1;
+      nextRetryAt.set(item.tempId, Date.now() + retryDelayMs(attempts));
+      await updateOutboxItem(item.tempId, { attempts });
+    }
+  } catch {
+    const attempts = (item.attempts ?? 0) + 1;
+    nextRetryAt.set(item.tempId, Date.now() + retryDelayMs(attempts));
+    await updateOutboxItem(item.tempId, { attempts });
+  }
+}
+
+// ── Two-lane outbox pump ──────────────────────────────────────────────────────
+// Light lane: pure REST inserts (texts, edits, media whose upload already
+// finished). Heavy lane: items that still need a media upload. Independent
+// re-entrancy guards mean a 50MB video upload never queues a text behind it —
+// texts deliver in seconds while the upload grinds on (WhatsApp behavior).
+// Ordering: created_at is fixed at enqueue time, so a text overtaking an
+// in-flight video still sorts correctly in the thread. Double-send is
+// impossible: each item lives in exactly one lane per pass, and the tempId
+// server-PK dedupe (23505 above) absorbs any cross-flush race.
+type OutboxLane = 'light' | 'heavy';
+const laneState: Record<OutboxLane, { flushing: boolean; needsReflush: boolean }> = {
+  light: { flushing: false, needsReflush: false },
+  heavy: { flushing: false, needsReflush: false },
+};
+
+async function flushOutboxLane(lane: OutboxLane): Promise<void> {
+  const st = laneState[lane];
+  if (st.flushing) {
+    // Critical: without this, messages enqueued (or connectivity recovery) during
+    // an in-flight flush never get another pass until the next NetInfo event.
+    st.needsReflush = true;
+    return;
+  }
+  st.flushing = true;
+  st.needsReflush = false;
   try {
     do {
-      outboxNeedsReflush = false;
+      st.needsReflush = false;
       const box = await getOutbox();
-      for (const item of box) {
+      const mine = box.filter((i) => isHeavyItem(i) === (lane === 'heavy'));
+      for (const item of mine) {
         if (!online) break;
-        // Dead-letter: stop retrying poison pills (deleted conversation, etc.).
-        if ((item.attempts ?? 0) >= MAX_OUTBOX_ATTEMPTS) {
-          // Persist failed state in message cache so kill/reopen does not show
-          // eternal "sending" or lose the row entirely.
-          try {
-            const failedMsg = {
-              id: item.tempId,
-              conversation_id: item.conversationId,
-              sender_id: item.senderId,
-              type: item.type,
-              content: item.content,
-              media_url: item.mediaUrl ?? null,
-              reply_to: item.replyTo ?? null,
-              created_at: item.createdAt ?? new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-              is_deleted: false,
-              edited_at: null,
-              media_meta: item.mediaMeta ?? null,
-              pending: false,
-              failed: true,
-            } as any;
-            await upsertCachedMessage(item.conversationId, failedMsg);
-          } catch { /* cache best-effort */ }
-          nextRetryAt.delete(item.tempId);
-          await removeFromOutbox(item.tempId);
-          deadLetterListeners.forEach((l) => {
-            try { l(item, 'max_attempts'); } catch { /* listener must not break flush */ }
-          });
-          continue;
-        }
-        // Exponential backoff on poor networks (don't hammer the API).
-        const due = nextRetryAt.get(item.tempId) ?? 0;
-        if (due > Date.now()) continue;
-        try {
-          // Offline media (0030): if this item still holds a LOCAL file:// URI, upload
-          // it now (on reconnect) and swap in the remote URL before inserting the row.
-          // On upload failure we bump attempts and keep it queued for the next flush.
-          let mediaUrl = item.mediaUrl;
-          if (item.localUri && !mediaUrl) {
-            const { url, error: upErr } = await uploadMediaFromUri(
-              item.conversationId, item.localUri, item.fileName ?? `media_${item.tempId}`,
-            );
-            if (upErr || !url) {
-              const attempts = (item.attempts ?? 0) + 1;
-              nextRetryAt.set(item.tempId, Date.now() + retryDelayMs(attempts));
-              await updateOutboxItem(item.tempId, { attempts });
-              continue;
-            }
-            mediaUrl = url;
-            // Keep local file mapped to remote URL so open never re-downloads.
-            if (item.localUri) void registerLocalMedia(url, item.localUri);
-            await updateOutboxItem(item.tempId, { mediaUrl: url, localUri: undefined });
-          }
-          const { message, error } = await sendMessage(
-            supabase,
-            item.conversationId,
-            item.content,
-            item.type,
-            mediaUrl,
-            item.replyTo,
-            item.tempId, // reuse the optimistic id as the real row id
-            item.mediaMeta as import('./shared').MediaMeta | undefined,
-          );
-          // A duplicate-key error means a PRIOR attempt already inserted this row
-          // (its id === tempId) but we never got to dequeue it — treat as sent so we
-          // don't retry forever. Postgres unique-violation is SQLSTATE 23505.
-          const dupe = !!error && (
-            (error as any).code === '23505' ||
-            /duplicate key|already exists/i.test(error.message ?? '')
-          );
-          if ((message && !error) || dupe) {
-            if (message) await upsertCachedMessage(item.conversationId, message);
-            nextRetryAt.delete(item.tempId);
-            await removeFromOutbox(item.tempId);
-            sentListeners.forEach((l) => l(item, message?.id ?? item.tempId));
-            // Live streak signal (fire-and-forget): the SERVER re-derives whether this
-            // actually qualifies from the real message tables — this never sets a
-            // score, it only keeps the "waiting on peer / done today" UI fresh. The
-            // authoritative +1 is finalised by the daily job regardless of this call.
-            recordStreakActivity(supabase, item.conversationId).catch(() => {});
-            // Push notify after offline flush. messageId enables Edge Function dedupe
-            // against the DB outbox trigger (one FCM delivery, not two).
-            try {
-              const mid = message?.id ?? item.tempId;
-              const preview =
-                item.type === 'text'
-                  ? (item.content || 'Message').slice(0, 180)
-                  : item.type === 'image'
-                    ? ((item.mediaMeta as { sticker?: boolean; emoji?: string } | undefined)?.sticker
-                      ? `${(item.mediaMeta as { emoji?: string }).emoji || '🎀'} Sticker`
-                      : (/\.gif(\?|#|$)/i.test(item.mediaUrl ?? item.localUri ?? '') ? '🎞️ GIF' : '📷 Photo'))
-                    : item.type === 'video'
-                      ? '🎥 Video'
-                      : item.type === 'audio'
-                        ? '🎤 Voice message'
-                        : item.type === 'file'
-                          ? (item.content?.trim() ? `📄 ${item.content}` : '📄 Document')
-                          : 'New message';
-              // Title is reconstructed server-side from profiles; body + messageId
-              // matter for preview and dedupe. kind defaults to message — Edge
-              // Function upgrades channel from conversation type when needed.
-              void sendPush(supabase, {
-                conversationId: item.conversationId,
-                kind: 'message',
-                title: '', // empty → Edge uses sender display name (not "New message")
-                body: preview,
-                data: {
-                  messageId: mid,
-                  messageType: item.type,
-                  type: 'message',
-                  senderId: item.senderId,
-                },
-              });
-            } catch { /* ignore */ }
-          } else {
-            const attempts = (item.attempts ?? 0) + 1;
-            nextRetryAt.set(item.tempId, Date.now() + retryDelayMs(attempts));
-            await updateOutboxItem(item.tempId, { attempts });
-          }
-        } catch {
-          const attempts = (item.attempts ?? 0) + 1;
-          nextRetryAt.set(item.tempId, Date.now() + retryDelayMs(attempts));
-          await updateOutboxItem(item.tempId, { attempts });
-        }
+        await processOutboxItem(item);
       }
       // Loop if another flush was requested while we were working (new enqueue, etc.).
-    } while (outboxNeedsReflush && online);
+    } while (st.needsReflush && online);
   } finally {
-    flushing = false;
+    st.flushing = false;
     // Last-chance re-entry if a request landed between loop exit and flag clear.
-    if (outboxNeedsReflush && online) {
-      outboxNeedsReflush = false;
-      void flushOutbox();
+    if (st.needsReflush && online) {
+      st.needsReflush = false;
+      void flushOutboxLane(lane);
     }
   }
+}
+
+/** Try to send everything in the outbox. Light (pure REST) and heavy (needs
+ *  upload) items flush in parallel lanes; within a lane, oldest first. Safe to
+ *  call repeatedly; each lane re-entrancy-guards itself with re-flush if an
+ *  enqueue races mid-flush. Stops early if the network drops mid-flush. */
+export async function flushOutbox(): Promise<void> {
+  await Promise.all([flushOutboxLane('light'), flushOutboxLane('heavy')]);
 }
 
 // ── Generic action queue runner ───────────────────────────────────────────────
@@ -397,6 +436,9 @@ export function startSync(): () => void {
     const nowOnline = !!state.isConnected && state.isInternetReachable !== false;
     const cameOnline = nowOnline && !online;
     online = nowOnline;
+    // Single NetInfo listener app-wide: the media scheduler learns connectivity
+    // from here (pauses downloads offline, resumes on reconnect).
+    setSchedulerOnline(nowOnline);
     onlineListeners.forEach((l) => l(online));
     if (cameOnline) { flushOutbox(); flushActions(); }
   });
